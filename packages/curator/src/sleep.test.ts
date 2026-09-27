@@ -29,7 +29,7 @@ function script() {
   return new ScriptedLLM()
     .push(
       "mentions",
-      { entities: [{ name: "Agência de Migração", type: "faction", aliases: ["the agency"], domains: ["residency"] }, { name: "Passport", type: "item", aliases: [], domains: ["residency"] }] },
+      { entities: [{ name: "Agência de Migração", type: "faction", aliases: ["the agency"], domains: ["residency"] }, { name: "Passport", type: "item", aliases: ["U12345678"], domains: ["residency"] }] },
       { entities: [{ name: "Lisbon Migration Office", type: "faction", aliases: [], domains: [] }] },
       { entities: [{ name: "João Silva", type: "character", aliases: [], domains: ["housing"] }] },
     )
@@ -75,6 +75,7 @@ describe("sleep", () => {
     // Secret encrypted, redacted from the chronicle and the note.
     const passport = (await store.read("items/passport.md"))!;
     expect(passport).toContain("secret://passport/number");
+    expect(passport).not.toContain("U12345678"); // even when the model echoed it as an alias
     expect(await decryptSecret(identity, (await store.read("secrets/passport/number.age"))!)).toBe("U12345678");
     const chronicle = (await store.read("chronicle/2026/09/2026-09-27.md"))!;
     expect(chronicle).not.toContain("U12345678");

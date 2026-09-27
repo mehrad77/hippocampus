@@ -80,6 +80,7 @@ ${types}
 Rules:
 - Include people, organizations, places, documents/items, procedures, and goals that the episode states facts about.
 - Do NOT include the reporting agent, dates, times, amounts, or generic nouns ("the office", "an email") as entities.
+- IDs, numbers, codes, emails, and phone numbers are never entities or aliases. They are facts about an entity (a later step extracts them).
 - If the episode is progress on an existing quest, include that quest by its name.
 - name: the most specific proper name as written (keep the original-language spelling). Put translations/abbreviations in aliases.
 - domains: choose from [${config.domains.join(", ")}]; empty if none apply.

@@ -183,6 +183,17 @@ async function consolidate(vault: Vault, llm: LLM, ep: Episode): Promise<Episode
     }
   }
 
+  // Belt and braces: a model may echo a secret as a name or alias; it must never reach a note.
+  if (secretsSeen.length) {
+    for (const e of entities.values()) {
+      const leaks = (v: string) => secretsSeen.some((s) => v.includes(s));
+      const before = e.fm.aliases.length;
+      e.fm.aliases = e.fm.aliases.filter((a) => !leaks(a));
+      if (e.fm.title && leaks(e.fm.title)) e.fm.title = redact(e.fm.title, secretsSeen);
+      if (e.fm.aliases.length !== before || e.fm.title?.includes("[redacted]")) vault.markDirty(e);
+    }
+  }
+
   report.touched = [...new Set([...entities.keys()])];
   // 5. Episodic → chronicle (secrets redacted), then out of the inbox.
   await vault.appendChronicle(ep, report.touched, redact(ep.text, secretsSeen));
