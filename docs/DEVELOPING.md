@@ -81,4 +81,4 @@ Preview the next version locally:
 node scripts/release.mjs
 ```
 
-**One-time setup** (repo admin): add an npm automation token as the `NPM_TOKEN` Actions secret. Alternatively, configure [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) for this repo and workflow, then remove the secret.
+**Publishing auth** uses [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC). CI stores no npm token, and every release carries provenance. The package's trusted publisher on npmjs.com is GitHub Actions, repo `mehrad77/hippocampus`, workflow `ci.yml`. The release step is idempotent: if a version is already on npm, CI only adds the missing tag and GitHub Release.
