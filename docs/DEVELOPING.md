@@ -61,12 +61,24 @@ If a change alters files in existing vaults (frontmatter keys, folder layout, re
 2. Add a `Migration` that rewrites old vaults, with a test.
 3. Note it under "Vault format" in [CHANGELOG.md](../CHANGELOG.md).
 
-## Releasing
+## Branches and releases
 
-The version is in `apps/cli/package.json` (`@mehrad77/hippocampus`) and follows semver. Update `CHANGELOG.md`, then run:
+`main` is protected. All changes land through pull requests, and CI (`check`) must pass.
+
+**Every merge to `main` releases the CLI automatically** (`release` job in `.github/workflows/ci.yml`):
+1. The next version is computed from the conventional commits since the last `v*` tag (`scripts/release.mjs`):
+   - `feat:` bumps minor
+   - `fix:` and everything else bump patch
+   - `!` or `BREAKING CHANGE:` bumps major (minor while below 1.0)
+2. The version is stamped into the package at build time. Nothing is committed back to `main`: **the git tag is the version of record**, and `apps/cli/package.json`'s version only seeds the very first release.
+3. The job publishes `@mehrad77/hippocampus` to npm with provenance, then pushes the `vX.Y.Z` tag and a GitHub Release with generated notes.
+
+So write commit messages (or squash-merge PR titles) as conventional commits, because they decide the version. Record vault format changes under `[Unreleased]` in `CHANGELOG.md` in the same PR.
+
+Preview the next version locally:
 
 ```bash
-pnpm build && pnpm pack:check
+node scripts/release.mjs
 ```
 
-A maintainer then runs `npm publish` from `apps/cli`.
+**One-time setup** (repo admin): add an npm automation token as the `NPM_TOKEN` Actions secret. Alternatively, configure [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) for this repo and workflow, then remove the secret.

@@ -186,7 +186,8 @@ seeds/             example campaigns (fictional)
 
 - **One-way dependency.** The tool is public (this repo, published to npm as `@mehrad77/hippocampus`). Each user's vault is a separate **private** repo that runs a pinned version of the tool. The tool never contains, references, or knows about a real vault.
 - **Guards.** `.gitignore` blocks vault paths. `scripts/privacy.test.ts` (in `pnpm test`, CI, and the pre-commit hook) rejects vault content and any term from a local, untracked `.privacy-denylist`. `pnpm pack:check` rejects vault data in the npm tarball.
-- **Versioning.** The tool follows semver ([CHANGELOG.md](CHANGELOG.md)). The on-disk vault format has its own integer `version` in `_hippo/config.yaml`. The tool refuses to write to a vault with a different version, and `hippo migrate` runs ordered migrations (`packages/core/src/migrations.ts`).
+- **Releases.** `main` is protected (PRs only). Every merge publishes the CLI to npm, versioned from conventional commits since the last `v*` tag. The tag is the version of record, so nothing is committed back to `main`.
+- **Versioning.** The tool follows semver ([CHANGELOG.md](CHANGELOG.md), GitHub Releases). The on-disk vault format has its own integer `version` in `_hippo/config.yaml`. The tool refuses to write to a vault with a different version, and `hippo migrate` runs ordered migrations (`packages/core/src/migrations.ts`).
 - **Evals.** Public evals are fictional (`ScriptedLLM` golden tests, `seeds/example-relocation`). Evals built from real memories stay in the private vault (`_hippo/evals/`).
 - **CI.** The public repo's CI typechecks, tests, builds, and checks the pack. The vault template ships `.github/workflows/validate.yml`, which validates every push to a private vault with `npx @mehrad77/hippocampus@<major> validate`, plus an optional nightly `sleep` for hosted models.
 

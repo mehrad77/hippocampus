@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `@mehrad77/hippocampus`. The format follows [Keep a Changelog](https://keepachangelog.com/), and versions follow [semver](https://semver.org/). **Vault format** entries mean existing vaults need `hippo migrate`.
+Every merge to `main` publishes a release. Per-release notes are generated on [GitHub Releases](https://github.com/mehrad77/hippocampus/releases). This file records **notable** changes, and especially **vault format** changes (which mean existing vaults need `hippo migrate`). Add them under `[Unreleased]` in your PR. Versions follow [semver](https://semver.org/) and are computed from conventional commits.
 
 ## [Unreleased]
 
