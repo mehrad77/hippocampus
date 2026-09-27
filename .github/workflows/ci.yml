@@ -46,14 +46,23 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - id: version
         run: node scripts/release.mjs --write
-      - if: steps.version.outputs.version
-        run: pnpm build && pnpm pack:check
-      - name: Publish to npm
+      # Idempotent: a version already on npm (e.g. published by hand) is only tagged, not re-published.
+      - id: npm
         if: steps.version.outputs.version
-        working-directory: apps/cli
         env:
-          # Automation token; leave unset once npm trusted publishing is configured for this repo.
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if npm view "@mehrad77/hippocampus@$VERSION" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "v$VERSION is already on npm; skipping publish"
+          fi
+      - if: steps.version.outputs.version && !steps.npm.outputs.published
+        run: pnpm build && pnpm pack:check
+      # npm trusted publishing (OIDC via id-token: write): no NPM_TOKEN secret, provenance included.
+      # Configured on npmjs.com → @mehrad77/hippocampus → Settings → Trusted Publisher (repo + ci.yml).
+      - name: Publish to npm
+        if: steps.version.outputs.version && !steps.npm.outputs.published
+        working-directory: apps/cli
         run: |
           pnpm pack --pack-destination ../../dist-pack
           npm publish ../../dist-pack/*.tgz --access public --provenance
@@ -63,6 +72,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          git tag "v$VERSION"
-          git push origin "v$VERSION"
-          gh release create "v$VERSION" --generate-notes --title "v$VERSION"
+          if ! git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            git tag "v$VERSION"
+            git push origin "v$VERSION"
+          fi
+          gh release view "v$VERSION" >/dev/null 2>&1 || gh release create "v$VERSION" --generate-notes --title "v$VERSION"
