@@ -1,0 +1,42 @@
+# Hippocampus vault configuration.
+version: 1
+
+# Name of the campaign (shown in the Player's Handbook).
+campaign: lisbon-arc
+
+# IANA timezone for chronicle days/times.
+timezone: Europe/Lisbon
+
+# Party id of the human player. Their word outranks every agent; `ruling:` in disputes is theirs.
+human: player
+
+# Domains are the tags that define lanes. An agent is authoritative for entities tagged with
+# one of its `authority` domains (party/<agent>.md); elsewhere its reports start as rumors.
+domains: [residency, insurance, university, language, housing, career, finance, health, story]
+
+# Entity types and where their notes live. `secret_fields` are always encrypted.
+types:
+  character: { folder: characters, description: "People and NPCs, including the player character." }
+  faction: { folder: factions, description: "Organizations, institutions, companies, groups." }
+  location: { folder: locations, description: "Places: cities, offices, apartments, campuses." }
+  item:
+    folder: items
+    description: "Documents, cards, contracts, accounts, physical things."
+    secret_fields: [number, document_number, iban, card_number, password]
+  lore: { folder: lore, description: "Procedures, rules, and topic knowledge (how things work)." }
+  quest: { folder: quests, description: "Goals with objectives, owner lane, status, clocks, deadlines." }
+  campaign: { folder: campaigns, description: "Long arcs that group quests." }
+  party: { folder: party, description: "The agents themselves: lane, authority domains, host." }
+
+# Relation vocabulary the curator may use between entities.
+relations: [member_of, part_of, located_in, owns, handles, requires, blocks, involves, works_at, knows, related_to]
+
+curator:
+  canon_threshold: 2      # distinct agents needed to promote a rumor to canon
+  batch_size: 25          # max episodes per sleep
+  summaries: true         # maintain an LLM summary paragraph per touched note
+  stale_after_days: 60    # canon not re-confirmed for this long shows up in the morning review
+
+secrets:
+  # age public key; set by `hippo secrets keygen`. The private identity never enters the vault.
+  recipient: null

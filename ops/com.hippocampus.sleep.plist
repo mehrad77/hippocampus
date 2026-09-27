@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Nightly Hippocampus sleep on macOS.
+  1. Replace /PATH/TO/hippocampus and /PATH/TO/vault below.
+  2. cp ops/com.hippocampus.sleep.plist ~/Library/LaunchAgents/
+  3. launchctl load ~/Library/LaunchAgents/com.hippocampus.sleep.plist
+  Logs: /tmp/hippocampus-sleep.log. Make sure LM Studio's server (or Ollama) is running at that hour
+  (e.g. `lms server start` at login, with the model set to load on demand / JIT).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.hippocampus.sleep</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/PATH/TO/hippocampus/apps/cli/bin/hippo</string>
+    <string>--vault</string>
+    <string>/PATH/TO/vault</string>
+    <string>sleep</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HIPPO_LLM_PROVIDER</key>
+    <string>lmstudio</string>
+    <key>HIPPO_LLM_MODEL</key>
+    <string>qwen/qwen3.5-9b</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/tmp/hippocampus-sleep.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/hippocampus-sleep.log</string>
+</dict>
+</plist>

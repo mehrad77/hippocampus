@@ -1,0 +1,21 @@
+{
+  "name": "@hippocampus/curator",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hippocampus/core": "workspace:*",
+    "ai": "^7.0.118",
+    "@ai-sdk/openai-compatible": "^3.0.57",
+    "@ai-sdk/anthropic": "^4.0.65",
+    "@ai-sdk/xai": "^5.0.10",
+    "zod": "^4.6.5"
+  },
+  "license": "AGPL-3.0-only"
+}

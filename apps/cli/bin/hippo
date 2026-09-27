@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Runs the CLI from source via tsx (no build step).
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$DIR/node_modules/.bin/tsx" "$DIR/src/main.ts" "$@"

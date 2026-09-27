@@ -1,0 +1,7 @@
+{
+  "userIgnoreFilters": ["_hippo/templates/", "secrets/"],
+  "attachmentFolderPath": "attachments",
+  "newLinkFormat": "shortest",
+  "useMarkdownLinks": false,
+  "propertiesInDocument": "visible"
+}

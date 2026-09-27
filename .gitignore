@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.turbo/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+/tmp/
+
+# Never commit real vaults or secrets (see README "Keep your vault private")
+/vault/
+/vaults/
+*.age
+seeds/private-*/
+.privacy-denylist
