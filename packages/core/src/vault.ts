@@ -1,4 +1,5 @@
 import { CONFIG_PATH, parseConfig } from "./config.ts";
+import { assertVaultVersion } from "./migrations.ts";
 import { basename, displayName, parseEntity, renderEntity, type Entity } from "./entity.ts";
 import { parseEpisode, renderEpisode, type Episode } from "./episode.ts";
 import { parseDoc, renderDoc } from "./markdown.ts";
@@ -18,6 +19,8 @@ export type Authority = "human" | "authority" | "none";
 
 export interface VaultOptions {
   now?: () => Date;
+  /** Load even if the vault format version doesn't match this build (validate/migrate only). */
+  skipVersionCheck?: boolean;
 }
 
 export class VaultError extends Error {}
@@ -50,6 +53,7 @@ export class Vault {
 
   static async load(store: VaultStore, opts: VaultOptions = {}): Promise<Vault> {
     const config = parseConfig(await store.read(CONFIG_PATH));
+    if (!opts.skipVersionCheck) assertVaultVersion(config);
     const vault = new Vault(store, config, opts);
     await vault.reload();
     return vault;

@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+# Blocks commits that would publish vault content or terms from your local .privacy-denylist.
+exec pnpm exec vitest run scripts/privacy.test.ts --reporter=dot

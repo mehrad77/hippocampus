@@ -23,16 +23,20 @@ describe("privacy guard", () => {
   it("contains none of the terms in the local, untracked .privacy-denylist", () => {
     const denylist = join(ROOT, ".privacy-denylist");
     if (!existsSync(denylist)) return;
-    const terms = readFileSync(denylist, "utf8")
+    const lines = readFileSync(denylist, "utf8")
       .split("\n")
       .map((t) => t.trim().toLowerCase())
       .filter((t) => t && !t.startsWith("#"));
+    // `!phrase` lines are public on purpose (e.g. your npm scope or GitHub handle) and are ignored.
+    const allowed = lines.filter((t) => t.startsWith("!")).map((t) => t.slice(1));
+    const terms = lines.filter((t) => !t.startsWith("!"));
     const hits: string[] = [];
     for (const path of publishable()) {
       if (path === "pnpm-lock.yaml" || path === "LICENSE") continue;
       let text: string;
       try {
         text = readFileSync(join(ROOT, path), "utf8").toLowerCase();
+        for (const a of allowed) text = text.split(a).join(" ");
       } catch {
         continue;
       }

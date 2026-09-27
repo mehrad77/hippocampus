@@ -1,5 +1,4 @@
-#!/usr/bin/env node
-import { chmod, cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
@@ -7,14 +6,17 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CONFIG_PATH,
+  CURRENT_VAULT_VERSION,
   HANDBOOK_PATH,
   HippoService,
   Vault,
   decryptSecret,
   generateKeyPair,
   isSecretRef,
+  migrate,
   renderHandbook,
   secretPath,
+  vaultVersionStatus,
 } from "@hippocampus/core";
 import { FsStore } from "@hippocampus/core/node";
 import { aiSdkLLM, llmConfigFromEnv, sleep, type SleepReport } from "@hippocampus/curator";
@@ -25,15 +27,28 @@ import { Command } from "commander";
 import { parseDocument } from "yaml";
 import { Git } from "./git.ts";
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const IDENTITY_FILE = process.env.HIPPO_AGE_IDENTITY_FILE ?? join(homedir(), ".config", "hippocampus", "age-identity.txt");
+/**
+ * Where `vault-template/` and `seeds/` live: next to the published package (dist/..),
+ * or at the repo root when running from source.
+ */
+function assetRoot(): string {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [resolve(here, ".."), resolve(here, "../../..")];
+  return candidates.find((dir) => existsSync(join(dir, "vault-template"))) ?? candidates[1]!;
+}
+// Local settings (HIPPO_VAULT, HIPPO_LLM_*) from a gitignored .env in the working directory.
+if (existsSync(".env")) process.loadEnvFile(".env");
+
+const expandHome = (p: string) => (p === "~" || p.startsWith("~/") ? join(homedir(), p.slice(1)) : p);
+
+const IDENTITY_FILE = process.env.HIPPO_AGE_IDENTITY_FILE ? expandHome(process.env.HIPPO_AGE_IDENTITY_FILE) : join(homedir(), ".config", "hippocampus", "age-identity.txt");
 
 const program = new Command()
   .name("hippo")
   .description("Hippocampus: shared, curated memory for a party of agents (an Obsidian vault run like a TTRPG campaign wiki).")
   .option("-v, --vault <dir>", "vault directory", process.env.HIPPO_VAULT ?? ".");
 
-const vaultDir = () => resolve(program.opts<{ vault: string }>().vault);
+const vaultDir = () => resolve(expandHome(program.opts<{ vault: string }>().vault));
 const err = (msg: string) => process.stderr.write(`${msg}\n`);
 
 program
@@ -42,12 +57,14 @@ program
   .option("--seed <name-or-path>", "also copy a seed campaign: a bundled name from seeds/ (e.g. example-relocation) or a directory path")
   .description("Create a new vault from the template (and optionally a seed campaign).")
   .action(async (dir: string, opts: { seed?: string }) => {
-    const target = resolve(dir);
+    const target = resolve(expandHome(dir));
     if (existsSync(join(target, CONFIG_PATH))) throw new Error(`${target} already has ${CONFIG_PATH}`);
     await mkdir(target, { recursive: true });
-    await cp(join(REPO_ROOT, "vault-template"), target, { recursive: true });
+    await cp(join(assetRoot(), "vault-template"), target, { recursive: true });
+    // Published packages carry the template's .gitignore as `gitignore` (npm strips dotfile ignores).
+    if (existsSync(join(target, "gitignore"))) await rename(join(target, "gitignore"), join(target, ".gitignore"));
     if (opts.seed) {
-      const bundled = join(REPO_ROOT, "seeds", opts.seed);
+      const bundled = join(assetRoot(), "seeds", opts.seed);
       const seed = existsSync(bundled) ? bundled : resolve(opts.seed);
       if (!existsSync(seed)) throw new Error(`no seed "${opts.seed}" (neither ${bundled} nor a directory path)`);
       await cp(seed, target, { recursive: true, force: true });
@@ -143,10 +160,29 @@ program
   .command("validate")
   .description("Load the vault and report problems (duplicate names, invalid frontmatter).")
   .action(async () => {
-    const vault = await Vault.load(new FsStore(vaultDir()));
+    const vault = await Vault.load(new FsStore(vaultDir()), { skipVersionCheck: true });
+    const status = vaultVersionStatus(vault.config);
+    err(`vault format v${vault.config.version} (tool v${CURRENT_VAULT_VERSION}${status === "current" ? "" : `: ${status}, run \`hippo migrate\``})`);
+    if (status !== "current") process.exitCode = 1;
     err(`${vault.entities.size} entities · ${vault.episodes.length} pending episodes · ${vault.openDisputes().length} open disputes`);
     for (const w of vault.warnings) err(`⚠ ${w}`);
     if (vault.warnings.length) process.exitCode = 1;
+  });
+
+program
+  .command("migrate")
+  .description("Upgrade the vault's file format to what this version of Hippocampus expects.")
+  .option("--dry-run", "list the migrations without applying them")
+  .action(async (opts: { dryRun?: boolean }) => {
+    const store = new FsStore(vaultDir());
+    const vault = await Vault.load(store, { skipVersionCheck: true });
+    const r = await migrate(store, vault.config, { dryRun: opts.dryRun });
+    if (!r.applied.length) {
+      err(`✓ vault format v${r.to} is up to date`);
+      return;
+    }
+    for (const a of r.applied) err(`${opts.dryRun ? "would apply" : "applied"} ${a}`);
+    for (const c of r.changed) err(`  ${c}`);
   });
 
 program

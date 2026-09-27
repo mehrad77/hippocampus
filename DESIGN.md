@@ -182,6 +182,14 @@ seeds/             example campaigns (fictional)
 - **Small local models make weak curation decisions.** Mitigations: small steps, strict schemas, deterministic reconcile, and a golden test suite.
 - **Mixed languages.** Canonical titles stay in their original spelling. Other spellings and translations go in `aliases`. Matching folds diacritics, including Turkish ı/İ.
 
+## 9. Distribution and privacy model
+
+- **One-way dependency.** The tool is public (this repo, published to npm as `@mehrad77/hippocampus`). Each user's vault is a separate **private** repo that runs a pinned version of the tool. The tool never contains, references, or knows about a real vault.
+- **Guards.** `.gitignore` blocks vault paths. `scripts/privacy.test.ts` (in `pnpm test`, CI, and the pre-commit hook) rejects vault content and any term from a local, untracked `.privacy-denylist`. `pnpm pack:check` rejects vault data in the npm tarball.
+- **Versioning.** The tool follows semver ([CHANGELOG.md](CHANGELOG.md)). The on-disk vault format has its own integer `version` in `_hippo/config.yaml`. The tool refuses to write to a vault with a different version, and `hippo migrate` runs ordered migrations (`packages/core/src/migrations.ts`).
+- **Evals.** Public evals are fictional (`ScriptedLLM` golden tests, `seeds/example-relocation`). Evals built from real memories stay in the private vault (`_hippo/evals/`).
+- **CI.** The public repo's CI typechecks, tests, builds, and checks the pack. The vault template ships `.github/workflows/validate.yml`, which validates every push to a private vault with `npx @mehrad77/hippocampus@<major> validate`, plus an optional nightly `sleep` for hosted models.
+
 ---
 
 ## Implementation status (v1)
@@ -198,6 +206,7 @@ seeds/             example campaigns (fictional)
 | LLM adapter | ✅ | `prompt` structured mode (default for local servers) and `native` (hosted). Per-call timeout and token cap |
 | MCP (stdio + local HTTP) | ✅ | 8 tools + 2 resources |
 | `hippo sleep` with git | ✅ | pull --rebase --autostash → curate → stage own paths → commit → push |
+| Distribution | ✅ | npm package (tsup bundle + template + seeds), vault format version + `hippo migrate`, privacy guard + pre-commit hook, CI for this repo and for vaults |
 | Worker, OAuth, embeddings | ⏳ | M3–M5 |
 
 **Lessons from local models.** LM Studio with a reasoning model returned grammar-constrained JSON in `reasoning_content`, and constrained decoding suppressed its thinking, which made classification worse. Local providers therefore default to `prompt` mode:

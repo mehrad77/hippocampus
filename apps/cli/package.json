@@ -1,27 +1,63 @@
 {
-  "name": "@hippocampus/cli",
-  "private": true,
-  "version": "0.0.0",
+  "name": "@mehrad77/hippocampus",
+  "version": "0.1.0",
+  "description": "Shared, curated memory for a party of AI agents — an Obsidian vault run like a TTRPG campaign wiki.",
+  "license": "AGPL-3.0-only",
   "type": "module",
-  "exports": {
-    ".": "./src/main.ts"
+  "bin": {
+    "hippo": "./dist/main.js"
+  },
+  "files": [
+    "dist",
+    "vault-template",
+    "seeds",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mehrad77/hippocampus.git",
+    "directory": "apps/cli"
+  },
+  "homepage": "https://github.com/mehrad77/hippocampus#readme",
+  "bugs": "https://github.com/mehrad77/hippocampus/issues",
+  "keywords": [
+    "ai-agents",
+    "memory",
+    "mcp",
+    "obsidian",
+    "ttrpg",
+    "knowledge-graph",
+    "llm"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "tsup && node scripts/copy-assets.mjs",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.65",
+    "@ai-sdk/openai-compatible": "^3.0.57",
+    "@ai-sdk/xai": "^5.0.10",
+    "@modelcontextprotocol/sdk": "^1.30.1",
+    "age-encryption": "^0.3.1",
+    "ai": "^7.0.118",
+    "commander": "^15.0.0",
+    "minisearch": "^7.2.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
     "@hippocampus/core": "workspace:*",
     "@hippocampus/curator": "workspace:*",
     "@hippocampus/mcp": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.30.1",
-    "commander": "^15.0.0",
-    "yaml": "^2.9.1"
-  },
-  "bin": {
-    "hippo": "./bin/hippo"
-  },
-  "devDependencies": {
+    "tsup": "^8.5.1",
     "tsx": "^4.23.15"
-  },
-  "license": "AGPL-3.0-only"
+  }
 }

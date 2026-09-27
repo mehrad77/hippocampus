@@ -3,6 +3,7 @@ export * from "./entity.ts";
 export * from "./episode.ts";
 export * from "./handbook.ts";
 export * from "./markdown.ts";
+export * from "./migrations.ts";
 export * from "./ops.ts";
 export * from "./reconcile.ts";
 export * from "./schema.ts";

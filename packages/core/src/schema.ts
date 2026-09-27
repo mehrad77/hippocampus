@@ -135,7 +135,8 @@ export const TypeDef = z.object({
 });
 
 export const HippoConfig = z.object({
-  version: z.literal(1).default(1),
+  /** Vault format version; see migrations.ts. */
+  version: z.number().int().nonnegative().default(1),
   campaign: z.string().default("campaign"),
   /** IANA timezone used for chronicle days and times. */
   timezone: z.string().default("UTC"),

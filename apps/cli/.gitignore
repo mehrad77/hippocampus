@@ -1,0 +1,6 @@
+# Build artifacts copied in by scripts/copy-assets.mjs
+dist/
+vault-template/
+seeds/
+README.md
+LICENSE
