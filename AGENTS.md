@@ -69,7 +69,8 @@ Run the CLI from source:
 - TypeScript ESM, Node 24. Relative imports use the `.ts` extension. Workspace packages export `src/*.ts` directly (no build step except the CLI bundle).
 - Prefer composition over inheritance, and small pure functions (see `reconcile.ts`, `ops.ts`).
 - Match the surrounding code's density and naming. Comments explain *why*, not *what*.
-- [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `chore:`, `test:`, `refactor:`.
+- [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `chore:`, `test:`, `refactor:`. They decide the released version (`feat` minor, `fix`/other patch, `!` breaking). Every merge to `main` publishes to npm.
+- `main` is protected: work on a branch and open a PR. Never bump versions by hand. Git tags are the version of record (`scripts/release.mjs`).
 - Each curator LLM step is small and schema-validated (zod). The LLM never writes files directly. Deterministic code applies its structured output.
 - Curator changes get a golden test with `ScriptedLLM` in `packages/curator/src/sleep.test.ts`.
 - Reconcile rule changes update the precedence table comment in `reconcile.ts` and `reconcile.test.ts` together.

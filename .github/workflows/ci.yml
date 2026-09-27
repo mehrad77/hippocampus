@@ -19,3 +19,50 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm pack:check
+
+  # Every push to main (= every merged PR, since main is protected) releases the CLI:
+  # next version from conventional commits since the last v* tag → npm publish → tag + GitHub Release.
+  # Nothing is committed back to main; the version of record is the git tag.
+  release:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: write # push the tag, create the GitHub Release
+      id-token: write # npm provenance / trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - id: version
+        run: node scripts/release.mjs --write
+      - if: steps.version.outputs.version
+        run: pnpm build && pnpm pack:check
+      - name: Publish to npm
+        if: steps.version.outputs.version
+        working-directory: apps/cli
+        env:
+          # Automation token; leave unset once npm trusted publishing is configured for this repo.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          pnpm pack --pack-destination ../../dist-pack
+          npm publish ../../dist-pack/*.tgz --access public --provenance
+      - name: Tag and create GitHub Release
+        if: steps.version.outputs.version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" --generate-notes --title "v$VERSION"
