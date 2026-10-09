@@ -267,7 +267,11 @@ export function configProblem(env: HostedVars & Partial<Record<(typeof BINDINGS)
   try {
     hostedSettings(env);
   } catch (err) {
-    const which = /HIPPO_ADMINS/.test(String(err)) ? "<code>HIPPO_ADMINS</code> must list GitHub user ids (numbers), not logins." : "<code>HIPPO_PUBLIC_URL</code> must be this Worker's https URL.";
+    const which = /HIPPO_ADMINS/.test(String(err))
+      ? "<code>HIPPO_ADMINS</code> must list GitHub user ids (numbers), not logins."
+      : /GITHUB_(API|OAUTH)_URL/.test(String(err))
+        ? "<code>GITHUB_API_URL</code> and <code>GITHUB_OAUTH_URL</code> are only for local development against a fake GitHub. Delete them."
+        : "<code>HIPPO_PUBLIC_URL</code> must be this Worker's https URL.";
     return page(503, "Hippocampus isn't set up yet", `<p>${which}</p>${help}`);
   }
   return undefined;

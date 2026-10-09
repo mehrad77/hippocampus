@@ -105,10 +105,10 @@ If a change alters files in existing vaults (frontmatter keys, folder layout, re
 
 ## Tests and CI
 
-`.github/workflows/ci.yml` runs three jobs in parallel on every pull request and push to `main`; `release` runs only after all three pass.
+`.github/workflows/ci.yml` runs three jobs in parallel on every pull request and push to `main`. On `main`, `release` runs only after all three pass, then `deploy` (see [Branches and releases](#branches-and-releases)).
 
 - **check:** `pnpm typecheck`, `pnpm test` (every package's unit tests in Node, the privacy guard, and the checks in `scripts/`: the template bundle, the Claude Code plugin's manifests and skills, and what each shipped workflow does), `pnpm build` and `pnpm pack:check`.
-- **worker:** the hosted Worker in the real Workers runtime. `bundle:check` builds it as `wrangler deploy --dry-run` would (no Cloudflare account) and checks the bundle's size. `smoke` (`apps/worker/scripts/smoke.ts`) starts the fake GitHub and `wrangler dev --local`, then walks it end to end: sign-in and the waitlist, installing the app, setting up a vault from the example seed, keys, MCP as an agent and as the curator (a whole sleep run), and that one account's keys never see another's vault.
+- **worker:** the hosted Worker in the real Workers runtime. `bundle:check` builds it as `wrangler deploy --dry-run` would (no Cloudflare account) and checks the bundle's size, then again with the official instance's config stamped with stand-in ids (`scripts/deploy.mjs`). `smoke` (`apps/worker/scripts/smoke.ts`) starts the fake GitHub and `wrangler dev --local`, then walks it end to end: sign-in and the waitlist, installing the app, setting up a vault from the example seed, keys, MCP as an agent and as the curator (a whole sleep run), and that one account's keys never see another's vault.
 - **workflows:** `scripts/lint-workflows.mjs` runs actionlint on this repo's workflows, the vault template's `validate.yml`, and the `sleep.yml` the hosted app writes into vault repos.
 
 Run the Worker checks locally (they need the dashboard UI built, and leave `apps/worker/.dev.vars` and `.wrangler/` alone: everything goes in a temp dir):
@@ -142,3 +142,69 @@ node scripts/release.mjs
 ```
 
 **Publishing auth** uses [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC). CI stores no npm token, and every release carries provenance. The package's trusted publisher on npmjs.com is GitHub Actions, repo `mehrad77/hippocampus`, workflow `ci.yml`. The release step is idempotent: if a version is already on npm, CI only adds the missing tag and GitHub Release.
+
+**Then the hosted app deploys** to the official instance (`tip` and `deploy` jobs). It deploys only after npm has the release, because the vault template the Worker writes runs `npx @mehrad77/hippocampus@0 …`. It deploys only if the commit is still `main`'s newest: when two merges land close together, the older run's deploy is skipped and the newer one deploys both. The `deploy` job:
+1. Stamps the instance's host and resource ids into `apps/worker/wrangler.deploy.json` (gitignored), with `node scripts/deploy.mjs config`.
+2. Applies the registry's migrations.
+3. Runs `wrangler deploy`, tagged with the release's `vX.Y.Z` and the commit.
+4. Probes the live Worker (`node scripts/deploy.mjs probe`).
+
+If the probe fails, the job rolls the Worker back to the previous version and fails. Rollback restores code, never the registry's schema, which is why migrations must stay compatible with the previous Worker (see AGENTS.md).
+
+## The official instance
+
+The `production` environment in the repo's settings (deployment branches: `main` only) holds everything instance-specific:
+
+| Name | Kind | What |
+| --- | --- | --- |
+| `HIPPO_HOST` | variable | The instance's hostname, served as a Workers Custom Domain |
+| `CF_REGISTRY_DATABASE_ID` | variable | The `hippocampus-registry` D1 database's id |
+| `CF_OAUTH_KV_ID` | variable | The `OAUTH_KV` namespace's id |
+| `CLOUDFLARE_ACCOUNT_ID` | secret | The Cloudflare account |
+| `CLOUDFLARE_API_TOKEN` | secret | Account-owned token: Workers Editor on the `hippocampus` Worker only, D1 Editor (on the registry, if the dashboard offers resource scope), and Workers Routes Write on the zone only if a deploy asks for it |
+
+The Worker's own secrets (`HIPPO_PUBLIC_URL`, `HIPPO_ADMINS`, the GitHub App's) are set on Cloudflare with `wrangler secret` and persist across deploys. They never pass through CI.
+
+**Setting it up** (once, by a maintainer, with their own `wrangler login`, before the first merge that deploys):
+1. Check the zone is in the Cloudflare account, the hostname has no DNS record, and the rate limiters' `namespace_id`s (1001–1004) aren't used by another Worker there. Decide the D1 jurisdiction now (`--jurisdiction eu`): it can't be added later.
+2. Create the GitHub App from [`apps/worker/github-app.manifest.json`](../apps/worker/github-app.manifest.json) with the instance's host (in a copy you don't commit). Note its slug, which may not be `hippocampus`. Convert its key to PKCS#8 ([USAGE.md §8](USAGE.md#running-your-own-instance), step 1).
+3. `pnpm exec wrangler d1 create hippocampus-registry` and `pnpm exec wrangler kv namespace create OAUTH_KV`, in `apps/worker`.
+4. Deploy once by hand, which creates the Worker, its Durable Object namespace and the Custom Domain:
+   ```bash
+   HIPPO_HOST=<host> CF_REGISTRY_DATABASE_ID=<id> CF_OAUTH_KV_ID=<id> node scripts/deploy.mjs config
+   pnpm --filter @hippocampus/dashboard-ui build
+   cd apps/worker
+   pnpm exec wrangler d1 migrations apply REGISTRY --remote -c wrangler.deploy.json
+   pnpm exec wrangler deploy -c wrangler.deploy.json --tag bootstrap
+   ```
+5. Set the Worker's secrets ([USAGE.md §8](USAGE.md#running-your-own-instance), step 3), with `HIPPO_PUBLIC_URL=https://<host>`: `pnpm exec wrangler secret bulk -c wrangler.deploy.json <file>`, from a file outside the repo that you delete afterwards.
+6. Check it: `HIPPO_HOST=<host> node scripts/deploy.mjs probe`. Then by hand:
+   - sign in;
+   - install the app on a throwaway private repo;
+   - mint a key and recall over MCP;
+   - run one sleep;
+   - uninstall and reinstall the app.
+   Workers Logs should show no 500s and no `exceededCpu` (error 1102).
+7. Create the CI token (above). Rehearse with it: deploy, probe, `pnpm exec wrangler rollback -c wrangler.deploy.json --message rehearsal`, deploy again.
+8. Fill in the `production` environment, and make `check`, `worker` and `workflows` required checks on `main`.
+
+**When a deploy fails:**
+- **Before or during `wrangler deploy`:** production is still on the previous version. Fix the cause, then "Re-run failed jobs". The re-run deploys only if the commit is still `main`'s newest; otherwise the newer run deploys it.
+- **At the probe:** the job has already rolled back. Read its log, which names what failed, never values.
+
+Roll back by hand with the stamped config (step 4's first command):
+
+```bash
+pnpm exec wrangler rollback -c wrangler.deploy.json --message "<why>"
+```
+
+Run it in `apps/worker`. It can't cross a Durable Object class migration.
+
+**Rotating the CI token:** create the new token, replace the environment secret, then delete the old token.
+
+**Plan.** The instance starts on Workers Free. Move it to Workers Paid (a dashboard toggle, no code change) when any of these show up:
+- `exceededCpu` (error 1102) in Workers Logs;
+- Cloudflare's emails about KV or D1 daily limits;
+- requests nearing 100,000 a day.
+
+KV writes run out first: each sign-in, OAuth client registration and token refresh writes one, and Free allows 1,000 a day.

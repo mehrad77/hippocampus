@@ -22,7 +22,7 @@ Bundle the CLI, then verify the npm tarball:
 pnpm build && pnpm pack:check
 ```
 
-- `main` is protected: open a pull request, and CI must pass. **Every merge publishes a new npm version**, bumped from your conventional commits (`feat:` minor, `fix:` patch, `!` breaking). See [docs/DEVELOPING.md](docs/DEVELOPING.md#branches-and-releases).
+- `main` is protected: open a pull request, and CI must pass. **Every merge publishes a new npm version**, bumped from your conventional commits (`feat:` minor, `fix:` patch, `!` breaking), and deploys the hosted app to the official instance. See [docs/DEVELOPING.md](docs/DEVELOPING.md#branches-and-releases).
 - **Develop against your own vault without leaking it.** Read [docs/DEVELOPING.md](docs/DEVELOPING.md) first. This repo is public. Vaults are private.
 - Commits use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:` …).
 - Keep examples fictional: use `seeds/example-relocation` names in tests and docs, never real people, IDs, or vault content.

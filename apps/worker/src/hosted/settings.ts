@@ -57,8 +57,15 @@ export function hostedSettings(env: HostedVars): HostedSettings {
   const bad = ids.filter((id) => !/^\d+$/.test(id));
   // Logins can be renamed and then claimed by someone else; the numeric id can't.
   if (bad.length) throw new Error(`HIPPO_ADMINS lists GitHub user ids (numbers), not logins: ${bad.join(", ")}. Find yours at https://api.github.com/users/<login>`);
+  const publicUrl = new URL(env.HIPPO_PUBLIC_URL!);
+  const local = isLoopback(publicUrl);
+  // Over plain http, sign-in cookies lose `Secure` and the `__Host-` prefix.
+  if (publicUrl.protocol !== "https:" && !(local && publicUrl.protocol === "http:")) throw new Error("HIPPO_PUBLIC_URL must be an https URL");
+  // These send the app's client secret and JWTs elsewhere, so they're for a fake GitHub on this machine only.
+  const overrides = (["GITHUB_API_URL", "GITHUB_OAUTH_URL"] as const).filter((k) => env[k]?.trim());
+  if (overrides.length && !local) throw new Error(`Unset ${overrides.join(" and ")}: only local development against a fake GitHub uses them`);
   return {
-    publicUrl: new URL(env.HIPPO_PUBLIC_URL!).origin,
+    publicUrl: publicUrl.origin,
     appId: env.GITHUB_APP_ID!.trim(),
     appSlug: env.GITHUB_APP_SLUG!.trim(),
     clientId: env.GITHUB_APP_CLIENT_ID!.trim(),
@@ -72,6 +79,9 @@ export function hostedSettings(env: HostedVars): HostedSettings {
 }
 
 const trimSlash = (url: string | undefined) => url?.trim().replace(/\/$/, "") || undefined;
+
+/** This machine: where local development and the smoke test run the Worker. */
+export const isLoopback = (url: URL) => ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
 
 export const apiUrlOf = (s: Pick<HostedSettings, "apiUrl">) => s.apiUrl ?? "https://api.github.com";
 export const oauthUrlOf = (s: Pick<HostedSettings, "oauthUrl">) => s.oauthUrl ?? "https://github.com";

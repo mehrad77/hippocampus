@@ -11,14 +11,19 @@ import { SLEEP_WORKFLOW } from "../apps/worker/src/hosted/sleep-workflow.ts";
 const ROOT = join(import.meta.dirname, "..");
 
 interface Step {
+  id?: string;
+  if?: string;
   uses?: string;
   run?: string;
   with?: Record<string, unknown>;
+  env?: Record<string, string>;
 }
 interface Job {
   if?: string;
   needs?: string | string[];
   permissions?: unknown;
+  environment?: unknown;
+  concurrency?: { group?: string; "cancel-in-progress"?: unknown };
   "timeout-minutes"?: number;
   steps: Step[];
 }
@@ -101,5 +106,47 @@ describe("this repo's CI", () => {
     expect(w.concurrency?.group).toBe("ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}");
     expect(w.concurrency?.["cancel-in-progress"]).toBe(true);
     expect(w.jobs.release!.permissions).toEqual({ contents: "write", "id-token": "write" });
+  });
+
+  describe("deploying the hosted app", () => {
+    const { tip, deploy } = w.jobs;
+    const MAIN = "github.event_name == 'push' && github.ref == 'refs/heads/main'";
+
+    it("deploys after the release, and only main's newest commit", () => {
+      expect(tip?.needs).toBe("release");
+      expect(tip?.if).toBe(MAIN);
+      expect(deploy?.needs).toBe("tip");
+      expect(deploy?.if).toBe("needs.tip.outputs.current == 'true'");
+      // Applies the registry's migrations before the code that needs them, and probes what went live.
+      const runs = deploy!.steps.map((s) => s.run ?? "");
+      const at = (re: RegExp) => runs.findIndex((r) => re.test(r));
+      expect(at(/deploy\.mjs config/)).toBeLessThan(at(/d1 migrations apply REGISTRY --remote -c wrangler\.deploy\.json/));
+      expect(at(/d1 migrations apply/)).toBeLessThan(at(/wrangler deploy -c wrangler\.deploy\.json/));
+      expect(at(/wrangler deploy -c/)).toBeLessThan(at(/deploy\.mjs probe/));
+    });
+
+    it("runs one deploy at a time in the main-only production environment, reading the repo only", () => {
+      expect(deploy?.environment).toMatchObject({ name: "production" });
+      expect(deploy?.concurrency).toEqual({ group: "deploy-production", "cancel-in-progress": false });
+      expect(deploy?.permissions).toEqual({ contents: "read" });
+    });
+
+    it("hands the Cloudflare token only to wrangler, and to no other job", () => {
+      for (const [name, job] of Object.entries(w.jobs)) {
+        for (const step of job.steps) {
+          const usesSecrets = JSON.stringify(step).includes("secrets.");
+          if (name === "deploy" && usesSecrets) expect(step.run, step.id ?? step.run).toMatch(/^pnpm exec wrangler |\n\s*pnpm exec wrangler /);
+          else expect(usesSecrets, `${name}: ${step.run ?? step.uses}`).toBe(false);
+        }
+      }
+      const checkout = deploy!.steps.find((s) => s.uses?.startsWith("actions/checkout@"));
+      expect(checkout?.with).toMatchObject({ "persist-credentials": false });
+    });
+
+    it("rolls back only a version this run put live", () => {
+      const rollback = deploy!.steps.find((s) => s.run?.includes("wrangler rollback"));
+      expect(rollback?.if).toBe("failure() && steps.deploy.outcome == 'success'");
+      expect(deploy!.steps.find((s) => s.id === "deploy")?.run).toContain("wrangler deploy");
+    });
   });
 });
