@@ -15,6 +15,7 @@
     "build": "pnpm --filter @mehrad77/hippocampus run build",
     "dev:dashboard": "pnpm --filter @hippocampus/dashboard-ui dev",
     "pack:check": "node scripts/pack-check.mjs",
+    "gen:template": "node scripts/gen-template.mjs",
     "typecheck": "turbo run typecheck",
     "test": "vitest run",
     "test:watch": "vitest"
