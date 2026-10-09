@@ -4,6 +4,10 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 
 ## [Unreleased]
 
+### Added
+- `--github owner/repo[#branch]` (or `HIPPO_GITHUB_REPO` + `HIPPO_GITHUB_TOKEN`): run `serve`, `sleep`, `remember` and the other commands against the vault repo on GitHub without a checkout. Every write is one atomic commit.
+- `VaultStore.apply()` for atomic batches, and `StoreConflictError` when a batch collides with a concurrent change.
+
 ## [0.1.0]
 
 ### Added

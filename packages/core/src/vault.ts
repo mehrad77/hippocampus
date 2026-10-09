@@ -4,7 +4,7 @@ import { basename, displayName, parseEntity, renderEntity, type Entity } from ".
 import { parseEpisode, renderEpisode, type Episode } from "./episode.ts";
 import { parseDoc, renderDoc } from "./markdown.ts";
 import { DisputeFrontmatter, type Claim, type HippoConfig } from "./schema.ts";
-import type { VaultStore } from "./store.ts";
+import { applyChanges, type Change, type CommitMeta, type VaultStore } from "./store.ts";
 import { localParts, normalizeName, slugify } from "./text.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
@@ -320,36 +320,36 @@ export class Vault {
     return this.dirty.size > 0 || this.pendingFiles.size > 0 || this.removals.size > 0;
   }
 
-  /** Persist all changes. Returns the paths written or removed. */
-  async flush(): Promise<string[]> {
-    const changed: string[] = [];
+  /** Everything `flush()` would persist, in order. */
+  changes(): Change[] {
+    const out: Change[] = [];
     const byPath = new Map<string, Entity>([...this.entities.values()].map((e) => [e.path, e]));
     const disputesByPath = new Map<string, Dispute>([...this.disputes.values()].map((d) => [d.path, d]));
     for (const path of this.dirty) {
       const e = byPath.get(path);
       if (e) {
-        await this.store.write(path, renderEntity(e));
-        changed.push(path);
+        out.push({ path, content: renderEntity(e) });
         continue;
       }
       const d = disputesByPath.get(path);
-      if (d) {
-        await this.store.write(path, renderDoc({ ...d.fm }, d.body));
-        changed.push(path);
-      }
+      if (d) out.push({ path, content: renderDoc({ ...d.fm }, d.body) });
     }
-    for (const [path, content] of this.pendingFiles) {
-      await this.store.write(path, content);
-      changed.push(path);
-    }
-    for (const path of this.removals) {
-      await this.store.remove(path);
-      changed.push(path);
-    }
+    for (const [path, content] of this.pendingFiles) out.push({ path, content });
+    for (const path of this.removals) out.push({ path, remove: true });
+    return out;
+  }
+
+  /**
+   * Persist all changes as one batch (a single commit on stores that support it).
+   * Returns the paths written or removed.
+   */
+  async flush(meta: CommitMeta = { message: "chore: update vault" }): Promise<string[]> {
+    const changes = this.changes();
+    await applyChanges(this.store, changes, meta);
     this.dirty.clear();
     this.pendingFiles.clear();
     this.removals.clear();
-    return changed;
+    return changes.map((c) => c.path);
   }
 }
 

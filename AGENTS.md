@@ -18,9 +18,10 @@ This repo is **public**. Users' memories live in **separate private vault repos*
 
 | Path | What |
 | --- | --- |
-| `packages/core` | zod schemas (`schema.ts`), markdown + managed regions (`markdown.ts`), vault model (`vault.ts`), reconcile rules (`reconcile.ts`), fact/relation/quest ops (`ops.ts`), search (`search.ts`), handbook (`handbook.ts`), service used by MCP/CLI (`service.ts`), age secrets (`secrets.ts`), format versioning (`migrations.ts`) |
+| `packages/core` | storage port + `MemoryStore` + adapter contract tests (`store.ts`, `store.contract.ts`), zod schemas (`schema.ts`), markdown + managed regions (`markdown.ts`), vault model (`vault.ts`), reconcile rules (`reconcile.ts`), fact/relation/quest ops (`ops.ts`), search (`search.ts`), handbook (`handbook.ts`), service used by MCP/CLI (`service.ts`), age secrets (`secrets.ts`), format versioning (`migrations.ts`) |
 | `packages/curator` | LLM adapter (`llm.ts`, AI SDK; `prompt` vs `native` structured output), prompts and schemas (`prompts.ts`), sleep pipeline (`sleep.ts`) |
 | `packages/mcp` | MCP tools and resources over `HippoService` (`server.ts`) |
+| `packages/store-github` | `VaultStore` over the GitHub API: pinned-commit reads, atomic commits (`github-store.ts`), `FakeGitHub` for tests (`fake-github.ts`) |
 | `apps/cli` | `hippo` CLI (`src/main.ts`, `src/git.ts`), published as `@mehrad77/hippocampus` (tsup bundle) |
 | `vault-template/` | What `hippo init` copies: config, Obsidian templates, Dataview dashboards, vault CI |
 | `seeds/example-relocation/` | Fictional example campaign |

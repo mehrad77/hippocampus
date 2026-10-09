@@ -10,6 +10,7 @@ import {
   HANDBOOK_PATH,
   HippoService,
   Vault,
+  applyChanges,
   decryptSecret,
   generateKeyPair,
   isSecretRef,
@@ -17,10 +18,12 @@ import {
   renderHandbook,
   secretPath,
   vaultVersionStatus,
+  type VaultStore,
 } from "@hippocampus/core";
 import { FsStore } from "@hippocampus/core/node";
-import { aiSdkLLM, llmConfigFromEnv, sleep, type SleepReport } from "@hippocampus/curator";
+import { aiSdkLLM, commitMessage, llmConfigFromEnv, sleep, type SleepReport } from "@hippocampus/curator";
 import { createHippoServer } from "@hippocampus/mcp";
+import { GitHubStore } from "@hippocampus/store-github";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Command } from "commander";
@@ -46,10 +49,26 @@ const IDENTITY_FILE = process.env.HIPPO_AGE_IDENTITY_FILE ? expandHome(process.e
 const program = new Command()
   .name("hippo")
   .description("Hippocampus: shared, curated memory for a party of agents (an Obsidian vault run like a TTRPG campaign wiki).")
-  .option("-v, --vault <dir>", "vault directory", process.env.HIPPO_VAULT ?? ".");
+  .option("-v, --vault <dir>", "vault directory", process.env.HIPPO_VAULT ?? ".")
+  .option("--github <owner/repo[#branch]>", "use the vault repo on GitHub directly, without a checkout (token from HIPPO_GITHUB_TOKEN)", process.env.HIPPO_GITHUB_REPO);
 
 const vaultDir = () => resolve(expandHome(program.opts<{ vault: string }>().vault));
+const github = () => program.opts<{ github?: string }>().github;
 const err = (msg: string) => process.stderr.write(`${msg}\n`);
+
+/** The vault: a GitHub repo with `--github`, else the local directory. */
+function openStore(): VaultStore {
+  const repo = github();
+  if (!repo) return new FsStore(vaultDir());
+  const token = process.env.HIPPO_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN;
+  if (!token) throw new Error("--github needs a token in HIPPO_GITHUB_TOKEN (fine-grained, Contents: read and write on the vault repo)");
+  const [name, branch] = repo.split("#");
+  return new GitHubStore({ repo: name!, branch: branch || undefined, token, apiUrl: process.env.HIPPO_GITHUB_API_URL });
+}
+
+function localOnly(command: string): void {
+  if (github()) throw new Error(`\`hippo ${command}\` works on a local vault directory; drop --github`);
+}
 
 program
   .command("init")
@@ -57,6 +76,7 @@ program
   .option("--seed <name-or-path>", "also copy a seed campaign: a bundled name from seeds/ (e.g. example-relocation) or a directory path")
   .description("Create a new vault from the template (and optionally a seed campaign).")
   .action(async (dir: string, opts: { seed?: string }) => {
+    localOnly("init");
     const target = resolve(expandHome(dir));
     if (existsSync(join(target, CONFIG_PATH))) throw new Error(`${target} already has ${CONFIG_PATH}`);
     await mkdir(target, { recursive: true });
@@ -87,7 +107,7 @@ program
   .option("-a, --agent <id>", "bind this connection to an agent id", process.env.HIPPO_AGENT)
   .option("--http <port>", "serve streamable HTTP on 127.0.0.1:<port>/mcp instead of stdio (agent via ?agent=)")
   .action(async (opts: { agent?: string; http?: string }) => {
-    const service = new HippoService(new FsStore(vaultDir()));
+    const service = new HippoService(openStore());
     if (!opts.http) {
       await createHippoServer({ service, agent: opts.agent }).connect(new StdioServerTransport());
       return;
@@ -110,7 +130,7 @@ program
 
 program
   .command("sleep")
-  .description("Consolidate the inbox into canon: git pull → curate with the LLM → commit → push.")
+  .description("Consolidate the inbox into canon: git pull → curate with the LLM → commit → push. With --github, commits straight to the repo.")
   .option("--limit <n>", "max episodes this run")
   .option("--dry-run", "run the curator but write nothing")
   .option("--no-git", "don't pull/commit/push")
@@ -118,21 +138,24 @@ program
   .action(async (opts: { limit?: string; dryRun?: boolean; git: boolean; push: boolean }) => {
     const dir = vaultDir();
     const git = new Git(dir);
-    const useGit = opts.git && git.isRepo() && !opts.dryRun;
+    // On GitHub the store's own atomic commit is the git step.
+    const useGit = !github() && opts.git && git.isRepo() && !opts.dryRun;
     if (useGit && (await git.hasUpstream())) {
       err("↓ git pull");
       await git.pull();
     }
     const llmConfig = llmConfigFromEnv();
     err(`🌙 sleeping with ${llmConfig.provider}:${llmConfig.model}`);
+    const store = openStore();
     const report = await sleep({
-      store: new FsStore(dir),
+      store,
       llm: aiSdkLLM(llmConfig),
       limit: opts.limit ? Number(opts.limit) : undefined,
       dryRun: opts.dryRun,
       log: err,
     });
     printReport(report);
+    if (store instanceof GitHubStore && report.changed.length) err(`✓ committed ${(await store.head()).slice(0, 7)} to ${store.repo}#${store.branch}`);
     if (useGit && report.changed.length) {
       await git.stage(report.changed);
       if (await git.hasStaged()) {
@@ -151,8 +174,8 @@ program
   .command("handbook")
   .description("Regenerate HANDBOOK.md.")
   .action(async () => {
-    const store = new FsStore(vaultDir());
-    await store.write(HANDBOOK_PATH, renderHandbook(await Vault.load(store)));
+    const store = openStore();
+    await applyChanges(store, [{ path: HANDBOOK_PATH, content: renderHandbook(await Vault.load(store)) }], { message: "docs: regenerate handbook" });
     err(`✓ wrote ${HANDBOOK_PATH}`);
   });
 
@@ -160,7 +183,7 @@ program
   .command("validate")
   .description("Load the vault and report problems (duplicate names, invalid frontmatter).")
   .action(async () => {
-    const vault = await Vault.load(new FsStore(vaultDir()), { skipVersionCheck: true });
+    const vault = await Vault.load(openStore(), { skipVersionCheck: true });
     const status = vaultVersionStatus(vault.config);
     err(`vault format v${vault.config.version} (tool v${CURRENT_VAULT_VERSION}${status === "current" ? "" : `: ${status}, run \`hippo migrate\``})`);
     if (status !== "current") process.exitCode = 1;
@@ -174,9 +197,10 @@ program
   .description("Upgrade the vault's file format to what this version of Hippocampus expects.")
   .option("--dry-run", "list the migrations without applying them")
   .action(async (opts: { dryRun?: boolean }) => {
-    const store = new FsStore(vaultDir());
+    const store = openStore();
     const vault = await Vault.load(store, { skipVersionCheck: true });
     const r = await migrate(store, vault.config, { dryRun: opts.dryRun });
+    if (store instanceof GitHubStore && !opts.dryRun) await store.commit({ message: `chore: migrate vault format to v${r.to}` });
     if (!r.applied.length) {
       err(`✓ vault format v${r.to} is up to date`);
       return;
@@ -189,9 +213,9 @@ program
   .command("fmt")
   .description("Re-render every note (normalize frontmatter, regenerate facts/relations/clocks regions).")
   .action(async () => {
-    const vault = await Vault.load(new FsStore(vaultDir()));
+    const vault = await Vault.load(openStore());
     for (const e of vault.entities.values()) vault.markDirty(e);
-    const changed = await vault.flush();
+    const changed = await vault.flush({ message: "style: re-render notes" });
     err(`✓ rendered ${changed.length} notes`);
   });
 
@@ -203,7 +227,7 @@ program
   .option("-k, --kind <kind>", "observation | fact | decision | task | beat | question", "fact")
   .option("--secret", "contains secret values")
   .action(async (words: string[], opts: { agent?: string; kind: "fact"; secret?: boolean }) => {
-    const store = new FsStore(vaultDir());
+    const store = openStore();
     const agent = opts.agent ?? (await Vault.load(store)).config.human;
     const r = await new HippoService(store).remember(agent, { text: words.join(" "), kind: opts.kind, secret: opts.secret });
     err(`✓ ${r.path}`);
@@ -216,14 +240,16 @@ secrets
   .description(`Create an age identity (${IDENTITY_FILE}) and set its recipient in ${CONFIG_PATH}.`)
   .action(async () => {
     if (existsSync(IDENTITY_FILE)) throw new Error(`${IDENTITY_FILE} already exists; refusing to overwrite`);
+    const store = openStore();
+    const config = await store.read(CONFIG_PATH);
+    if (config === undefined) throw new Error(`no ${CONFIG_PATH} here; is this a vault?`);
     const { identity, recipient } = await generateKeyPair();
     await mkdir(dirname(IDENTITY_FILE), { recursive: true });
     await writeFile(IDENTITY_FILE, `${identity}\n`, { mode: 0o600 });
     await chmod(IDENTITY_FILE, 0o600);
-    const configPath = join(vaultDir(), CONFIG_PATH);
-    const doc = parseDocument(await readFile(configPath, "utf8"));
+    const doc = parseDocument(config);
     doc.setIn(["secrets", "recipient"], recipient);
-    await writeFile(configPath, doc.toString());
+    await applyChanges(store, [{ path: CONFIG_PATH, content: doc.toString() }], { message: "chore: set the secrets recipient" });
     err(`✓ identity saved to ${IDENTITY_FILE} (back it up, e.g. in your password manager)\n✓ recipient ${recipient} written to ${CONFIG_PATH}`);
   });
 
@@ -233,7 +259,7 @@ secrets
   .argument("[field]")
   .description("Decrypt secret facts of an entity.")
   .action(async (ref: string, field?: string) => {
-    const store = new FsStore(vaultDir());
+    const store = openStore();
     const vault = await Vault.load(store);
     const e = vault.resolve(ref);
     if (!e) throw new Error(`no entity "${ref}"`);
@@ -250,27 +276,6 @@ function printReport(r: SleepReport): void {
     `\n${r.consolidated.length} consolidated · ${r.failed.length} failed · ${r.remaining} remaining · ${r.summaries.length} summaries · ${r.changed.length} files changed`,
   );
   for (const w of r.warnings) err(`⚠ ${w}`);
-}
-
-function commitMessage(r: SleepReport): string {
-  const lines = r.consolidated.map((c) => {
-    const bits = [
-      c.touched.length ? `touched ${c.touched.join(", ")}` : "nothing durable",
-      c.created.length ? `new ${c.created.join(", ")}` : "",
-      c.facts.some((f) => f.decision === "dispute") ? "⚖ dispute" : "",
-      c.quests.length ? c.quests.join("; ") : "",
-    ].filter(Boolean);
-    return `- ${c.id} (${c.agent}): ${bits.join(" · ")}`;
-  });
-  return [
-    `chore(sleep): consolidate ${r.consolidated.length} episode${r.consolidated.length === 1 ? "" : "s"}`,
-    "",
-    ...r.rulings.map((x) => `- ruling: ${x}`),
-    ...lines,
-    ...r.failed.map((f) => `- ✗ ${f.id}: ${f.error.slice(0, 120)}`),
-    "",
-    `model: ${r.model}`,
-  ].join("\n");
 }
 
 program.parseAsync().catch((e: unknown) => {

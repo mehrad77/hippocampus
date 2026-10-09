@@ -66,6 +66,9 @@ importers:
       '@hippocampus/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
+      '@hippocampus/store-github':
+        specifier: workspace:*
+        version: link:../../packages/store-github
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.28)(tsx@4.23.15)(typescript@5.9.3)(yaml@2.9.1)
@@ -123,6 +126,12 @@ importers:
       zod:
         specifier: ^4.6.5
         version: 4.6.5
+
+  packages/store-github:
+    dependencies:
+      '@hippocampus/core':
+        specifier: workspace:*
+        version: link:../core
 
 packages:
 

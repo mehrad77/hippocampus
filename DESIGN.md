@@ -56,7 +56,7 @@ Key properties:
 - **One writer.** Agents only append new files to `inbox/`, so agent writes never collide. Everything else is written by the curator (and the human). In the Worker, every GitHub write goes through the Scribe Durable Object as an atomic multi-file commit.
 - **The curator is a client, not a component.** It pulls pending episodes and writes structured changes back, so it can run wherever the LLM is, including next to a local model.
 - **Human edits win.** The human's word outranks every agent. The curator only rewrites *managed regions* of a note and never touches human prose.
-- **Ports and adapters.** `core` defines a `VaultStore` port. Adapters: filesystem (local) now, GitHub API (Worker) later.
+- **Ports and adapters.** `core` defines a `VaultStore` port. Adapters: filesystem (local) and GitHub API (no checkout; the Worker's backend). Stores with `apply()` persist each flush as one atomic batch.
 
 ## 2. Vault structure (TTRPG campaign wiki)
 
@@ -207,8 +207,9 @@ seeds/             example campaigns (fictional)
 | LLM adapter | ✅ | `prompt` structured mode (default for local servers) and `native` (hosted). Per-call timeout and token cap |
 | MCP (stdio + local HTTP) | ✅ | 8 tools + 2 resources |
 | `hippo sleep` with git | ✅ | pull --rebase --autostash → curate → stage own paths → commit → push |
+| GitHub API store | ✅ | `packages/store-github`: reads pinned to one commit, blob cache by sha, each flush is one commit via the Git Data API, rebases past unrelated pushes, `StoreConflictError` on same-file races. `hippo --github owner/repo` |
 | Distribution | ✅ | npm package (tsup bundle + template + seeds), vault format version + `hippo migrate`, privacy guard + pre-commit hook, CI for this repo and for vaults |
-| Worker, OAuth, embeddings | ⏳ | M3–M5 |
+| Persistent index, Worker, OAuth, embeddings | ⏳ | M3–M5 |
 
 **Lessons from local models.** LM Studio with a reasoning model returned grammar-constrained JSON in `reasoning_content`, and constrained decoding suppressed its thinking, which made classification worse. Local providers therefore default to `prompt` mode:
 - The JSON Schema goes in the system prompt.

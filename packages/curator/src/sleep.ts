@@ -101,8 +101,32 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
   vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
   report.remaining = vault.episodes.length;
   report.warnings.push(...vault.warnings);
-  if (!opts.dryRun) report.changed = await vault.flush();
+  if (!opts.dryRun) report.changed = await vault.flush({ message: commitMessage(report), author: CURATOR_AUTHOR });
   return report;
+}
+
+/** Git identity for the curator's commits, so they're easy to tell apart from the human's. */
+export const CURATOR_AUTHOR = { name: "Hippocampus", email: "hippocampus@users.noreply.github.com" };
+
+export function commitMessage(r: SleepReport): string {
+  const lines = r.consolidated.map((c) => {
+    const bits = [
+      c.touched.length ? `touched ${c.touched.join(", ")}` : "nothing durable",
+      c.created.length ? `new ${c.created.join(", ")}` : "",
+      c.facts.some((f) => f.decision === "dispute") ? "⚖ dispute" : "",
+      c.quests.length ? c.quests.join("; ") : "",
+    ].filter(Boolean);
+    return `- ${c.id} (${c.agent}): ${bits.join(" · ")}`;
+  });
+  return [
+    `chore(sleep): consolidate ${r.consolidated.length} episode${r.consolidated.length === 1 ? "" : "s"}`,
+    "",
+    ...r.rulings.map((x) => `- ruling: ${x}`),
+    ...lines,
+    ...r.failed.map((f) => `- ✗ ${f.id}: ${f.error.slice(0, 120)}`),
+    "",
+    `model: ${r.model}`,
+  ].join("\n");
 }
 
 async function consolidate(vault: Vault, llm: LLM, ep: Episode): Promise<EpisodeReport> {

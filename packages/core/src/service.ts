@@ -5,7 +5,7 @@ import { humanText } from "./markdown.ts";
 import { applyQuestUpdate, type QuestUpdate } from "./ops.ts";
 import { SearchIndex } from "./search.ts";
 import type { Clock, FactStatus } from "./schema.ts";
-import type { VaultStore } from "./store.ts";
+import { StoreConflictError, type VaultStore } from "./store.ts";
 import { fold, isoDate, truncate } from "./text.ts";
 import { Vault, VaultError } from "./vault.ts";
 import { link, unwrapLink } from "./wikilink.ts";
@@ -71,6 +71,7 @@ export class HippoService {
 
   /** Load fresh on every call so edits from Obsidian, git pulls and the curator are always visible. */
   async vault(): Promise<Vault> {
+    await this.store.refresh?.();
     return Vault.load(this.store, this.opts);
   }
 
@@ -88,7 +89,7 @@ export class HippoService {
     const id = vault.party(agent)?.slug ?? agent;
     const ep = createEpisode(vault.config.folders.inbox, { ...input, agent: id }, this.opts.now?.());
     vault.addEpisode(ep);
-    await vault.flush();
+    await vault.flush({ message: `remember(${id}): ${ep.id}` });
     return { id: ep.id, path: ep.path };
   }
 
@@ -240,15 +241,22 @@ export class HippoService {
   }
 
   async updateQuest(agent: string, ref: string, update: QuestUpdate) {
-    const vault = await this.vault();
-    const quest = vault.resolve(ref);
-    if (!quest || quest.fm.type !== "quest") throw new VaultError(`no quest "${ref}"`);
-    const changes = applyQuestUpdate(vault, quest, update, agent);
-    if (changes.length) {
-      vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
-      await vault.flush();
+    // Read-modify-write on canon: if someone else changed the quest meanwhile, redo it on fresh state once.
+    for (let attempt = 0; ; attempt++) {
+      const vault = await this.vault();
+      const quest = vault.resolve(ref);
+      if (!quest || quest.fm.type !== "quest") throw new VaultError(`no quest "${ref}"`);
+      const changes = applyQuestUpdate(vault, quest, update, agent);
+      try {
+        if (changes.length) {
+          vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
+          await vault.flush({ message: `quest(${quest.slug}): ${changes.join("; ")}` });
+        }
+        return { quest: link(quest.slug), changes };
+      } catch (err) {
+        if (!(err instanceof StoreConflictError) || attempt > 0) throw err;
+      }
     }
-    return { quest: link(quest.slug), changes };
   }
 }
 

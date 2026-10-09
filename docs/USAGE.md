@@ -69,6 +69,14 @@ npx @mehrad77/hippocampus -v ~/vaults/my-campaign serve --http 8765
 
 Tools: `onboard`, `remember`, `recall`, `get`, `neighbors`, `ask_canon`, `briefing`, `update_quest`.
 
+**Without a checkout:** every command except `init` can work on the GitHub repo directly. Each write becomes one commit through the GitHub API. If someone pushed to the same file in the meantime, the write is refused instead of overwriting their change. Use a fine-grained token with **Contents: read and write** on the vault repo only:
+
+```bash
+HIPPO_GITHUB_TOKEN=github_pat_… npx @mehrad77/hippocampus --github you/my-campaign serve --agent game-master
+```
+
+Append `#branch` to use a branch other than `main`, or set `HIPPO_GITHUB_REPO` instead of passing `--github`.
+
 ## 5. Nightly sleep
 
 `sleep` does the following in order:
@@ -84,7 +92,7 @@ Failed episodes stay in the inbox for the next night.
 HIPPO_LLM_PROVIDER=lmstudio HIPPO_LLM_MODEL=google/gemma-4-26b-a4b-qat npx @mehrad77/hippocampus@0.1 -v ~/vaults/my-campaign sleep
 ```
 
-Pin the version (`@0.1`) so upgrades are deliberate. To schedule it on macOS, use [ops/com.hippocampus.sleep.plist](../ops/com.hippocampus.sleep.plist). Elsewhere, use cron or systemd. Models that worked well locally are MoE models with ~4B active parameters. Very long "thinking" models can hit the per-call timeout (`HIPPO_LLM_TIMEOUT_MS`). See [.env.example](../.env.example) for all settings.
+With `--github you/my-campaign`, steps 1 and 5 collapse into a single commit made through the API, with no clone needed. Pin the version (`@0.1`) so upgrades are deliberate. To schedule it on macOS, use [ops/com.hippocampus.sleep.plist](../ops/com.hippocampus.sleep.plist). Elsewhere, use cron or systemd. Models that worked well locally are MoE models with ~4B active parameters. Very long "thinking" models can hit the per-call timeout (`HIPPO_LLM_TIMEOUT_MS`). See [.env.example](../.env.example) for all settings.
 
 ## 6. The daily loop
 
