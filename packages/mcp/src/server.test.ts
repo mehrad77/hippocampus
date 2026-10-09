@@ -23,6 +23,7 @@ describe("MCP server", () => {
     const { client } = await connect("residency-agent");
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
     expect(tools).toEqual(["ask_canon", "briefing", "get", "neighbors", "onboard", "recall", "remember", "update_quest"]);
+    expect((await client.listResources()).resources.map((r) => r.uri)).toEqual(["hippo://handbook"]);
     const res = await client.readResource({ uri: "hippo://handbook" });
     expect((res.contents[0] as { text: string }).text).toContain("Player's Handbook");
   });
@@ -61,5 +62,55 @@ describe("MCP server", () => {
     const writeOnly = await connect("campus-agent", ["remember"]);
     expect((await writeOnly.client.listTools()).tools.map((t) => t.name)).toEqual(["remember"]);
     await expect(writeOnly.client.readResource({ uri: "hippo://handbook" })).rejects.toThrow();
+    await expect(writeOnly.client.readResource({ uri: "hippo://dashboard/overview" })).rejects.toThrow(/not found/);
+    await expect(writeOnly.client.readResource({ uri: "hippo://dashboard/whoami" })).rejects.toThrow(/not found/);
+  });
+
+  it("reopens quest objectives", async () => {
+    const { call } = await connect("residency-agent");
+    expect((await call("update_quest", { quest: "residence-permit", complete: ["health insurance"] })).text).toContain("✓ Get health insurance");
+    const r = await call("update_quest", { quest: "residence-permit", reopen: ["health insurance"] });
+    expect(r.isError).toBeFalsy();
+    expect(r.text).toContain("○ Get health insurance");
+    expect((await call("get", { entity: "residence-permit" })).text).toContain("- done: false\n    text: Get health insurance");
+  });
+});
+
+describe("dashboard resources", () => {
+  const read = async (client: Client, uri: string) => {
+    const res = await client.readResource({ uri });
+    const content = res.contents[0] as { mimeType: string; text: string };
+    expect(content.mimeType).toBe("application/json");
+    return JSON.parse(content.text) as Record<string, unknown>;
+  };
+
+  it("serves JSON read models with the read scope, outside resources/list", async () => {
+    const { client } = await connect("campus-agent", ["read"]);
+    expect((await client.listResources()).resources.map((r) => r.uri)).toEqual(["hippo://handbook"]);
+    expect(await read(client, "hippo://dashboard/whoami")).toEqual({ agent: "campus-agent", scopes: ["read"], campaign: "lisbon-arc", human: "player" });
+    expect(await read(client, "hippo://dashboard/overview")).toMatchObject({ campaign: "lisbon-arc", counts: { quests: { active: 1 } } });
+    expect(((await read(client, "hippo://dashboard/catalog")).entities as { slug: string }[]).map((e) => e.slug)).toContain("migration-agency");
+    expect(await read(client, "hippo://dashboard/graph")).toMatchObject({ nodes: expect.any(Array), edges: [{ from: "residency-agent", rel: "leads", to: "residence-permit" }] });
+    expect(await read(client, "hippo://dashboard/entity/residence-permit")).toMatchObject({ card: { slug: "residence-permit" }, quest: { owner: { slug: "residency-agent" } } });
+    expect(await read(client, "hippo://dashboard/chronicle/latest")).toMatchObject({ days: [] });
+    expect(await read(client, "hippo://dashboard/chronicle/2026-08")).toMatchObject({ month: "2026-08", days: [] });
+  });
+
+  it("decodes template parameters", async () => {
+    const { client } = await connect("campus-agent");
+    const hits = await read(client, `hippo://dashboard/search?q=${encodeURIComponent("Lisbon Migration")}`);
+    expect((hits.entities as { slug: string }[])[0]?.slug).toBe("migration-agency");
+    expect((await read(client, "hippo://dashboard/search?q=Lisbon+Migration")).entities).toEqual(hits.entities);
+    expect((await read(client, "hippo://dashboard/search?q=residency&limit=1")).entities).toHaveLength(1);
+    await expect(client.readResource({ uri: "hippo://dashboard/search?q=residency&limit=99" })).rejects.toThrow(/limit must be/);
+    const byAlias = await read(client, `hippo://dashboard/entity/${encodeURIComponent("[[Lisbon Migration]]")}`);
+    expect(byAlias).toMatchObject({ card: { slug: "migration-agency", title: "Agência de Migração" } });
+  });
+
+  it("reports everything for an unbound local connection, and errors for unknown views and entities", async () => {
+    const { client } = await connect();
+    expect(await read(client, "hippo://dashboard/whoami")).toEqual({ agent: null, scopes: ["read", "remember", "quest"], campaign: "lisbon-arc", human: "player" });
+    await expect(client.readResource({ uri: "hippo://dashboard/secrets" })).rejects.toThrow(/no dashboard view "secrets"/);
+    await expect(client.readResource({ uri: "hippo://dashboard/entity/nobody-here" })).rejects.toMatchObject({ code: -32602, data: { code: "VAULT" } });
   });
 });

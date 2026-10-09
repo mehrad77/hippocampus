@@ -1,5 +1,7 @@
-import { HippoService, VaultError } from "@hippocampus/core";
+import { HippoService, VaultError, VaultVersionError } from "@hippocampus/core";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import type { jsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/types.js";
 import { stringify } from "yaml";
 import { z } from "zod";
@@ -34,6 +36,36 @@ async function guard(fn: () => Promise<ToolResult>): Promise<ToolResult> {
   } catch (err) {
     const message = err instanceof VaultError || err instanceof Error ? err.message : String(err);
     return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+  }
+}
+
+/** What `hippo://dashboard/whoami` returns: this connection's identity and the vault it serves. */
+export interface DashboardWhoami {
+  /** `null` when the connection isn't bound to an agent. */
+  agent: string | null;
+  scopes: Scope[];
+  campaign: string;
+  human: string;
+}
+
+/** Vault errors become InvalidParams with a stable `data.code`, so the dashboard can answer 400 or 409 like it does locally. */
+async function readOrThrow(fn: () => Promise<unknown>): Promise<unknown> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof VaultVersionError) throw new McpError(ErrorCode.InvalidParams, err.message, { code: "VERSION" });
+    if (err instanceof VaultError) throw new McpError(ErrorCode.InvalidParams, err.message, { code: "VAULT" });
+    throw err;
+  }
+}
+
+/** Template variables arrive still percent-encoded. */
+function param(v: string | string[] | undefined, form = false): string {
+  const raw = Array.isArray(v) ? v.join(",") : (v ?? "");
+  try {
+    return decodeURIComponent(form ? raw.replace(/\+/g, " ") : raw);
+  } catch {
+    throw new VaultError(`badly encoded URI parameter "${raw}"`);
   }
 }
 
@@ -189,6 +221,7 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
           quest: z.string(),
           status: z.enum(["active", "blocked", "done", "failed", "dormant"]).optional(),
           complete: z.array(z.string()).optional().describe("Objectives now done (fuzzy-matched)"),
+          reopen: z.array(z.string()).optional().describe("Objectives to mark not done again (fuzzy-matched)"),
           add: z.array(z.string()).optional().describe("New objectives"),
           clock: z
             .object({
@@ -205,8 +238,8 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
       },
       (args) =>
         guard(async () => {
-          const { quest, status, complete, add, clock, deadline, owner } = args;
-          return yaml(await service.updateQuest(who(args), quest, { status, complete, add, clock, deadline, owner }));
+          const { quest, status, complete, reopen, add, clock, deadline, owner } = args;
+          return yaml(await service.updateQuest(who(args), quest, { status, complete, reopen, add, clock, deadline, owner }));
         }),
     ),
   );
@@ -232,6 +265,43 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
       }),
     ),
   );
+
+  // The dashboard's read models, for `hippo dashboard --mcp`. Without a list callback they stay out of
+  // `resources/list`, so agent hosts don't show them. Templates match in insertion order: `{view}` goes last.
+  const dashboard = (name: string, template: string, description: string, read: (vars: Variables) => Promise<unknown>) =>
+    scoped(
+      "read",
+      server.registerResource(name, new ResourceTemplate(template, { list: undefined }), { title: `Dashboard: ${name}`, description, mimeType: "application/json" }, async (uri, vars) => ({
+        contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(await readOrThrow(() => read(vars))) }],
+      })),
+    );
+  // `limit` changes which hits count as `related`, so it can't be applied client-side; RFC 6570 `{?q,limit}` needs both.
+  dashboard("dashboard-search-limit", "hippo://dashboard/search{?q,limit}", "Search results, at most `limit` (1–20) entities", ({ q, limit }) => {
+    const n = Number(param(limit));
+    if (!Number.isInteger(n) || n < 1 || n > 20) throw new VaultError("limit must be a whole number from 1 to 20");
+    return service.search(param(q, true), { limit: n });
+  });
+  dashboard("dashboard-search", "hippo://dashboard/search{?q}", "Search results as the dashboard shows them", ({ q }) => service.search(param(q, true)));
+  dashboard("dashboard-entity", "hippo://dashboard/entity/{slug}", "One entity in full, secrets masked", ({ slug }) => service.entityDetail(param(slug)));
+  dashboard("dashboard-chronicle", "hippo://dashboard/chronicle/{month}", "One month (YYYY-MM or latest) of the chronicle", ({ month }) => {
+    const m = param(month);
+    return service.chronicle(m === "latest" ? undefined : m);
+  });
+  dashboard("dashboard-view", "hippo://dashboard/{view}", "whoami, overview, catalog or graph", async ({ view }) => {
+    switch (param(view)) {
+      case "whoami": {
+        const { config } = await service.vault();
+        return { agent: agent?.toLowerCase() ?? null, scopes: [...(scopes ?? SCOPES)], campaign: config.campaign, human: config.human } satisfies DashboardWhoami;
+      }
+      case "overview":
+        return service.overview();
+      case "catalog":
+        return service.catalog();
+      case "graph":
+        return service.graph();
+    }
+    throw new VaultError(`no dashboard view "${param(view)}"`);
+  });
 
   return server;
 }
