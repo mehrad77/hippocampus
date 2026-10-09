@@ -1,53 +1,15 @@
 import { AuthorizationError, OAuthProvider, authorizationErrorRedirect, type ConsentDescription, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
 import { SCOPES, type Scope } from "@hippocampus/mcp";
-import { HOME, plain } from "./app.ts";
-import { lookupToken, type Grant, type TokenStore } from "./auth.ts";
+import { home, plain } from "./app.ts";
+import { AGENT_ID, isScope, lookupToken, type Grant, type TokenStore } from "./auth.ts";
+import { isDashboardPath } from "./dashboard.ts";
+import { CALLBACK_PATH, githubAuthorizeUrl, githubUser, type OAuthSettings } from "./github-login.ts";
+import { escape, html, page } from "./pages.ts";
 
-export interface OAuthSettings {
-  /** Public origin of this Worker, e.g. `https://hippocampus.you.workers.dev`. */
-  publicUrl: string;
-  github: { clientId: string; clientSecret: string; oauthUrl: string; apiUrl: string };
-  /** GitHub logins allowed to connect apps: the vault's owners. */
-  owners: Set<string>;
-  fetch?: typeof fetch;
-}
-
-export interface OAuthVars {
-  HIPPO_PUBLIC_URL?: string;
-  HIPPO_OWNERS?: string;
-  GITHUB_OAUTH_CLIENT_ID?: string;
-  GITHUB_OAUTH_CLIENT_SECRET?: string;
-  /** Only for local development against a fake GitHub. */
-  GITHUB_OAUTH_URL?: string;
-  GITHUB_API_URL?: string;
-}
+export { CALLBACK_PATH, oauthSettings, type OAuthSettings, type OAuthVars } from "./github-login.ts";
 
 /** What a token's grant carries. OAuth scopes come from the token itself, since refreshes can narrow them. */
 type GrantProps = { kind: "oauth"; agent: string; login: string } | { kind: "token"; agent: string; scopes: Scope[] };
-
-export const CALLBACK_PATH = "/oauth/github/callback";
-const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
-const isScope = (s: string): s is Scope => (SCOPES as readonly string[]).includes(s);
-
-/** OAuth settings, or undefined when OAuth is off (no HIPPO_PUBLIC_URL): then only agent tokens work. */
-export function oauthSettings(env: OAuthVars): OAuthSettings | undefined {
-  if (!env.HIPPO_PUBLIC_URL) return undefined;
-  const missing = (["HIPPO_OWNERS", "GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_SECRET"] as const).filter((k) => !env[k]);
-  if (missing.length) throw new Error(`OAuth is on (HIPPO_PUBLIC_URL is set) but ${missing.join(", ")} ${missing.length > 1 ? "are" : "is"} missing`);
-  // Fail closed: no owners would mean nobody can connect, so refuse to start rather than guess.
-  const owners = new Set(env.HIPPO_OWNERS!.split(/[\s,]+/).filter(Boolean).map((l) => l.toLowerCase()));
-  if (!owners.size) throw new Error("HIPPO_OWNERS must list at least one GitHub login");
-  return {
-    publicUrl: new URL(env.HIPPO_PUBLIC_URL).origin,
-    github: {
-      clientId: env.GITHUB_OAUTH_CLIENT_ID!,
-      clientSecret: env.GITHUB_OAUTH_CLIENT_SECRET!,
-      oauthUrl: (env.GITHUB_OAUTH_URL || "https://github.com").replace(/\/$/, ""),
-      apiUrl: (env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, ""),
-    },
-    owners,
-  };
-}
 
 /** The agent and scopes a verified token grants, from either kind of token. */
 export function grantFromContext(ctx: { props?: unknown; auth?: { scope?: string[] } }): Grant | undefined {
@@ -63,7 +25,10 @@ export function grantFromContext(ctx: { props?: unknown; auth?: { scope?: string
  * the resource. The owner approves each app on a consent page (choosing the agent it acts as and
  * its scopes), then proves ownership by signing in with GitHub. Agent tokens keep working.
  */
-export function createOAuthProvider(settings: OAuthSettings, opts: { mcp: (request: Request, grant: Grant) => Promise<Response>; tokens: TokenStore }) {
+export function createOAuthProvider(
+  settings: OAuthSettings,
+  opts: { mcp: (request: Request, grant: Grant) => Promise<Response>; tokens: TokenStore; dashboard?: (request: Request) => Promise<Response> },
+) {
   const resource = `${settings.publicUrl}/mcp`;
   return new OAuthProvider({
     apiRoute: "/mcp",
@@ -74,7 +39,11 @@ export function createOAuthProvider(settings: OAuthSettings, opts: { mcp: (reque
       },
     },
     defaultHandler: {
-      fetch: (request: Request, env: unknown) => authorizationPages(request, (env as { OAUTH_PROVIDER: OAuthHelpers }).OAUTH_PROVIDER, settings),
+      fetch: (request: Request, env: unknown) => {
+        // The dashboard has its own sign-in; its callback is a subdirectory of CALLBACK_PATH, never equal to it.
+        if (opts.dashboard && isDashboardPath(new URL(request.url).pathname)) return opts.dashboard(request);
+        return authorizationPages(request, (env as { OAUTH_PROVIDER: OAuthHelpers }).OAUTH_PROVIDER, settings, !!opts.dashboard);
+      },
     },
     authorizeEndpoint: "/authorize",
     tokenEndpoint: "/oauth/token",
@@ -92,10 +61,10 @@ export function createOAuthProvider(settings: OAuthSettings, opts: { mcp: (reque
   });
 }
 
-async function authorizationPages(request: Request, oauth: OAuthHelpers, settings: OAuthSettings): Promise<Response> {
+async function authorizationPages(request: Request, oauth: OAuthHelpers, settings: OAuthSettings, dashboard: boolean): Promise<Response> {
   const { pathname } = new URL(request.url);
   try {
-    if (pathname === "/") return plain(200, HOME);
+    if (pathname === "/") return home(request, dashboard);
     if (pathname === "/authorize" && request.method === "GET") return await showConsent(request, oauth);
     if (pathname === "/authorize" && request.method === "POST") return await decide(request, oauth, settings);
     if (pathname === CALLBACK_PATH && request.method === "GET") return await finishSignIn(request, oauth, settings);
@@ -133,18 +102,8 @@ async function decide(request: Request, oauth: OAuthHelpers, settings: OAuthSett
   const approved = await oauth.approveConsent(request, handle, { scope });
   const verifier = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const { state, headers } = await oauth.beginUpstream(approved.request, { data: { verifier, agent }, headers: approved.headers });
-  const github = new URL(`${settings.github.oauthUrl}/login/oauth/authorize`);
-  // No `scope`: signing in only needs the public profile, to learn who this is.
-  for (const [k, v] of Object.entries({
-    client_id: settings.github.clientId,
-    redirect_uri: `${settings.publicUrl}${CALLBACK_PATH}`,
-    state,
-    code_challenge: await s256(verifier),
-    code_challenge_method: "S256",
-    allow_signup: "false",
-  }))
-    github.searchParams.set(k, v);
-  headers.set("Location", github.href);
+  const location = await githubAuthorizeUrl(settings, { redirectUri: `${settings.publicUrl}${CALLBACK_PATH}`, state, verifier });
+  headers.set("Location", location);
   return new Response(null, { status: 302, headers });
 }
 
@@ -156,7 +115,7 @@ async function finishSignIn(request: Request, oauth: OAuthHelpers, settings: OAu
   };
   const code = new URL(request.url).searchParams.get("code");
   if (!code) return deny("GitHub sign-in was cancelled");
-  const user = await githubUser(settings, code, data.verifier);
+  const user = await githubUser(settings, code, data.verifier, `${settings.publicUrl}${CALLBACK_PATH}`);
   if (!user) return deny("GitHub sign-in failed");
   if (!settings.owners.has(user.login.toLowerCase())) return deny("This GitHub account is not an owner of this vault");
   const props: GrantProps = { kind: "oauth", agent: data.agent, login: user.login };
@@ -169,30 +128,6 @@ async function finishSignIn(request: Request, oauth: OAuthHelpers, settings: OAu
   });
   headers.set("Location", redirectTo);
   return new Response(null, { status: 302, headers });
-}
-
-/** Who signed in. The GitHub token is used for this one lookup and not kept. */
-async function githubUser(settings: OAuthSettings, code: string, verifier: string): Promise<{ login: string; id: number } | undefined> {
-  const f = settings.fetch ?? fetch;
-  const exchange = await f(`${settings.github.oauthUrl}/login/oauth/access_token`, {
-    method: "POST",
-    headers: { accept: "application/json", "content-type": "application/json" },
-    body: JSON.stringify({
-      client_id: settings.github.clientId,
-      client_secret: settings.github.clientSecret,
-      code,
-      redirect_uri: `${settings.publicUrl}${CALLBACK_PATH}`,
-      code_verifier: verifier,
-    }),
-  });
-  const { access_token } = (await exchange.json().catch(() => ({}))) as { access_token?: string };
-  if (!exchange.ok || !access_token) return undefined;
-  const res = await f(`${settings.github.apiUrl}/user`, {
-    headers: { authorization: `Bearer ${access_token}`, accept: "application/vnd.github+json", "user-agent": "hippocampus" },
-  });
-  if (!res.ok) return undefined;
-  const user = (await res.json()) as { login?: string; id?: number };
-  return user.login && user.id ? { login: user.login, id: user.id } : undefined;
 }
 
 const SCOPE_LABELS: Record<Scope, string> = {
@@ -225,24 +160,4 @@ ${scopes}
 </form>`;
 }
 
-const escape = (value: string) => value.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
-
-const STYLE = "body{font:16px/1.5 system-ui,sans-serif;max-width:36rem;margin:3rem auto;padding:0 1rem}label{display:block;margin:.25rem 0}fieldset{border:1px solid #ccc;border-radius:6px}button{font:inherit;padding:.4rem 1rem}";
-
-function html(status: number, body: string, headers = new Headers()): Response {
-  headers.set("Content-Type", "text/html; charset=utf-8");
-  headers.set("Cache-Control", "no-store");
-  headers.set("X-Frame-Options", "DENY");
-  // A second policy on top of the library's frame-ancestors: no scripts or remote content at all.
-  headers.append("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'");
-  return new Response(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Hippocampus</title><style>${STYLE}</style>${body}`, { status, headers });
-}
-
-const page = (status: number, title: string, body: string) => html(status, `<h1>${escape(title)}</h1>${body}`);
-
 const redirect = (location: string) => new Response(null, { status: 302, headers: { Location: location } });
-
-async function s256(verifier: string): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)));
-  return btoa(String.fromCharCode(...digest)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}

@@ -22,6 +22,17 @@ export interface GitHubStoreOptions {
   preloadThreshold?: number;
 }
 
+export interface RepoInfo {
+  /** `owner/name` as GitHub spells it. */
+  name: string;
+  private: boolean;
+  defaultBranch: string;
+  /** The branch this store reads and writes. */
+  branch: string;
+  /** The commit reads are pinned to. */
+  head: string;
+}
+
 export interface TreeFile {
   sha: string;
   mode: string;
@@ -108,6 +119,12 @@ export class GitHubStore implements VaultStore {
   /** The commit reads are pinned to. */
   async head(): Promise<string> {
     return (await this.snapshot()).commit;
+  }
+
+  /** Whether the repo is private (a vault should be), its default branch, and the commit reads are pinned to. */
+  async info(): Promise<RepoInfo> {
+    const [repo, head] = await Promise.all([this.json<{ full_name: string; private: boolean; default_branch: string }>("GET", ""), this.head()]);
+    return { name: repo.full_name, private: repo.private, defaultBranch: repo.default_branch, branch: this.branch, head };
   }
 
   /** Re-pin reads to the branch's current head (one request when it hasn't moved). */
@@ -292,7 +309,8 @@ export class GitHubStore implements VaultStore {
 
   private async request(method: string, path: string, body?: unknown, accept = "application/vnd.github+json"): Promise<Response> {
     const token = typeof this.opts.token === "string" ? this.opts.token : await this.opts.token();
-    const res = await this.fetch(`${this.api}/repos/${this.repo}/${path}`, {
+    // An empty path is the repo itself (`GET /repos/{owner}/{repo}`).
+    const res = await this.fetch(`${this.api}/repos/${this.repo}${path ? `/${path}` : ""}`, {
       method,
       headers: {
         accept,

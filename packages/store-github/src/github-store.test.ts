@@ -133,6 +133,19 @@ describe("GitHubStore", () => {
     expect(() => new GitHubStore({ repo: "not a repo", token: "t" })).toThrow(/owner\/name/);
   });
 
+  it("reports the repo's visibility, default branch and pinned commit", async () => {
+    const { gh, store } = await setup();
+    const head = gh.refs.get("main")!;
+    expect(await store.info()).toEqual({ name: gh.repo, private: true, defaultBranch: "main", branch: "main", head });
+    expect(gh.calls).toContain("GET ");
+    gh.isPrivate = false;
+    await gh.push({ "notes/lisbon.md": "---\ntype: place\ntitle: Lisbon\n---\n" });
+    // Still pinned: visibility is live, the head moves only on refresh.
+    expect(await store.info()).toMatchObject({ private: false, head });
+    await store.refresh();
+    expect((await store.info()).head).toBe(gh.refs.get("main"));
+  });
+
   it("asks a token provider for every request", async () => {
     const { gh } = await setup();
     let minted = 0;

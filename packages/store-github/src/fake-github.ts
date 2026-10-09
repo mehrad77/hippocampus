@@ -70,6 +70,9 @@ export class FakeGitHub {
   readonly refs = new Map<string, string>();
   /** Every request as `METHOD path`, for asserting on API usage. */
   readonly calls: string[] = [];
+  /** What `GET /repos/{owner}/{repo}` reports. */
+  isPrivate = true;
+  defaultBranch = "main";
   /** Report recursive listings as truncated, like GitHub does for huge repos. */
   truncate = false;
   /** Runs before the ref update is applied, e.g. to simulate a concurrent push. */
@@ -81,19 +84,22 @@ export class FakeGitHub {
     const gh = new FakeGitHub(opts.repo ?? "player/vault");
     const tree = await gh.putTree(new Map(), Object.entries(files));
     const commit = await gh.putCommit({ tree, parents: [], message: "init" });
-    gh.refs.set(opts.branch ?? "main", commit);
+    gh.defaultBranch = opts.branch ?? "main";
+    gh.refs.set(gh.defaultBranch, commit);
     return gh;
   }
 
   readonly fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     const method = init.method ?? "GET";
-    const prefix = `/repos/${this.repo}/`;
-    if (!url.pathname.startsWith(prefix)) return json(404, { message: "Not Found" });
-    const path = url.pathname.slice(prefix.length);
+    const root = `/repos/${this.repo}`;
+    if (url.pathname !== root && !url.pathname.startsWith(`${root}/`)) return json(404, { message: "Not Found" });
+    const path = url.pathname.slice(root.length + 1);
     this.calls.push(`${method} ${path}`);
     const body = init.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
     let m: RegExpMatchArray | null;
+
+    if (method === "GET" && path === "") return json(200, { full_name: this.repo, private: this.isPrivate, default_branch: this.defaultBranch });
 
     if (method === "GET" && (m = path.match(/^git\/ref\/heads\/(.+)$/))) {
       const sha = this.refs.get(m[1]!);

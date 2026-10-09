@@ -17,10 +17,20 @@
   ],
   // GITHUB_REPO (owner/name of the private vault repo) and GITHUB_TOKEN are secrets, so neither ends up in
   // this public repo: `wrangler secret put GITHUB_REPO` and `wrangler secret put GITHUB_TOKEN`.
-  // OAuth for Claude.ai / ChatGPT connectors is off until these secrets are set: HIPPO_PUBLIC_URL (this
-  // Worker's https origin), HIPPO_OWNERS (GitHub logins allowed to connect apps), and a GitHub OAuth app's
-  // GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET (callback: <HIPPO_PUBLIC_URL>/oauth/github/callback).
+  // OAuth for Claude.ai / ChatGPT connectors and the dashboard's sign-in is off until these secrets are set:
+  // HIPPO_PUBLIC_URL (this Worker's https origin), HIPPO_OWNERS (GitHub logins allowed to connect apps and
+  // open the dashboard), and a GitHub OAuth app's GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET
+  // (callback: <HIPPO_PUBLIC_URL>/oauth/github/callback; the dashboard uses its /dashboard subdirectory).
   "vars": { "GITHUB_BRANCH": "main" },
+  // The dashboard UI (`pnpm dev` and `pnpm deploy` build it first). Its pages and the sign-in routes run
+  // through the Worker, which adds security headers and serves the API; hashed `_astro/*` files are served
+  // straight from the asset store. No `not_found_handling`: a path that isn't a file must reach the Worker,
+  // or /mcp, /authorize and the OAuth callbacks would get an asset 404 instead.
+  "assets": {
+    "directory": "../dashboard/dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/dashboard", "/dashboard/*", "!/dashboard/_astro/*"]
+  },
   // Semantic recall (optional): uncomment and set HIPPO_EMBED_PROVIDER=workers-ai, or point
   // HIPPO_EMBED_PROVIDER/BASE_URL/MODEL/API_KEY at any OpenAI-compatible embeddings API.
   // "ai": { "binding": "AI" },

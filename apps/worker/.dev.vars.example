@@ -1,9 +1,13 @@
 # Copy to .dev.vars (gitignored) for `wrangler dev`.
 GITHUB_REPO=you/my-campaign
 GITHUB_TOKEN=github_pat_...
-# Point at a fake GitHub for offline development:
+# Or run offline against a fake GitHub holding the example campaign (`pnpm exec tsx scripts/fake-github.ts`):
+# GITHUB_REPO=player/vault
+# GITHUB_TOKEN=fake
 # GITHUB_API_URL=http://127.0.0.1:8786
-# OAuth for connectors (off unless HIPPO_PUBLIC_URL is set):
+# GITHUB_OAUTH_URL=http://127.0.0.1:8786
+# OAuth for connectors and the dashboard's sign-in (off unless HIPPO_PUBLIC_URL is set). Over plain http the
+# dashboard's cookies drop their Secure flag, so local sign-in works:
 # HIPPO_PUBLIC_URL=http://127.0.0.1:8787
 # HIPPO_OWNERS=your-github-login
 # GITHUB_OAUTH_CLIENT_ID=

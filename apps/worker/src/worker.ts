@@ -1,12 +1,16 @@
 import { HippoService } from "@hippocampus/core";
+import { createDashboardApi, serviceSource } from "@hippocampus/dashboard";
 import { createEmbedder, embedConfigFromEnv, type AiLike } from "@hippocampus/embeddings";
 import { HippoIndex, d1 } from "@hippocampus/index";
 import { GitHubStore, MemoryBlobCache, SnapshotCache } from "@hippocampus/store-github";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { DurableObject } from "cloudflare:workers";
 import { createApp, createMcpHandler, type McpOptions } from "./app.ts";
-import type { TokenStore } from "./auth.ts";
-import { createOAuthProvider, oauthSettings, type OAuthVars } from "./oauth.ts";
+import { kvTokens, type TokenAdmin } from "./auth.ts";
+import { DASHBOARD_API, createDashboardGate } from "./dashboard.ts";
+import { oauthMissing } from "./github-login.ts";
+import { createOAuthProvider, oauthSettings, type OAuthSettings, type OAuthVars } from "./oauth.ts";
+import { remoteSetup } from "./remote-setup.ts";
 import { ScribeQueue, ScribeStore, type CommitRequest, type CommitResult } from "./scribe.ts";
 
 export interface Env extends OAuthVars {
@@ -23,14 +27,17 @@ export interface Env extends OAuthVars {
   /** Workers AI, for semantic recall with HIPPO_EMBED_PROVIDER=workers-ai. Other HIPPO_EMBED_* settings work as in the CLI. */
   AI?: AiLike;
   HIPPO_EMBED_PROVIDER?: string;
-  /** OAuth grants and clients (used once HIPPO_PUBLIC_URL turns OAuth on). */
+  /** OAuth grants and clients (used once HIPPO_PUBLIC_URL turns OAuth on), and dashboard sessions. */
   OAUTH_KV: KVNamespace;
+  /** The built dashboard UI (`assets` in wrangler.jsonc). */
+  ASSETS: Fetcher;
 }
 
 // Per isolate, shared by its requests. Both caches are keyed by immutable git ids.
 const blobs = new MemoryBlobCache();
 const snapshots = new SnapshotCache();
 let index: Promise<HippoIndex> | undefined;
+let embedder: string | undefined;
 let handler: ((request: Request, ctx: ExecutionContext) => Promise<Response>) | undefined;
 
 const github = (env: Env) =>
@@ -40,6 +47,7 @@ function openIndex(env: Env): Promise<HippoIndex> {
   if (!index) {
     const embed = embedConfigFromEnv({ ...env });
     const opts = embed ? { embedder: createEmbedder(embed, { ai: env.AI }), minSimilarity: embed.minSimilarity } : {};
+    embedder = opts.embedder?.id;
     index = HippoIndex.open(d1(env.INDEX), opts).catch((err: unknown) => {
       index = undefined;
       throw err;
@@ -62,9 +70,9 @@ export class Scribe extends DurableObject<Env> {
   }
 }
 
-/** Agent tokens only, or OAuth (which also accepts agent tokens) once HIPPO_PUBLIC_URL is set. */
+/** Agent tokens only, or OAuth (which also accepts agent tokens) once HIPPO_PUBLIC_URL is set. Both serve the dashboard. */
 function createHandler(env: Env): (request: Request, ctx: ExecutionContext) => Promise<Response> {
-  const tokens: TokenStore = { get: (hash) => env.TOKENS.get(hash, "json") };
+  const tokens = kvTokens(env.TOKENS);
   const mcp: McpOptions = {
     service: async () => {
       // A fresh store per request keeps its reads pinned to one commit while other requests move on.
@@ -74,12 +82,45 @@ function createHandler(env: Env): (request: Request, ctx: ExecutionContext) => P
     jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
   };
   const settings = oauthSettings(env);
+  const dashboard = createDashboard(env, settings, mcp, tokens);
   if (!settings) {
-    const app = createApp({ ...mcp, tokens });
+    const app = createApp({ ...mcp, tokens, dashboard });
     return (request) => app(request);
   }
-  const provider = createOAuthProvider(settings, { mcp: createMcpHandler(mcp), tokens });
+  const provider = createOAuthProvider(settings, { mcp: createMcpHandler(mcp), tokens, dashboard });
   return (request, ctx) => provider.fetch(request, env, ctx);
+}
+
+/** The dashboard: GitHub sign-in for the owners, its API over a fresh service per request (like MCP), and the built UI. */
+function createDashboard(env: Env, settings: OAuthSettings | undefined, mcp: McpOptions, tokens: TokenAdmin) {
+  const branch = env.GITHUB_BRANCH || "main";
+  const missing = oauthMissing(env);
+  const setup = remoteSetup({
+    settings,
+    oauthMissing: missing,
+    tokens,
+    repo: { name: env.GITHUB_REPO, branch, info: () => github(env).info() },
+    service: mcp.service,
+    index: async () => {
+      const idx = await openIndex(env);
+      const [row] = await idx.db.all<{ n: number }>("SELECT count(*) AS n FROM docs WHERE kind = 'entity'");
+      return { entities: row?.n, embedder, lastError: idx.lastEmbedError?.message };
+    },
+  });
+  const gate = createDashboardGate({
+    settings,
+    missing,
+    kv: env.OAUTH_KV,
+    assets: env.ASSETS,
+    api: (guard) =>
+      createDashboardApi({
+        basePath: DASHBOARD_API,
+        source: async () => serviceSource(await mcp.service(), { mode: "worker", vault: { kind: "github", repo: env.GITHUB_REPO, branch } }),
+        setup,
+        guard,
+      }),
+  });
+  return (request: Request) => gate.fetch(request);
 }
 
 export default {

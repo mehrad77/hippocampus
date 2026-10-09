@@ -9,48 +9,17 @@ import { createMcpHandler } from "./app.ts";
 import { hashToken, newToken, type Grant } from "./auth.ts";
 import { CALLBACK_PATH, createOAuthProvider, oauthSettings, type OAuthSettings } from "./oauth.ts";
 import { ScribeQueue, ScribeStore } from "./scribe.ts";
+import { browser as newBrowser, fakeGitHubOAuth, testOAuthSettings } from "./testing/github-oauth.ts";
 import { MemoryKV } from "./testing/memory-kv.ts";
 
 const ORIGIN = "https://hippo.test";
 const CLIENT_REDIRECT = "https://claude.example/api/mcp/auth_callback";
 const now = () => new Date("2026-09-27T21:00:00.000Z");
 
-const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const s256 = async (v: string) => b64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v))));
+const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-/** GitHub's OAuth endpoints, enough to sign someone in: checks the app's secret and PKCE. */
-function fakeGitHubOAuth() {
-  const codes = new Map<string, { challenge: string; login: string; id: number }>();
-  const tokens = new Map<string, { login: string; id: number }>();
-  const fetch = async (input: string | URL | Request, init: RequestInit = {}) => {
-    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-    if (url.href === "https://github.test/login/oauth/access_token") {
-      const body = JSON.parse(String(init.body)) as Record<string, string>;
-      const grant = codes.get(body.code!);
-      codes.delete(body.code!);
-      const ok = grant && body.client_id === "gh-client" && body.client_secret === "gh-secret" && (await s256(body.code_verifier!)) === grant.challenge;
-      if (!ok) return Response.json({ error: "bad_verification_code" });
-      const token = `gho_${crypto.randomUUID()}`;
-      tokens.set(token, grant);
-      return Response.json({ access_token: token, token_type: "bearer", scope: "" });
-    }
-    if (url.href === "https://api.github.test/user") {
-      const user = tokens.get(new Headers(init.headers).get("authorization")?.replace("Bearer ", "") ?? "");
-      return user ? Response.json(user) : new Response("{}", { status: 401 });
-    }
-    return new Response("not found", { status: 404 });
-  };
-  /** The user signs in at GitHub, which redirects back with a code. */
-  const signIn = (authorizeUrl: string, login: string) => {
-    const u = new URL(authorizeUrl);
-    const code = `gh-${crypto.randomUUID()}`;
-    codes.set(code, { challenge: u.searchParams.get("code_challenge")!, login, id: login.length * 1000 });
-    return `${u.searchParams.get("redirect_uri")}?code=${code}&state=${u.searchParams.get("state")}`;
-  };
-  return { fetch, signIn };
-}
-
-async function setup() {
+async function setup(opts: { dashboard?: (request: Request) => Promise<Response> } = {}) {
   const gh = await FakeGitHub.create(Object.fromEntries(fixtureStore().files));
   const blobs = new MemoryBlobCache();
   const snapshots = new SnapshotCache();
@@ -58,34 +27,17 @@ async function setup() {
   const scribe = new ScribeQueue(github());
   const grants = new Map<string, Grant>();
   const upstream = fakeGitHubOAuth();
-  const settings: OAuthSettings = {
-    ...oauthSettings({ HIPPO_PUBLIC_URL: ORIGIN, HIPPO_OWNERS: "Player", GITHUB_OAUTH_CLIENT_ID: "gh-client", GITHUB_OAUTH_CLIENT_SECRET: "gh-secret", GITHUB_OAUTH_URL: "https://github.test", GITHUB_API_URL: "https://api.github.test" })!,
-    fetch: upstream.fetch as typeof fetch,
-  };
+  const settings: OAuthSettings = testOAuthSettings(ORIGIN, upstream);
   const provider = createOAuthProvider(settings, {
     mcp: createMcpHandler({ service: () => new HippoService(new ScribeStore(github(), scribe), { now }) }),
     tokens: { get: async (hash) => grants.get(hash) ?? null },
+    dashboard: opts.dashboard,
   });
   const env = { OAUTH_KV: new MemoryKV() };
   const ctx = { waitUntil() {}, passThroughOnException() {}, props: {} };
   const send = (request: Request) => provider.fetch(request, env as never, ctx as never);
 
-  /** A browser: keeps cookies, doesn't follow redirects. */
-  const browser = () => {
-    const jar = new Map<string, string>();
-    return async (url: string, init: RequestInit = {}) => {
-      const headers = new Headers(init.headers);
-      if (jar.size) headers.set("cookie", [...jar].map(([k, v]) => `${k}=${v}`).join("; "));
-      const res = await send(new Request(url, { ...init, headers, redirect: "manual" }));
-      for (const c of res.headers.getSetCookie()) {
-        const [pair, ...attrs] = c.split(";");
-        const [name, value] = pair!.split(/=(.*)/s) as [string, string];
-        if (!value || attrs.some((a) => /max-age=0/i.test(a.trim()))) jar.delete(name.trim());
-        else jar.set(name.trim(), value);
-      }
-      return res;
-    };
-  };
+  const browser = () => newBrowser(send);
 
   const register = async (clientName = "Claude") => {
     const res = await send(
@@ -259,6 +211,28 @@ describe("OAuth for MCP connectors", () => {
     expect(await toolNames(await connect(await mint("home-finder", ["read"])))).not.toContain("remember");
     const unknown = await send(new Request(`${ORIGIN}/mcp`, { method: "POST", headers: { authorization: "Bearer hippo_unknown" }, body: "{}" }));
     expect(unknown.status).toBe(401);
+  });
+});
+
+describe("the dashboard next to OAuth", () => {
+  it("gets its own paths, including its callback under the connectors' one", async () => {
+    const seen: string[] = [];
+    const { send } = await setup({ dashboard: async (request) => (seen.push(new URL(request.url).pathname), new Response("dashboard")) });
+    for (const path of ["/dashboard", "/dashboard/", "/dashboard/api/session", `${CALLBACK_PATH}/dashboard`]) expect(await (await send(new Request(`${ORIGIN}${path}`))).text()).toBe("dashboard");
+    expect(seen).toEqual(["/dashboard", "/dashboard/", "/dashboard/api/session", `${CALLBACK_PATH}/dashboard`]);
+    // The connector flow's callback is still the OAuth library's (no upstream state here, so it refuses).
+    expect((await send(new Request(`${ORIGIN}${CALLBACK_PATH}?code=x&state=y`))).status).toBe(400);
+    expect(seen).toHaveLength(4);
+  });
+
+  it("sends browsers from / to the dashboard and tells everyone else about /mcp", async () => {
+    const { send } = await setup({ dashboard: async () => new Response("dashboard") });
+    const browser = await send(new Request(`${ORIGIN}/`, { headers: { accept: "text/html,application/xhtml+xml" } }));
+    expect(browser.status).toBe(302);
+    expect(browser.headers.get("location")).toBe("/dashboard/");
+    expect(await (await send(new Request(`${ORIGIN}/`))).text()).toContain("/mcp");
+    const without = await setup();
+    expect((await without.send(new Request(`${ORIGIN}/`, { headers: { accept: "text/html" } }))).status).toBe(200);
   });
 });
 

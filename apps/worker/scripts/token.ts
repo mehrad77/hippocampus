@@ -3,7 +3,7 @@
 //   pnpm --filter @hippocampus/worker agent-token revoke <token> [--remote]
 import { execFileSync } from "node:child_process";
 import { SCOPES, type Scope } from "@hippocampus/mcp";
-import { hashToken, newToken, type Grant } from "../src/auth.ts";
+import { AGENT_ID, hashToken, newToken, type Grant } from "../src/auth.ts";
 
 const args = process.argv.slice(2);
 const flag = (name: string) => {
@@ -20,9 +20,12 @@ const wrangler = (...rest: string[]) =>
 if (command === "create" && subject) {
   const unknown = scopes.filter((s) => !(SCOPES as readonly string[]).includes(s));
   if (unknown.length) throw new Error(`unknown scopes ${unknown.join(", ")}; choose from ${SCOPES.join(", ")}`);
+  const agent = subject.toLowerCase();
+  if (!AGENT_ID.test(agent)) throw new Error(`"${subject}" isn't an agent id: use lowercase letters, digits and dashes, like home-finder`);
   const token = newToken();
-  const grant: Grant = { agent: subject.toLowerCase(), scopes, created: new Date().toISOString() };
-  wrangler("put", await hashToken(token), JSON.stringify(grant));
+  const grant: Grant = { agent, scopes, created: new Date().toISOString() };
+  // The grant goes in as metadata too, so the dashboard lists every token in one call.
+  wrangler("put", await hashToken(token), JSON.stringify(grant), "--metadata", JSON.stringify(grant));
   process.stderr.write(`✓ token for ${grant.agent} (${scopes.join(", ")}) stored ${remote ? "remotely" : "locally"}. It is shown only once:\n`);
   console.log(token);
 } else if (command === "revoke" && subject) {

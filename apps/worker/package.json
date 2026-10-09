@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "pnpm --filter @hippocampus/dashboard-ui build && wrangler dev",
+    "deploy": "pnpm --filter @hippocampus/dashboard-ui build && wrangler deploy",
     "agent-token": "tsx scripts/token.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json"
   },
@@ -13,6 +13,7 @@
     "@cfworker/json-schema": "^4.1.1",
     "@cloudflare/workers-oauth-provider": "^1.2.3",
     "@hippocampus/core": "workspace:*",
+    "@hippocampus/dashboard": "workspace:*",
     "@hippocampus/embeddings": "workspace:*",
     "@hippocampus/index": "workspace:*",
     "@hippocampus/mcp": "workspace:*",
