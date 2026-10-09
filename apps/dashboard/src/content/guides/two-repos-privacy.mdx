@@ -1,0 +1,85 @@
+---
+title: Two repos and your privacy
+summary: The public tool and your private vault live apart, and data only flows one way. What stays private, where your data does travel, and why the demo is fiction.
+order: 11
+section: Under the hood
+sigil: lock
+---
+import TwoRepos from "../../components/guides/TwoRepos.astro";
+import Aside from "../../components/guides/Aside.astro";
+import Link from "../../components/guides/Link.astro";
+
+Hippocampus is a **tool**. Your memory is a **vault**. They live in two separate repositories, and the arrangement is the backbone of its privacy model. The vault depends on a pinned version of the tool. The tool never contains, references or knows about any real vault.
+
+<TwoRepos />
+
+## The public tool
+
+The Hippocampus repository is public and published to npm as `@mehrad77/hippocampus`. It holds the code, the vault template that `hippo init` copies, the fictional example campaign, and these guides. Every example in it, from tests to screenshots to these pages, uses the fictional Lisbon arc: the residency agent, Harbor University, the Migration Agency, a flat in Alfama.
+
+## Your private vault
+
+Your vault is a separate repository that you own. It holds your notes, quests, party sheets, the inbox, the chronicle, disputes, and the encrypted `secrets/` folder. Keep it **private**:
+
+- Create the GitHub repo as private before the first push. Session Zero's Git step checks the repo's visibility and warns you if it's public.
+- Give agents and the Worker a fine-grained token with **Contents: read and write** on the vault repo only. Nothing broader.
+- The vault's CI (`.github/workflows/validate.yml`) runs inside your private repo, not in the tool's.
+- `.gitignore` in the template keeps Obsidian's workspace files and trash out of git.
+
+<Aside kind="warn" title="Git remembers">
+
+An inbox episode an agent committed stays in the vault repo's history after the sleep removes it, even when the chronicle copy has its secrets redacted. That's one more reason the vault repo must stay private. See <Link guide="secrets">Secrets</Link>.
+
+</Aside>
+
+## What the dashboard never shows
+
+Even to you, signed in, the dashboard holds some things back:
+
+| Never shown | Instead |
+| --- | --- |
+| Secret values | A lock. Decrypt on your machine with `hippo secrets show` |
+| Text of secret-bearing inbox episodes | A sealed card until the sleep encrypts the secret |
+| API keys saved in Session Zero | "Set" or "unset". Keys are write-only |
+| Your age identity | Never sent to the page; it stays in `~/.config/hippocampus/` |
+
+The pages themselves load nothing from outside: fonts, scripts and styles are bundled, and a strict content security policy keeps it that way. Locally the dashboard answers only on 127.0.0.1, to the browser that opened its sign-in link. On the Worker, only `HIPPO_OWNERS` can sign in. More in <Link guide="dashboard-tour">the dashboard tour</Link>.
+
+## Where your data does travel
+
+Privacy is also about the services you choose. Here is everywhere vault content can go, and when:
+
+| Destination | When |
+| --- | --- |
+| GitHub | Whenever the vault lives there: a private repo you control |
+| Your curator model | During sleep. A local model (LM Studio, Ollama) keeps it on your machine. A hosted provider receives episode text, secrets included before encryption |
+| Your embedding model | With semantic recall on. A hosted embeddings API receives note text |
+| Cloudflare | If you deploy the Worker. It reads the vault repo and keeps a search index in D1 |
+| Your agents' hosts | Whatever an agent reads through MCP lands in its host's context: a chat app, a bot, a coding agent |
+
+None of this is hidden behind a default you didn't choose. The curator defaults to a local LM Studio server, and semantic recall is off until you set a model.
+
+## The demo is fiction
+
+`hippo dashboard --demo` opens the example campaign from the public seed, with three weeks of invented activity replayed through the curator's own rules. It lives in memory only: nothing is read from or written to your vault. Everything in it is made up: the residency agent and the campus agent, Harbor University and its Language Center, Lisbon, Alfama and Belém, and an insurer called Acme Health.
+
+Use it whenever someone else will see the screen: a screenshot, a bug report, a talk, a question in a forum.
+
+## If you contribute to Hippocampus
+
+<Aside kind="rule" title="Data flows from the tool into your vault, never back">
+
+- Never copy anything from a real vault (a note, a name, an id, a screenshot) into the tool's code, tests, docs, issues, pull requests or commit messages.
+- Reproduce bugs with the fictional seed's names, and describe them in the same terms.
+- Keep a local, untracked `.privacy-denylist` with your real names, places and ids. The repo's privacy test and pre-commit hook then refuse any file that mentions them, along with any inbox, chronicle, dispute or `.age` file.
+- If your coding agent is also connected to your Hippocampus MCP server, tell it that vault content is private. The repo's `AGENTS.md` already does.
+
+</Aside>
+
+## A quick checklist
+
+- The vault repo is private, and agent tokens reach that repo only.
+- The age identity is backed up, and lives outside the vault.
+- If you use a hosted model or hosted embeddings, you're fine with episode text going there.
+- Screenshots and bug reports come from `--demo`.
+- Nothing from your vault has gone into a public issue, pull request or chat.

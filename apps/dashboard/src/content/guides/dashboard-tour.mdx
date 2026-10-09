@@ -1,0 +1,100 @@
+---
+title: A tour of the dashboard
+summary: Every page and what you can do there. Where the data comes from (local, GitHub, MCP, the Worker, the demo), and how the dashboard stays private.
+order: 9
+section: Running it
+sigil: map
+---
+import Aside from "../../components/guides/Aside.astro";
+import Link from "../../components/guides/Link.astro";
+
+The dashboard is the human's side of the table. It's where you see what happened, settle disputes, move quests along, and set everything up. Agents never use it. They have MCP and the handbook.
+
+```bash
+npx @mehrad77/hippocampus dashboard
+```
+
+Run it inside a vault, or point it at one with `-v`. If there's no vault yet, it opens **Session Zero**, the guided setup.
+
+## Where the data comes from
+
+| How you open it | Reads | Your actions are filed as |
+| --- | --- | --- |
+| `hippo dashboard`, in or with `-v` a vault folder | The local folder | You, the human |
+| `hippo --github you/my-campaign dashboard` | The GitHub repo, no checkout (token in `HIPPO_GITHUB_TOKEN`) | You; each action is one commit |
+| `hippo dashboard --mcp https://…/mcp` | Any Hippocampus MCP server (token in `HIPPO_MCP_TOKEN`) | The token's agent, within its scopes |
+| `/dashboard/` on your Worker | The vault repo, behind GitHub sign-in | You; rulings and new party members also name your GitHub login |
+| `hippo dashboard --demo` | A fictional campaign, in memory | Nobody: it's a sandbox, gone when you stop it |
+
+**Over MCP** the dashboard reads through resources that agent hosts don't list, and writes through the same tools agents use. Scribing and quest edits are filed as the token's agent. Rulings belong to the human, so they aren't available there. Whatever a source can't do, the dashboard simply hides.
+
+**The demo** is the fictional Lisbon arc from the bundled seed, with three weeks of made-up party activity replayed through the curator's own rules: a passport secret, a flat in Alfama, an agency that keeps moving its counter. It's the safe way to look around, take screenshots, or show someone how it works.
+
+## At the table
+
+| Page | What you see | What you can do |
+| --- | --- | --- |
+| **Tavern** | "Previously on…" from the chronicle, what needs your eye, quests in motion, dates in the next 90 days, the party, 30 days of activity, recently changed notes | Jump straight to whatever needs you |
+| **Quest board** | Every quest with owner, status, objectives, clocks and deadlines | Tick and untick objectives, turn clocks, set status and deadlines |
+| **Council** | Open disputes: each claim with who, whether they had authority, and when, beside the current value | Rule: pick a claim, apply a `ruling:` already in the note, or type the value |
+| **Satchel** | The inbox, newest first: agent, kind, time and hints for each episode | See what the next sleep will read, and which episodes already waited through one |
+
+"What needs your eye" gathers open disputes, rumors, stale canon, orphan notes, episodes that sat through a sleep, and agents without a party sheet. The badges on Council and Satchel count open disputes and episodes in the inbox. A ruling in the Council is canon **immediately**, by you. See <Link guide="precedence-and-disputes">Precedence and disputes</Link>.
+
+## Lore
+
+| Page | What it is |
+| --- | --- |
+| **Codex** | Every note, by type, with tags and how many facts are canon, rumor or disputed |
+| **Entity sheets** | One note in full: summary, facts with their seals and provenance, relations both ways, disputes, the quest or party card, chronicle mentions from the last 90 days, inbox episodes about it, and your own notes |
+| **Map** | The relation graph: notes as nodes colored by type, relations as edges |
+| **Chronicle** | Month by month, day by day: every consolidated episode with its agent, kind, time and the notes it touched |
+| **Party** | Each member's lane, authority, host, when it was last seen, waiting episodes, recent activity and the quests it owns. Add a member here |
+
+On an entity sheet, each fact shows who said it, whether they had authority, when, which episodes back it, earlier values, and whether it's stale. It's the quickest way to answer "why does Hippocampus believe this?"
+
+## Everywhere
+
+- **⌘K** opens the command palette: jump to any note or page, or search memory the way agents' `recall` does.
+- **Scribe a memory** drops an episode into the inbox in your name. Pick a kind, link the notes it's about, and tick the box if it contains an ID or a password. It joins canon at the next sleep, with your authority.
+- **Guides** are these pages. They ship with the tool and work without JavaScript.
+- **Setup & health** is Session Zero.
+
+## Session Zero
+
+Every setup step can be done from the browser. Each one either **does** the work on this machine, or **shows** you exactly what to run.
+
+| Step | Done for you | Shown to copy |
+| --- | --- | --- |
+| Vault | Create one from the template (optionally a seed), open one, or connect a GitHub repo or MCP server | `hippo migrate` when the format is older |
+| Party | Add agents, including unknown ones seen in the inbox | |
+| Secrets | Forge the age key, or reuse the one on this machine | Where to back it up |
+| Curator | Save the model settings and test them | Key pages for hosted providers |
+| Git | Check that the GitHub repo is private | Creating the repo and pushing |
+| Agents | | Connection snippets for each party member |
+| Sleep | Install the nightly launchd job, rehearse a dry run | A cron line on Linux |
+| Remote | Check a Worker URL, save embedding settings, rebuild the index | The Worker deploy commands |
+
+Settings it saves go to `~/.config/hippocampus/env` (mode 0600; `HIPPO_CONFIG_DIR` moves it). Your shell environment and a local `.env` still win. Keys you enter are write-only: the browser never gets them back. On the Worker, Setup shows the Worker's health instead, and lets you mint, list and revoke agent tokens.
+
+## How it stays private
+
+**Locally**, the dashboard listens on 127.0.0.1 only. When it starts, the terminal prints a sign-in link with a fresh key. Opening it sets a cookie for that browser (HttpOnly, SameSite=Strict, limited to `/dashboard`) and takes the key out of the address bar. After that:
+
+- requests must name a loopback host, which blocks DNS-rebinding tricks;
+- every write must come from the dashboard's own origin as JSON, so other websites can't post to it with your cookie;
+- other users on the machine, and other sites in your browser, can't use it.
+
+**On the Worker**, you sign in with GitHub, and only the accounts in `HIPPO_OWNERS` get in. A session lasts 7 days.
+
+**Everywhere:**
+
+- Pages carry a strict content security policy: no outside scripts, fonts or images, and they can't be framed.
+- Secret values never reach the page. They show as a lock, and secret-bearing inbox episodes are sealed.
+- You can't type a ruling for a secret field, so a secret can't land in a note as plain text by accident.
+
+<Aside kind="rule" title="Screenshots are vault content">
+
+A screenshot of your dashboard is a screenshot of your private memory. Use `--demo` when you want to show the dashboard to someone, or when reporting a bug.
+
+</Aside>

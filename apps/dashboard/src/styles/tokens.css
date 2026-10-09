@@ -1,0 +1,196 @@
+/*
+ * Campaign codex design tokens. Two themes: "parchment" (light) and "candlelit" (dark).
+ * The theme follows the OS unless the reader picks one (data-theme on <html>, set by public/theme.js).
+ * Entity-type hues are a categorical palette validated for colorblind separation and 3:1 contrast
+ * on each theme's surface; status colors are reserved and always paired with a glyph and a word.
+ */
+:root {
+  color-scheme: light;
+
+  --font-display: "Cinzel Variable", "Cinzel", "Trajan Pro", Georgia, serif;
+  --font-body: "EB Garamond Variable", "EB Garamond", Garamond, Georgia, serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Surfaces: the page is parchment, cards are fresher vellum. */
+  --bg: #eee3c8;
+  --bg-deep: #e2d3ae;
+  --surface: #f6efdf;
+  --surface-2: #fbf7ec;
+  --surface-sunk: #ebe0c4;
+  --overlay: rgb(42 33 24 / 0.45);
+
+  /* Ink */
+  --ink: #2a2118;
+  --ink-2: #57472f;
+  --ink-3: #6f5e46;
+  --ink-inverse: #fbf6ea;
+
+  /* Rules and ornament */
+  --rule: #d6c49c;
+  --rule-strong: #a98d5a;
+  --gold: #9a7428;
+  --gold-soft: #d9bf7f;
+
+  /* Action */
+  --accent: #8b2a1d;
+  --accent-hover: #6f1f14;
+  --accent-ink: #fff8ec;
+  --accent-soft: #f2d9cf;
+  --focus: #1f5fa8;
+  --link: #7a2618;
+
+  /* Status: reserved. Never reuse for a series. */
+  --canon: #2d6a39;
+  --canon-bg: #dcebcf;
+  --rumor: #8a5a08;
+  --rumor-bg: #f5e2b5;
+  --disputed: #a1212a;
+  --disputed-bg: #f5d4ce;
+  --retconned: #5b5f66;
+  --retconned-bg: #e2e0da;
+  --ok: var(--canon);
+  --warn: var(--rumor);
+  --danger: var(--disputed);
+
+  /* Entity types (categorical, fixed order). */
+  --t-faction: #2f6fb0;
+  --t-quest: #c4541f;
+  --t-location: #24976b;
+  --t-item: #b07d00;
+  --t-character: #c2577f;
+  --t-party: #3f7d1a;
+  --t-lore: #5b46b0;
+  --t-campaign: #d0453f;
+  --t-other: #8a7d6a;
+
+  /* Charts */
+  --chart-surface: var(--surface);
+  --grid: #e3d6b6;
+  --series-1: var(--t-faction);
+  --series-2: var(--t-quest);
+  --series-3: var(--t-location);
+
+  /* Shape */
+  --radius-s: 4px;
+  --radius: 8px;
+  --radius-l: 14px;
+  --shadow-1: 0 1px 0 rgb(255 255 255 / 0.55) inset, 0 1px 2px rgb(70 50 20 / 0.12);
+  --shadow-2: 0 1px 0 rgb(255 255 255 / 0.5) inset, 0 10px 28px -14px rgb(70 45 10 / 0.45), 0 2px 6px -2px rgb(70 45 10 / 0.18);
+  --shadow-pop: 0 24px 60px -20px rgb(40 25 5 / 0.55);
+
+  /* Rhythm */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --rail: 232px;
+  --content-max: 1240px;
+
+  --texture: radial-gradient(1200px 700px at 12% -10%, rgb(255 250 235 / 0.75), transparent 60%),
+    radial-gradient(900px 600px at 110% 10%, rgb(214 186 128 / 0.35), transparent 60%),
+    radial-gradient(800px 900px at 50% 120%, rgb(190 160 100 / 0.3), transparent 60%);
+  --grain-opacity: 0.18;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="parchment"])) {
+    color-scheme: dark;
+    --bg: #14100c;
+    --bg-deep: #0d0a07;
+    --surface: #1f1a15;
+    --surface-2: #29221b;
+    --surface-sunk: #17130f;
+    --overlay: rgb(0 0 0 / 0.6);
+    --ink: #f2e7cf;
+    --ink-2: #d3c19c;
+    --ink-3: #b09c7d;
+    --ink-inverse: #1b140d;
+    --rule: #3b3024;
+    --rule-strong: #6c5737;
+    --gold: #d4a64c;
+    --gold-soft: #7b6131;
+    --accent: #e08a4f;
+    --accent-hover: #f0a066;
+    --accent-ink: #1b120a;
+    --accent-soft: #3a2416;
+    --focus: #8ab8ff;
+    --link: #efa36d;
+    --canon: #82c690;
+    --canon-bg: #1d3122;
+    --rumor: #e6b45a;
+    --rumor-bg: #3a2b10;
+    --disputed: #f28383;
+    --disputed-bg: #3e1a1c;
+    --retconned: #aeb2b8;
+    --retconned-bg: #2a2a2b;
+    --t-faction: #4f8fd6;
+    --t-quest: #d9692e;
+    --t-location: #2aa57a;
+    --t-item: #b3820d;
+    --t-character: #d26a93;
+    --t-party: #5f9b2f;
+    --t-lore: #8f7ee6;
+    --t-campaign: #e06a62;
+    --t-other: #8b806f;
+    --grid: #2e271f;
+    --shadow-1: 0 1px 0 rgb(255 220 160 / 0.04) inset, 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-2: 0 1px 0 rgb(255 220 160 / 0.05) inset, 0 14px 32px -16px rgb(0 0 0 / 0.8), 0 2px 6px -2px rgb(0 0 0 / 0.5);
+    --shadow-pop: 0 30px 70px -20px rgb(0 0 0 / 0.85);
+    --texture: radial-gradient(900px 600px at 15% -5%, rgb(224 138 79 / 0.13), transparent 60%),
+      radial-gradient(700px 500px at 100% 0%, rgb(212 166 76 / 0.08), transparent 60%),
+      radial-gradient(1000px 800px at 50% 120%, rgb(120 60 20 / 0.18), transparent 60%);
+    --grain-opacity: 0.1;
+  }
+}
+
+:root[data-theme="candlelit"] {
+  color-scheme: dark;
+  --bg: #14100c;
+  --bg-deep: #0d0a07;
+  --surface: #1f1a15;
+  --surface-2: #29221b;
+  --surface-sunk: #17130f;
+  --overlay: rgb(0 0 0 / 0.6);
+  --ink: #f2e7cf;
+  --ink-2: #d3c19c;
+  --ink-3: #b09c7d;
+  --ink-inverse: #1b140d;
+  --rule: #3b3024;
+  --rule-strong: #6c5737;
+  --gold: #d4a64c;
+  --gold-soft: #7b6131;
+  --accent: #e08a4f;
+  --accent-hover: #f0a066;
+  --accent-ink: #1b120a;
+  --accent-soft: #3a2416;
+  --focus: #8ab8ff;
+  --link: #efa36d;
+  --canon: #82c690;
+  --canon-bg: #1d3122;
+  --rumor: #e6b45a;
+  --rumor-bg: #3a2b10;
+  --disputed: #f28383;
+  --disputed-bg: #3e1a1c;
+  --retconned: #aeb2b8;
+  --retconned-bg: #2a2a2b;
+  --t-faction: #4f8fd6;
+  --t-quest: #d9692e;
+  --t-location: #2aa57a;
+  --t-item: #b3820d;
+  --t-character: #d26a93;
+  --t-party: #5f9b2f;
+  --t-lore: #8f7ee6;
+  --t-campaign: #e06a62;
+  --t-other: #8b806f;
+  --grid: #2e271f;
+  --shadow-1: 0 1px 0 rgb(255 220 160 / 0.04) inset, 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-2: 0 1px 0 rgb(255 220 160 / 0.05) inset, 0 14px 32px -16px rgb(0 0 0 / 0.8), 0 2px 6px -2px rgb(0 0 0 / 0.5);
+  --shadow-pop: 0 30px 70px -20px rgb(0 0 0 / 0.85);
+  --texture: radial-gradient(900px 600px at 15% -5%, rgb(224 138 79 / 0.13), transparent 60%),
+    radial-gradient(700px 500px at 100% 0%, rgb(212 166 76 / 0.08), transparent 60%),
+    radial-gradient(1000px 800px at 50% 120%, rgb(120 60 20 / 0.18), transparent 60%);
+  --grain-opacity: 0.1;
+}

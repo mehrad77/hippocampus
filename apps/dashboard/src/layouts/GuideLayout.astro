@@ -1,0 +1,130 @@
+---
+import Shell from "./Shell.astro";
+import "../styles/guides.css";
+import NavIcon from "../ui/NavIcon.astro";
+import { href } from "../lib/routes.ts";
+import type { IconName } from "../lib/icons.ts";
+
+interface Neighbor {
+  slug: string;
+  title: string;
+}
+
+interface Props {
+  title: string;
+  summary: string;
+  section: string;
+  sigil: IconName;
+  /** Position in the reading order (1-based) and the number of guides. */
+  position: number;
+  total: number;
+  headings: { depth: number; slug: string; text: string }[];
+  prev?: Neighbor;
+  next?: Neighbor;
+}
+
+const { title, summary, section, sigil, position, total, headings, prev, next } = Astro.props;
+
+// A two-level table of contents: each h2 with the h3s under it.
+const toc: { slug: string; text: string; children: { slug: string; text: string }[] }[] = [];
+for (const h of headings) {
+  if (h.depth === 2) toc.push({ slug: h.slug, text: h.text, children: [] });
+  else if (h.depth === 3 && toc.length) toc[toc.length - 1]!.children.push({ slug: h.slug, text: h.text });
+}
+---
+<Shell title={title} page="guide" description={summary}>
+  <div class="guide">
+    <nav class="guide-crumbs small" aria-label="Breadcrumb">
+      <a href={href.page("guides")}>Player's Handbook</a>
+      <span aria-hidden="true">›</span>
+      <span>{section}</span>
+    </nav>
+
+    <header class="guide-head">
+      <span class="guide-sigil" aria-hidden="true"><NavIcon name={sigil} size={30} /></span>
+      <div>
+        <p class="page-head__kicker">{section} · Guide {position} of {total}</p>
+        <h1>{title}</h1>
+        <p class="guide-head__summary">{summary}</p>
+      </div>
+    </header>
+
+    {toc.length > 0 && (
+      <details class="guide-toc guide-toc--compact">
+        <summary>On this page</summary>
+        <ol>
+          {toc.map((h) => (
+            <li>
+              <a href={`#${h.slug}`}>{h.text}</a>
+              {h.children.length > 0 && (
+                <ol>
+                  {h.children.map((c) => (
+                    <li><a href={`#${c.slug}`}>{c.text}</a></li>
+                  ))}
+                </ol>
+              )}
+            </li>
+          ))}
+        </ol>
+      </details>
+    )}
+
+    <div class="guide-grid">
+      <article class="guide-body prose">
+        <slot />
+      </article>
+
+      {toc.length > 0 && (
+        <aside class="guide-toc guide-toc--side">
+          <nav aria-label="On this page">
+            <p class="guide-toc__title">On this page</p>
+            <ol>
+              {toc.map((h) => (
+                <li>
+                  <a href={`#${h.slug}`}>{h.text}</a>
+                  {h.children.length > 0 && (
+                    <ol>
+                      {h.children.map((c) => (
+                        <li><a href={`#${c.slug}`}>{c.text}</a></li>
+                      ))}
+                    </ol>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </nav>
+        </aside>
+      )}
+    </div>
+
+    <nav class="guide-pager" aria-label="Previous and next guide">
+      {prev ? (
+        <a class="guide-pager__link guide-pager__link--prev" href={href.guide(prev.slug)} rel="prev">
+          <span class="guide-pager__dir"><NavIcon name="back" size={16} /> Previous</span>
+          <span class="guide-pager__title">{prev.title}</span>
+        </a>
+      ) : (
+        <a class="guide-pager__link guide-pager__link--prev" href={href.page("guides")}>
+          <span class="guide-pager__dir"><NavIcon name="back" size={16} /> All guides</span>
+          <span class="guide-pager__title">The Player's Handbook</span>
+        </a>
+      )}
+      {next ? (
+        <a class="guide-pager__link guide-pager__link--next" href={href.guide(next.slug)} rel="next">
+          <span class="guide-pager__dir">Next <NavIcon name="chevron" size={16} /></span>
+          <span class="guide-pager__title">{next.title}</span>
+        </a>
+      ) : (
+        <a class="guide-pager__link guide-pager__link--next" href={href.page("tavern")}>
+          <span class="guide-pager__dir">Done reading <NavIcon name="chevron" size={16} /></span>
+          <span class="guide-pager__title">Back to the Tavern</span>
+        </a>
+      )}
+    </nav>
+
+    <p class="guide-edition small">
+      <NavIcon name="scroll" size={16} />
+      <span><strong>Edit-free:</strong> these guides ship with your version of Hippocampus, so they always match the tool you run. They describe the tool, never your vault.</span>
+    </p>
+  </div>
+</Shell>

@@ -7,3 +7,4 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@ai-sdk/gateway@4.0.96'
   - ai@7.0.118
+  - astro@7.3.8

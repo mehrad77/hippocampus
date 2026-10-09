@@ -1,0 +1,124 @@
+---
+import "../styles/fonts.css";
+import "../styles/tokens.css";
+import "../styles/base.css";
+import "../styles/components.css";
+import NavIcon from "../ui/NavIcon.astro";
+import Global from "../islands/Global.tsx";
+import ThemeToggle from "../islands/ThemeToggle.tsx";
+import { href, type Page } from "../lib/routes.ts";
+import type { IconName } from "../lib/icons.ts";
+
+interface Props {
+  title: string;
+  page: Page | "entity" | "guide";
+  description?: string;
+}
+const { title, page, description = "Your party's shared memory, as a campaign codex." } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const play: [Page, string, IconName, string?][] = [
+  ["tavern", "Tavern", "tavern"],
+  ["quests", "Quest board", "quest"],
+  ["council", "Council", "council", "council"],
+  ["satchel", "Satchel", "satchel", "satchel"],
+];
+const lore: [Page, string, IconName, string?][] = [
+  ["codex", "Codex", "codex"],
+  ["map", "Map", "map"],
+  ["chronicle", "Chronicle", "chronicle"],
+  ["party", "Party", "party"],
+];
+const meta: [Page, string, IconName][] = [
+  ["guides", "Guides", "guides"],
+  ["setup", "Setup & health", "setup"],
+];
+const current = (p: string) => (p === page || (page === "guide" && p === "guides") ? "page" : undefined);
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href={`${base}/favicon.svg`} />
+    <script is:inline src={`${base}/theme.js`}></script>
+    <title>{title} · Hippocampus</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="shell" data-drawer="closed">
+      <nav class="rail" id="rail" aria-label="Main">
+        <a class="rail__brand" href={href.page("tavern")}>
+          <NavIcon name="d20" size={34} />
+          <span class="rail__title">Hippocampus<span class="rail__campaign" data-campaign>campaign codex</span></span>
+        </a>
+        <div class="rail__section">At the table</div>
+        {play.map(([p, label, icon, badge]) => (
+          <a class="navlink" href={href.page(p)} aria-current={current(p)}>
+            <NavIcon name={icon} />{label}{badge && <span class="navlink__badge" data-badge={badge} hidden></span>}
+          </a>
+        ))}
+        <div class="rail__section">Lore</div>
+        {lore.map(([p, label, icon]) => (
+          <a class="navlink" href={href.page(p)} aria-current={current(p)}><NavIcon name={icon} />{label}</a>
+        ))}
+        <div class="rail__foot">
+          <button type="button" class="navlink navlink--button" data-open-palette>
+            <NavIcon name="search" />Search <kbd class="push">⌘K</kbd>
+          </button>
+          <button type="button" class="navlink navlink--button" data-open-scribe>
+            <NavIcon name="quill" />Scribe a memory
+          </button>
+          {meta.map(([p, label, icon]) => (
+            <a class="navlink" href={href.page(p)} aria-current={current(p)}><NavIcon name={icon} />{label}</a>
+          ))}
+          <ThemeToggle client:only="react" />
+        </div>
+      </nav>
+      <div class="scrim" hidden data-close-drawer></div>
+      <div>
+        <header class="topbar">
+          <button type="button" class="btn btn--ghost btn--icon" aria-label="Open menu" aria-controls="rail" aria-expanded="false" data-open-drawer>
+            <NavIcon name="menu" />
+          </button>
+          <span class="topbar__title">{title}</span>
+          <button type="button" class="btn btn--ghost btn--icon" aria-label="Search" data-open-palette><NavIcon name="search" /></button>
+        </header>
+        <main class="main" id="main">
+          <div class="main__inner">
+            <slot />
+          </div>
+        </main>
+      </div>
+      <nav class="tabbar" aria-label="Quick">
+        <a href={href.page("tavern")} aria-current={current("tavern")}><NavIcon name="tavern" />Tavern</a>
+        <a href={href.page("quests")} aria-current={current("quests")}><NavIcon name="quest" />Quests</a>
+        <button type="button" data-open-scribe aria-label="Scribe a memory"><NavIcon name="quill" />Scribe</button>
+        <a href={href.page("council")} aria-current={current("council")}><NavIcon name="council" />Council<span class="navlink__badge" data-badge="council" hidden></span></a>
+        <button type="button" data-open-drawer aria-label="More"><NavIcon name="menu" />More</button>
+      </nav>
+    </div>
+    <Global client:only="react" />
+    <script>
+      import { emit } from "../lib/events.ts";
+      const shell = document.querySelector<HTMLElement>(".shell")!;
+      const scrim = document.querySelector<HTMLElement>("[data-close-drawer]")!;
+      const setDrawer = (open: boolean) => {
+        shell.dataset.drawer = open ? "open" : "closed";
+        scrim.hidden = !open;
+        for (const b of document.querySelectorAll("[data-open-drawer]")) b.setAttribute("aria-expanded", String(open));
+      };
+      for (const b of document.querySelectorAll("[data-open-drawer]")) b.addEventListener("click", () => setDrawer(true));
+      scrim.addEventListener("click", () => setDrawer(false));
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") setDrawer(false);
+      });
+      for (const b of document.querySelectorAll("[data-open-scribe]")) b.addEventListener("click", () => (setDrawer(false), emit("scribe:open", {})));
+      for (const b of document.querySelectorAll("[data-open-palette]")) b.addEventListener("click", () => (setDrawer(false), emit("palette:open", {})));
+    </script>
+  </body>
+</html>

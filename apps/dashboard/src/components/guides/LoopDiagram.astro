@@ -1,0 +1,96 @@
+---
+/**
+ * The memory loop: agents remember → inbox → nightly sleep → canon, chronicle, disputes → the human rules.
+ * Pure SVG with classes (no inline styles), themed by guides.css through the design tokens.
+ */
+---
+<figure class="guide-figure">
+  <div class="guide-figure__scroll">
+    <svg class="gd" viewBox="0 0 860 430" role="img" aria-labelledby="loop-title loop-desc">
+      <title id="loop-title">The Hippocampus memory loop</title>
+      <desc id="loop-desc">
+        Agents remember into the inbox. Each night the sleep pass reads the inbox: small language-model steps find mentions and
+        claims, and deterministic code reconciles and applies them. It writes canon notes, the chronicle, and dispute notes. Disputes
+        go to the human, whose ruling becomes canon. Agents read canon back at any time with recall, get, ask_canon and briefing.
+      </desc>
+      <defs>
+        <marker id="loop-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="gd__head" />
+        </marker>
+        <marker id="loop-head-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="gd__head gd__head--accent" />
+        </marker>
+        <marker id="loop-head-gold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="gd__head gd__head--gold" />
+        </marker>
+      </defs>
+
+      <!-- Reads: any time, straight from canon -->
+      <path d="M745 40 V24 H90 V176" class="gd__edge gd__edge--read" marker-end="url(#loop-head)" />
+      <text x="420" y="16" class="gd__label" text-anchor="middle">agents read canon any time: recall · get · ask_canon · briefing</text>
+
+      <!-- Writes -->
+      <path d="M160 222 C215 222 295 205 295 156" class="gd__edge" marker-end="url(#loop-head)" />
+      <text x="222" y="248" class="gd__label" text-anchor="middle">remember</text>
+      <path d="M370 112 H426" class="gd__edge" marker-end="url(#loop-head)" />
+      <text x="399" y="102" class="gd__label" text-anchor="middle">nightly</text>
+
+      <!-- Sleep outputs -->
+      <path d="M600 90 C630 90 630 72 656 72" class="gd__edge gd__edge--accent" marker-end="url(#loop-head-accent)" />
+      <path d="M600 112 C630 112 630 160 656 160" class="gd__edge gd__edge--accent" marker-end="url(#loop-head-accent)" />
+      <path d="M600 134 C625 134 625 248 656 248" class="gd__edge gd__edge--accent" marker-end="url(#loop-head-accent)" />
+
+      <!-- The human -->
+      <path d="M745 280 C745 340 660 362 604 362" class="gd__edge gd__edge--gold" marker-end="url(#loop-head-gold)" />
+      <text x="754" y="322" class="gd__label">ruling needed</text>
+      <path d="M602 392 H832 Q845 392 845 379 V85 Q845 72 834 72" class="gd__edge gd__edge--gold" marker-end="url(#loop-head-gold)" />
+      <text x="720" y="414" class="gd__label" text-anchor="middle">your ruling becomes canon</text>
+
+      <!-- Nodes -->
+      <g class="gd__node gd__node--party">
+        <rect x="20" y="180" width="140" height="84" rx="10" />
+        <text x="90" y="212" class="gd__title" text-anchor="middle">The party</text>
+        <text x="90" y="232" class="gd__sub" text-anchor="middle">agents in lanes</text>
+        <text x="90" y="250" class="gd__sub" text-anchor="middle">MCP or GitHub</text>
+      </g>
+      <g class="gd__node">
+        <rect x="220" y="70" width="150" height="84" rx="10" />
+        <text x="295" y="102" class="gd__title" text-anchor="middle">Inbox</text>
+        <text x="295" y="122" class="gd__mono" text-anchor="middle">inbox/&lt;agent&gt;/</text>
+        <text x="295" y="140" class="gd__sub" text-anchor="middle">raw episodes</text>
+      </g>
+      <g class="gd__node gd__node--accent">
+        <rect x="430" y="56" width="170" height="112" rx="12" />
+        <text x="515" y="88" class="gd__title" text-anchor="middle">Nightly sleep</text>
+        <text x="515" y="110" class="gd__sub" text-anchor="middle">LLM: mentions, claims</text>
+        <text x="515" y="128" class="gd__sub" text-anchor="middle">code: reconcile, apply</text>
+        <text x="515" y="148" class="gd__sub gd__sub--muted" text-anchor="middle">failures stay in the inbox</text>
+      </g>
+      <g class="gd__node gd__node--canon">
+        <rect x="660" y="40" width="170" height="64" rx="10" />
+        <text x="745" y="66" class="gd__title" text-anchor="middle">Canon notes</text>
+        <text x="745" y="86" class="gd__sub" text-anchor="middle">facts · relations · quests</text>
+      </g>
+      <g class="gd__node">
+        <rect x="660" y="128" width="170" height="64" rx="10" />
+        <text x="745" y="154" class="gd__title" text-anchor="middle">Chronicle</text>
+        <text x="745" y="174" class="gd__mono" text-anchor="middle">chronicle/YYYY/MM/</text>
+      </g>
+      <g class="gd__node gd__node--disputed">
+        <rect x="660" y="216" width="170" height="64" rx="10" />
+        <text x="745" y="242" class="gd__title" text-anchor="middle">Disputes</text>
+        <text x="745" y="262" class="gd__mono" text-anchor="middle">disputes/*.md</text>
+      </g>
+      <g class="gd__node gd__node--human">
+        <rect x="430" y="320" width="170" height="84" rx="10" />
+        <text x="515" y="352" class="gd__title" text-anchor="middle">You, the human</text>
+        <text x="515" y="372" class="gd__sub" text-anchor="middle">Council or Obsidian</text>
+        <text x="515" y="390" class="gd__sub gd__sub--muted" text-anchor="middle">outranks every agent</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>
+    Agents write fast, raw <em>episodes</em>. The nightly sleep turns them into canon, a day-by-day chronicle, and disputes for you
+    to settle. Everyone reads canon back whenever they need it.
+  </figcaption>
+</figure>

@@ -1,0 +1,948 @@
+/*
+ * Guides: the Player's Handbook index, guide pages, MDX components (asides, clocks, diagrams),
+ * the Prism code theme, and the 404 page. Everything is built from the design tokens, so both
+ * themes (parchment and candlelit) come for free. No inline styles anywhere: the page CSP forbids them.
+ */
+
+/* ── Guide page ──────────────────────────────────────────────────────── */
+
+.guide {
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.guide-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--ink-3);
+  margin-bottom: var(--space-4);
+}
+
+.guide-crumbs a {
+  color: var(--ink-2);
+}
+
+.guide-head {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--rule);
+}
+
+.guide-head h1 {
+  margin: 0 0 var(--space-2);
+}
+
+.guide-head__summary {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 1.12rem;
+  font-style: italic;
+  color: var(--ink-2);
+}
+
+.guide-sigil,
+.guide-card__sigil {
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--gold);
+  border: 1px solid var(--gold-soft);
+  background: radial-gradient(circle at 35% 30%, var(--surface-2), var(--surface-sunk));
+  box-shadow: inset 0 0 0 3px var(--surface), inset 0 0 0 4px color-mix(in oklab, var(--gold-soft) 60%, transparent);
+}
+
+.guide-sigil {
+  width: 64px;
+  height: 64px;
+}
+
+.guide-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 232px;
+  gap: var(--space-7);
+}
+
+/* ── Table of contents: sticky on wide screens, a <details> above the text elsewhere ── */
+
+.guide-toc ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.guide-toc li {
+  margin: 0;
+}
+
+.guide-toc a {
+  display: block;
+  padding: 4px 0 4px var(--space-3);
+  border-left: 2px solid var(--rule);
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
+
+.guide-toc a:hover {
+  color: var(--ink);
+  border-left-color: var(--gold);
+}
+
+.guide-toc ol ol a {
+  padding-left: var(--space-5);
+  font-size: 0.85rem;
+  color: var(--ink-3);
+}
+
+.guide-toc__title {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+.guide-toc--side nav {
+  position: sticky;
+  top: var(--space-5);
+  max-height: calc(100dvh - var(--space-6));
+  overflow-y: auto;
+  padding-bottom: var(--space-4);
+}
+
+.guide-toc--compact {
+  display: none;
+  margin-bottom: var(--space-5);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.guide-toc--compact summary {
+  cursor: pointer;
+  padding: var(--space-1) 0;
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.guide-toc--compact[open] summary {
+  margin-bottom: var(--space-2);
+}
+
+.guide-toc--compact ol {
+  padding-bottom: var(--space-2);
+}
+
+@media (max-width: 1100px) {
+  .guide-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .guide-toc--side {
+    display: none;
+  }
+
+  .guide-toc--compact {
+    display: block;
+  }
+}
+
+/* ── Guide text ──────────────────────────────────────────────────────── */
+
+.guide-body {
+  min-width: 0;
+  max-width: 46rem;
+  /* Prism tokens: category hues pulled toward the ink so they read on the code surface in both themes. */
+  --code-key: color-mix(in oklab, var(--t-faction) 78%, var(--ink));
+  --code-string: color-mix(in oklab, var(--t-location) 78%, var(--ink));
+  --code-number: color-mix(in oklab, var(--t-quest) 80%, var(--ink));
+  --code-keyword: color-mix(in oklab, var(--t-lore) 80%, var(--ink));
+  --code-function: color-mix(in oklab, var(--t-character) 78%, var(--ink));
+  --code-variable: color-mix(in oklab, var(--t-item) 70%, var(--ink));
+}
+
+.guide .guide-body h2 {
+  margin-top: var(--space-7);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--rule);
+  font-size: 1.42rem;
+}
+
+.guide .guide-body > h2:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.guide .guide-body h3 {
+  margin-top: var(--space-5);
+  font-size: 1.1rem;
+  color: var(--ink-2);
+}
+
+.guide-body li + li {
+  margin-top: 4px;
+}
+
+.guide-body pre,
+.guide-body table {
+  margin: var(--space-4) 0;
+}
+
+.guide-body td {
+  overflow-wrap: anywhere;
+}
+
+.guide-body td code,
+.guide-body th code {
+  overflow-wrap: normal;
+}
+
+.guide-body .seal {
+  vertical-align: 1px;
+}
+
+@media (max-width: 700px) {
+  .guide-body table {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
+/* ── Asides ──────────────────────────────────────────────────────────── */
+
+.guide-aside {
+  margin: var(--space-5) 0;
+}
+
+.guide-aside__body {
+  min-width: 0;
+}
+
+.guide-aside__body > :last-child {
+  margin-bottom: 0;
+}
+
+.guide-aside__title {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-display);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--c, var(--gold));
+}
+
+/* ── Clocks ──────────────────────────────────────────────────────────── */
+
+.guide-clocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.guide-clock {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-l);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-1);
+}
+
+.guide-clock figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.3;
+}
+
+.guide-clock .mono {
+  letter-spacing: 0.05em;
+}
+
+/* ── Diagrams ────────────────────────────────────────────────────────── */
+
+.guide-figure {
+  margin: var(--space-5) 0;
+  padding: var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+}
+
+.guide-figure__scroll {
+  overflow-x: auto;
+}
+
+.guide-figure figcaption {
+  margin-top: var(--space-3);
+  font-size: 0.92rem;
+  font-style: italic;
+  color: var(--ink-3);
+}
+
+.gd {
+  display: block;
+  width: 100%;
+  min-width: 620px;
+  height: auto;
+  font-family: var(--font-body);
+}
+
+.gd__node rect {
+  fill: var(--surface-2);
+  stroke: var(--rule-strong);
+  stroke-width: 1.5;
+}
+
+.gd__node--plain rect {
+  fill: var(--surface-sunk);
+}
+
+.gd__node--accent rect {
+  fill: color-mix(in oklab, var(--accent) 12%, var(--surface-2));
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.gd__node--party rect {
+  stroke: var(--t-party);
+}
+
+.gd__node--human rect {
+  fill: color-mix(in oklab, var(--gold) 16%, var(--surface-2));
+  stroke: var(--gold);
+  stroke-width: 2;
+}
+
+.gd__node--canon rect {
+  fill: var(--canon-bg);
+  stroke: var(--canon);
+}
+
+.gd__node--rumor rect {
+  fill: var(--rumor-bg);
+  stroke: var(--rumor);
+}
+
+.gd__node--disputed rect {
+  fill: var(--disputed-bg);
+  stroke: var(--disputed);
+}
+
+.gd__node--retconned rect {
+  fill: var(--retconned-bg);
+  stroke: var(--retconned);
+}
+
+.gd__title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  fill: var(--ink);
+}
+
+.gd__node--canon .gd__title {
+  fill: var(--canon);
+}
+
+.gd__node--rumor .gd__title {
+  fill: var(--rumor);
+}
+
+.gd__node--disputed .gd__title {
+  fill: var(--disputed);
+}
+
+.gd__node--retconned .gd__title {
+  fill: var(--retconned);
+}
+
+.gd__sub {
+  font-size: 13.5px;
+  fill: var(--ink-2);
+}
+
+.gd__sub--muted {
+  font-style: italic;
+  fill: var(--ink-3);
+}
+
+.gd__mono {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  fill: var(--ink-2);
+}
+
+.gd__label {
+  font-size: 13.5px;
+  font-style: italic;
+  fill: var(--ink-2);
+}
+
+.gd__label--muted {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-style: normal;
+  fill: var(--ink-3);
+}
+
+.gd__edge {
+  fill: none;
+  stroke: var(--ink-3);
+  stroke-width: 1.6;
+}
+
+.gd__edge--accent {
+  stroke: var(--accent);
+}
+
+.gd__edge--gold {
+  stroke: var(--gold);
+  stroke-width: 2;
+}
+
+.gd__edge--danger {
+  stroke: var(--disputed);
+}
+
+.gd__edge--read {
+  stroke-dasharray: 5 5;
+}
+
+.gd__head {
+  fill: var(--ink-3);
+}
+
+.gd__head--accent {
+  fill: var(--accent);
+}
+
+.gd__head--gold {
+  fill: var(--gold);
+}
+
+.gd__cross path {
+  fill: none;
+  stroke: var(--disputed);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+/* ── The precedence ladder ───────────────────────────────────────────── */
+
+.guide-body .guide-ladder {
+  list-style: none;
+  margin: var(--space-4) 0 var(--space-5);
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.guide-ladder li {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-1);
+}
+
+.guide-ladder li:nth-child(2) {
+  margin-left: var(--space-4);
+}
+
+.guide-ladder li:nth-child(3) {
+  margin-left: var(--space-6);
+}
+
+.guide-ladder li:nth-child(4) {
+  margin-left: calc(var(--space-6) + var(--space-4));
+}
+
+.guide-ladder strong {
+  display: block;
+  font-family: var(--font-display);
+  letter-spacing: 0.03em;
+}
+
+.guide-ladder span {
+  color: var(--ink-2);
+}
+
+.guide-ladder .guide-ladder__rung {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--gold);
+  color: var(--ink-inverse);
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+@media (max-width: 640px) {
+  .guide-ladder li:nth-child(n) {
+    margin-left: 0;
+  }
+}
+
+/* ── Prism code theme (both themes, from tokens) ─────────────────────── */
+
+.guide-body pre[class*="language-"] {
+  color: var(--ink);
+  tab-size: 2;
+  box-shadow: inset 0 1px 3px color-mix(in oklab, var(--ink) 8%, transparent);
+}
+
+.guide-body .token.comment,
+.guide-body .token.prolog,
+.guide-body .token.doctype,
+.guide-body .token.cdata,
+.guide-body .token.shebang {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.guide-body .token.punctuation {
+  color: var(--ink-3);
+}
+
+.guide-body .token.property,
+.guide-body .token.tag,
+.guide-body .token.attr-name,
+.guide-body .token.key,
+.guide-body .token.atrule {
+  color: var(--code-key);
+}
+
+.guide-body .token.string,
+.guide-body .token.char,
+.guide-body .token.attr-value,
+.guide-body .token.url,
+.guide-body .token.inserted,
+.guide-body .token.scalar {
+  color: var(--code-string);
+}
+
+.guide-body .token.number,
+.guide-body .token.boolean,
+.guide-body .token.constant,
+.guide-body .token.symbol,
+.guide-body .token.datetime,
+.guide-body .token.null {
+  color: var(--code-number);
+}
+
+.guide-body .token.keyword,
+.guide-body .token.builtin,
+.guide-body .token.selector,
+.guide-body .token.important,
+.guide-body .token.directive {
+  color: var(--code-keyword);
+}
+
+.guide-body .token.function,
+.guide-body .token.function-name,
+.guide-body .token.class-name {
+  color: var(--code-function);
+}
+
+.guide-body .token.variable,
+.guide-body .token.environment,
+.guide-body .token.assign-left,
+.guide-body .token.parameter {
+  color: var(--code-variable);
+}
+
+.guide-body .token.operator,
+.guide-body .token.entity {
+  color: var(--ink-2);
+}
+
+.guide-body .token.deleted {
+  color: var(--disputed);
+}
+
+.guide-body .token.title,
+.guide-body .token.bold,
+.guide-body .token.important {
+  font-weight: 700;
+}
+
+.guide-body .token.italic {
+  font-style: italic;
+}
+
+/* ── Pager and edition note ──────────────────────────────────────────── */
+
+.guide-pager {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  margin-top: var(--space-7);
+}
+
+.guide-pager__link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-1);
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.guide-pager__link:hover {
+  border-color: var(--gold);
+  box-shadow: var(--shadow-2);
+}
+
+.guide-pager__link--next {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.guide-pager__dir {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.guide-pager__title {
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+  font-weight: 600;
+  color: var(--link);
+}
+
+@media (max-width: 640px) {
+  .guide-pager {
+    grid-template-columns: 1fr;
+  }
+
+  .guide-pager__link--next {
+    align-items: flex-start;
+    text-align: left;
+  }
+}
+
+.guide-edition {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px dashed var(--rule-strong);
+  color: var(--ink-3);
+}
+
+.guide-edition svg {
+  flex: none;
+  margin-top: 4px;
+  color: var(--gold);
+}
+
+/* ── Guides index ────────────────────────────────────────────────────── */
+
+.guide-index {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.guide-index .guide-hero {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-5);
+  padding: var(--space-6);
+  background:
+    radial-gradient(600px 260px at 100% 0%, color-mix(in oklab, var(--gold-soft) 22%, transparent), transparent 70%),
+    var(--surface);
+}
+
+.guide-hero__seal {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  border: 2px solid var(--gold);
+  color: var(--gold);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 5px var(--surface), inset 0 0 0 6px var(--gold-soft);
+}
+
+.guide-hero__text {
+  min-width: 0;
+}
+
+.guide-hero h1 {
+  margin-bottom: var(--space-3);
+}
+
+.guide-hero__lede {
+  max-width: 62ch;
+  font-size: 1.12rem;
+  color: var(--ink-2);
+}
+
+.guide-hero__actions {
+  margin-top: var(--space-4);
+}
+
+@media (max-width: 640px) {
+  .guide-index .guide-hero {
+    flex-direction: column;
+    padding: var(--space-5);
+  }
+
+  .guide-hero__seal {
+    width: 72px;
+    height: 72px;
+  }
+}
+
+.guide-section__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.guide-section__head h2 {
+  margin: 0;
+}
+
+.guide-section__head p {
+  margin: 0;
+  font-style: italic;
+}
+
+.guide-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: var(--space-4);
+}
+
+.guide-cards .guide-card {
+  display: flex;
+  gap: var(--space-4);
+  height: 100%;
+  padding: var(--space-4) var(--space-5);
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.guide-card:hover {
+  border-color: var(--rule-strong);
+  box-shadow: var(--shadow-2);
+  transform: translateY(-1px);
+}
+
+.guide-card__sigil {
+  width: 50px;
+  height: 50px;
+}
+
+.guide-card__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.guide-card__num {
+  font-family: var(--font-display);
+  font-size: 0.66rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.guide-card__title {
+  font-family: var(--font-display);
+  font-size: 1.06rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.guide-card:hover .guide-card__title {
+  color: var(--link);
+}
+
+.guide-card__summary {
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+
+.guide-index .guide-order {
+  margin: 0;
+  padding: var(--space-4) var(--space-5) var(--space-4) calc(var(--space-5) + 1.6em);
+  columns: 2 300px;
+  column-gap: var(--space-7);
+}
+
+.guide-order li {
+  break-inside: avoid;
+  padding: 4px 0;
+}
+
+.guide-order li::marker {
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.guide-order a {
+  font-weight: 600;
+}
+
+.guide-order .small {
+  margin-left: var(--space-2);
+}
+
+/* ── 404: off the map ────────────────────────────────────────────────── */
+
+.lost {
+  max-width: 640px;
+  margin: var(--space-6) auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  text-align: center;
+}
+
+.lost h1 {
+  margin: 0;
+}
+
+.lost__map {
+  width: min(100%, 440px);
+  height: auto;
+  margin-bottom: var(--space-4);
+  filter: drop-shadow(0 10px 18px color-mix(in oklab, var(--ink) 18%, transparent));
+}
+
+.lost__paper {
+  fill: var(--surface-2);
+  stroke: var(--rule-strong);
+  stroke-width: 1.5;
+}
+
+.lost__fold {
+  fill: none;
+  stroke: var(--rule);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+
+.lost__coast {
+  fill: color-mix(in oklab, var(--t-location) 14%, var(--surface-2));
+  stroke: var(--t-location);
+  stroke-width: 1.4;
+}
+
+.lost__town {
+  fill: var(--accent);
+}
+
+.lost__name {
+  font-family: var(--font-display);
+  font-size: 11px;
+  fill: var(--ink-2);
+}
+
+.lost__trail {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-dasharray: 1 7;
+  animation: lost-march 2.4s linear infinite;
+}
+
+@keyframes lost-march {
+  to {
+    stroke-dashoffset: -32;
+  }
+}
+
+.lost__x {
+  fill: none;
+  stroke: var(--disputed);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.lost__rose circle {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 1.2;
+}
+
+.lost__rose path {
+  fill: var(--gold-soft);
+  stroke: var(--gold);
+  stroke-width: 1;
+}
+
+.lost__dragons {
+  font-family: var(--font-body);
+  font-size: 15px;
+  font-style: italic;
+  fill: var(--ink-3);
+}
+
+.lost__lede {
+  max-width: 48ch;
+  font-size: 1.15rem;
+  font-style: italic;
+  color: var(--ink-2);
+}
+
+.lost__actions {
+  justify-content: center;
+  margin: var(--space-2) 0 var(--space-4);
+}

@@ -1,0 +1,7 @@
+---
+import Shell from "../layouts/Shell.astro";
+import QuestsView from "../islands/QuestsView.tsx";
+---
+<Shell title="Quest board" page="quests">
+  <QuestsView client:only="react" />
+</Shell>

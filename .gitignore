@@ -19,3 +19,6 @@ seeds/private-*/
 # Cloudflare Worker local state and secrets
 .wrangler/
 .dev.vars
+
+# Astro generated types and cache
+.astro/

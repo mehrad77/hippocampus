@@ -1,0 +1,48 @@
+---
+/** The two-repo model: the public tool acts on your private vault, and nothing flows back. */
+---
+<figure class="guide-figure">
+  <div class="guide-figure__scroll">
+    <svg class="gd" viewBox="0 0 820 226" role="img" aria-labelledby="repos-title repos-desc">
+      <title id="repos-title">Public tool, private vault</title>
+      <desc id="repos-desc">
+        On the left, the public Hippocampus repository: code, the vault template, fictional seeds and these guides, published to
+        npm. On the right, your private vault repository: notes, inbox, chronicle, disputes and encrypted secrets. The tool runs on
+        your vault at a pinned version. Nothing flows from the vault back into the tool.
+      </desc>
+      <defs>
+        <marker id="repos-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="gd__head gd__head--accent" />
+        </marker>
+      </defs>
+
+      <g class="gd__node gd__node--plain">
+        <rect x="20" y="30" width="320" height="174" rx="14" />
+        <text x="44" y="64" class="gd__title">Hippocampus · public</text>
+        <text x="44" y="96" class="gd__sub">code, vault template, fictional seeds</text>
+        <text x="44" y="122" class="gd__sub">these guides and the dashboard</text>
+        <text x="44" y="148" class="gd__mono">npm @mehrad77/hippocampus</text>
+        <text x="44" y="182" class="gd__sub gd__sub--muted">issues and PRs: fictional names only</text>
+      </g>
+      <g class="gd__node gd__node--canon">
+        <rect x="480" y="30" width="320" height="174" rx="14" />
+        <text x="504" y="64" class="gd__title">Your vault · private</text>
+        <text x="504" y="96" class="gd__sub">notes, quests, party, HANDBOOK.md</text>
+        <text x="504" y="122" class="gd__sub">inbox, chronicle, disputes</text>
+        <text x="504" y="148" class="gd__mono">secrets/*.age (encrypted)</text>
+        <text x="504" y="182" class="gd__sub gd__sub--muted">opened in Obsidian, synced by git</text>
+      </g>
+
+      <path d="M340 98 H476" class="gd__edge gd__edge--accent" marker-end="url(#repos-head)" />
+      <text x="410" y="88" class="gd__label" text-anchor="middle">runs on it</text>
+      <text x="410" y="118" class="gd__label gd__label--muted" text-anchor="middle">pinned version</text>
+
+      <path d="M478 168 H344" class="gd__edge gd__edge--read" />
+      <g class="gd__cross">
+        <path d="M398 156 L422 180 M422 156 L398 180" />
+      </g>
+      <text x="410" y="204" class="gd__label" text-anchor="middle">nothing flows back</text>
+    </svg>
+  </div>
+  <figcaption>The vault depends on the tool. The tool never knows about any vault.</figcaption>
+</figure>

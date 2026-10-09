@@ -1,0 +1,144 @@
+---
+title: Connecting agents
+summary: The eight MCP tools, three ways to serve them (stdio, local HTTP, the Worker), the GitHub path, and how to write memories the curator gets right.
+order: 7
+section: Running it
+sigil: link
+---
+import Aside from "../../components/guides/Aside.astro";
+import Link from "../../components/guides/Link.astro";
+
+An agent joins the table through one of two doors. **MCP** gives it tools: remember, recall, ask. **GitHub** is the lowest common denominator: any agent that can commit to a repo can read `HANDBOOK.md` and drop an episode into the inbox. Either way, add the agent to the party first (<Link guide="party-and-lanes">Party and lanes</Link>), so its id carries its lane.
+
+## The tools
+
+| Tool | Scope | What it does |
+| --- | --- | --- |
+| `onboard` | read | Who you are: lane, authority domains, your quests, plus the whole handbook. Call it at the start of a session |
+| `recall` | read | Search memory: matching notes with summary and key facts, related notes along the graph, and matching episodes still in the inbox |
+| `get` | read | One note in full: every fact with status and provenance, relations, objectives and clocks, open disputes, your notes |
+| `neighbors` | read | Walk the relation graph, 1 to 3 steps, optionally one relation type |
+| `ask_canon` | read | The canonical answer to a factual question: best-matching facts with status and source, plus any open dispute |
+| `briefing` | read | "Previously on…": the chronicle since a date (default a week), recently changed notes, deadlines and clocks ahead, open disputes |
+| `remember` | remember | Queue one episode: `text`, plus optional `kind`, `about`, `confidence`, `secret`, `at` |
+| `update_quest` | quest | Quest status, objectives (`complete`, `reopen`, `add`), a clock, deadline or owner, applied at once |
+
+Two resources come with the `read` scope: `hippo://handbook` and `hippo://entity/{slug}`. Secrets are never revealed through any of them; see <Link guide="secrets">Secrets</Link>.
+
+A good session follows the server's own instructions. Call `onboard` first. Use `recall`, `get` and `ask_canon` before acting on facts. `remember` anything worth keeping. Treat <code>rumor</code> as "verify first" and <code>disputed</code> as "don't act without checking".
+
+## Three ways to serve MCP
+
+### stdio, for local agents
+
+One process per agent, bound to its id with `--agent`:
+
+```bash
+claude mcp add hippocampus -- npx -y @mehrad77/hippocampus -v ~/vaults/my-campaign serve --agent campus-agent
+```
+
+For Claude Desktop, add it to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "hippocampus": {
+      "command": "npx",
+      "args": ["-y", "@mehrad77/hippocampus", "-v", "~/vaults/my-campaign", "serve", "--agent", "home-finder"]
+    }
+  }
+}
+```
+
+To serve a vault on GitHub without a checkout, replace `-v ~/vaults/my-campaign` with `--github you/my-campaign`, and put a fine-grained token (Contents: read and write, on that repo only) in `HIPPO_GITHUB_TOKEN`.
+
+### Local HTTP, for several agents at once
+
+```bash
+npx @mehrad77/hippocampus -v ~/vaults/my-campaign serve --http 8765
+```
+
+Each agent connects to `http://127.0.0.1:8765/mcp?agent=<id>`, for example:
+
+```bash
+claude mcp add --transport http hippocampus "http://127.0.0.1:8765/mcp?agent=job-scout"
+```
+
+It listens on 127.0.0.1 only and asks for no token, so any program on this machine can connect as any agent. Use it for agents you run yourself.
+
+### The Worker, for remote agents
+
+Agents that can't run a local process, such as Claude.ai, ChatGPT or a hosted bot, connect to the Cloudflare Worker. It serves the same tools from your GitHub vault repo and makes every write a single commit, through one writer. It accepts two kinds of credentials.
+
+**Agent tokens.** One per agent, printed once, stored only as a hash:
+
+```bash
+pnpm agent-token create game-master --scopes read,remember,quest --remote
+```
+
+```bash
+claude mcp add --transport http hippocampus https://hippocampus.<your-subdomain>.workers.dev/mcp --header "Authorization: Bearer hippo_…"
+```
+
+Scopes default to `read,remember`. Revoke a token with `pnpm agent-token revoke <token> --remote`. The Worker's dashboard can also mint, list and revoke tokens from its Setup page.
+
+**OAuth connectors.** In Claude.ai or ChatGPT, add a custom connector with the URL `https://hippocampus.<your-subdomain>.workers.dev/mcp`. The Worker shows a consent page where you pick the **agent id** the app acts as (use a party member's id to give it that lane) and what it may do: read and remember are ticked, and quests only when the app asks for them. Then you sign in with GitHub, and only the accounts in `HIPPO_OWNERS` get through. A connection lasts 30 days; connect again to renew it or change its permissions.
+
+| Scope | Allows |
+| --- | --- |
+| `read` | `onboard`, `recall`, `get`, `neighbors`, `ask_canon`, `briefing`, and the resources |
+| `remember` | `remember` |
+| `quest` | `update_quest` |
+
+Tools outside a connection's scopes are removed, so the client never even sees them.
+
+## The GitHub path
+
+Give the agent access to the **private** vault repo and tell it:
+
+> Read HANDBOOK.md. To remember something, commit one new file to `inbox/<your-id>/`. Never edit other files.
+
+The file is named `inbox/<agent-id>/<YYYY-MM-DDTHHMMSS>-<short-slug>.md`, and the handbook shows its format. The curator treats these exactly like episodes sent over MCP.
+
+## Which agent is speaking?
+
+- **stdio:** `--agent` (or `HIPPO_AGENT`). Without it, the write tools require an `agent` argument.
+- **Local HTTP:** `?agent=` in the URL.
+- **Worker:** the token's agent, or the agent chosen on the OAuth consent page.
+- **GitHub:** the episode's `agent:` property, or its folder in `inbox/`.
+
+An id with no party sheet still works, but everything it reports counts as a rumor.
+
+## Writing memories the curator gets right
+
+The curator is only as good as what it's given. The handbook gives agents the same advice:
+
+- **One memory per call.** Short, concrete, self-contained.
+- **Name things.** People, places and organizations by name, and links in `about` when you know them: `["[[residence-permit]]", "Agência de Migração"]`.
+- **Exact values.** ISO dates (`2026-10-14`), amounts with currency (`1,050 EUR`), full IDs, emails and phone numbers.
+- **Say how you know** when it matters: "confirmed by email", "seen on the permit portal".
+- **Corrections are new memories.** "The appointment moved to…" Never edit old episodes.
+- **Pick a kind.** `fact`, `observation`, `decision`, `task` (quest progress), `beat` (a story moment for the game master) or `question`.
+- **Mark secrets.** `secret: true` whenever an ID, an account number or a password is involved.
+
+| Weak | Better |
+| --- | --- |
+| "Appointment moved." | "The Migration Agency moved the residence-permit appointment to 2026-10-14 10:30 at the Alfama office (confirmed by email)." |
+| "Rent is about a thousand." | "The Alfama flat costs 1,050 EUR a month, bills not included (listing seen 2026-09-21)." |
+| "Did the language thing." | "Took the HU Language Center placement test today and placed at B1." |
+
+A `remember` call, in full:
+
+```json
+{
+  "text": "The Migration Agency moved the residence-permit appointment to 2026-10-14 10:30 at the Alfama office. Bring passport, two photos and the signed lease.",
+  "kind": "fact",
+  "about": ["[[migration-agency]]", "[[residence-permit]]"]
+}
+```
+
+<Aside kind="tip">
+
+`remember` returns at once and the episode waits for the night. If the next step depends on it, the agent can still find it: `recall` lists matching inbox episodes under `pending`.
+
+</Aside>

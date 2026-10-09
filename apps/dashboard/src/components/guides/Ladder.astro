@@ -1,0 +1,20 @@
+---
+/** The order of precedence, highest rung first (packages/core/src/reconcile.ts). */
+const RUNGS = [
+  ["Human", "Your word, from Obsidian, a ruling, or a memory you scribe. It replaces any agent's value."],
+  ["Lane authority", "An agent whose authority domains match the note's tags. Its report is canon at once."],
+  ["Corroboration", "Agents without authority start as rumor. Enough distinct agents agreeing make it canon."],
+  ["Recency", "A source may correct its own earlier report. Newer wins only within the same source."],
+] as const;
+---
+<ol class="guide-ladder" aria-label="Order of precedence, highest first">
+  {RUNGS.map(([name, text], i) => (
+    <li>
+      <span class="guide-ladder__rung" aria-hidden="true">{i + 1}</span>
+      <div>
+        <strong>{name}</strong>
+        <span>{text}</span>
+      </div>
+    </li>
+  ))}
+</ol>

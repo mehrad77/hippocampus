@@ -1,0 +1,7 @@
+---
+import Shell from "../layouts/Shell.astro";
+import CodexView from "../islands/CodexView.tsx";
+---
+<Shell title="Codex" page="codex" description="Every entry in the campaign codex, by kind, tag and name.">
+  <CodexView client:only="react" />
+</Shell>

@@ -1,0 +1,74 @@
+---
+import { href } from "../../lib/routes.ts";
+/** How a fact moves between rumor, canon, disputed and retconned (packages/core/src/reconcile.ts). */
+---
+<figure class="guide-figure">
+  <div class="guide-figure__scroll">
+    <svg class="gd" viewBox="120 0 740 312" role="img" aria-labelledby="status-title status-desc">
+      <title id="status-title">Fact status transitions</title>
+      <desc id="status-desc">
+        A new report becomes a rumor when the reporting agent has no authority over the note, or canon when it has lane
+        authority or comes from the human. A rumor becomes canon when enough distinct agents corroborate it. Conflicts open a
+        dispute; the human's ruling makes the value canon. The human can retire a fact as retconned, and the next report about
+        that field starts over.
+      </desc>
+      <defs>
+        <marker id="status-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="gd__head" />
+        </marker>
+        <marker id="status-head-gold" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" class="gd__head gd__head--gold" />
+        </marker>
+      </defs>
+
+      <g class="gd__node gd__node--plain">
+        <rect x="140" y="20" width="420" height="40" rx="20" />
+        <text x="350" y="46" class="gd__title" text-anchor="middle">A new report about a field</text>
+      </g>
+
+      <path d="M220 60 V116" class="gd__edge" marker-end="url(#status-head)" />
+      <text x="230" y="94" class="gd__label">no authority here</text>
+      <path d="M500 60 V116" class="gd__edge" marker-end="url(#status-head)" />
+      <text x="510" y="94" class="gd__label">lane authority, or you</text>
+
+      <path d="M300 148 H416" class="gd__edge" marker-end="url(#status-head)" />
+      <text x="358" y="140" class="gd__label" text-anchor="middle">corroborated</text>
+      <text x="358" y="168" class="gd__label gd__label--muted" text-anchor="middle">canon_threshold</text>
+
+      <path d="M580 148 H676" class="gd__edge gd__edge--gold" marker-end="url(#status-head-gold)" />
+      <text x="628" y="140" class="gd__label" text-anchor="middle">you retire it</text>
+      <text x="628" y="168" class="gd__label gd__label--muted" text-anchor="middle">by hand</text>
+
+      <path d="M760 118 V52 Q760 40 748 40 H564" class="gd__edge gd__edge--read" marker-end="url(#status-head)" />
+      <text x="662" y="32" class="gd__label" text-anchor="middle">next report starts over</text>
+
+      <path d="M220 176 C220 220 250 262 276 262" class="gd__edge gd__edge--danger" marker-end="url(#status-head)" />
+      <text x="212" y="224" class="gd__label" text-anchor="end">conflict</text>
+      <path d="M480 176 C480 205 455 222 430 238" class="gd__edge gd__edge--danger" marker-end="url(#status-head)" />
+      <text x="486" y="214" class="gd__label">conflict</text>
+      <path d="M440 278 C520 278 540 236 540 180" class="gd__edge gd__edge--gold" marker-end="url(#status-head-gold)" />
+      <text x="552" y="262" class="gd__label">your ruling</text>
+
+      <g class="gd__node gd__node--rumor">
+        <rect x="140" y="120" width="160" height="56" rx="28" />
+        <text x="220" y="154" class="gd__title" text-anchor="middle">? rumor</text>
+      </g>
+      <g class="gd__node gd__node--canon">
+        <rect x="420" y="120" width="160" height="56" rx="28" />
+        <text x="500" y="154" class="gd__title" text-anchor="middle">✓ canon</text>
+      </g>
+      <g class="gd__node gd__node--retconned">
+        <rect x="680" y="120" width="160" height="56" rx="28" />
+        <text x="760" y="154" class="gd__title" text-anchor="middle">✕ retconned</text>
+      </g>
+      <g class="gd__node gd__node--disputed">
+        <rect x="280" y="240" width="160" height="56" rx="28" />
+        <text x="360" y="274" class="gd__title" text-anchor="middle">! disputed</text>
+      </g>
+    </svg>
+  </div>
+  <figcaption>
+    Status is decided by deterministic code, never by the model. The exact rules are in the precedence table of
+    <a href={href.guide("precedence-and-disputes")}>Precedence and disputes</a>.
+  </figcaption>
+</figure>

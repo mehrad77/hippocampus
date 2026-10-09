@@ -1,0 +1,7 @@
+---
+import Shell from "../layouts/Shell.astro";
+import EntityView from "../islands/EntityView.tsx";
+---
+<Shell title="Codex entry" page="entity" description="One entry of the campaign codex: its ledger of facts, ties and history.">
+  <EntityView client:only="react" />
+</Shell>

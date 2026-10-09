@@ -1,0 +1,127 @@
+---
+title: Quests and clocks
+summary: Goals with objectives, owners, statuses and deadlines, plus Blades-style clocks for progress that isn't a checklist.
+order: 4
+section: The table
+sigil: clock
+---
+import Clock from "../../components/guides/Clock.astro";
+import Aside from "../../components/guides/Aside.astro";
+import Link from "../../components/guides/Link.astro";
+
+A **quest** is a goal the party is working toward: get the residence permit, find an apartment, enroll at Harbor University. Each quest is a note in `quests/` with an owner, a status, a checklist of objectives and, optionally, deadlines and progress clocks. Quests are the one kind of note agents may edit directly, through `update_quest`, so progress shows up without waiting for the night.
+
+## Anatomy of a quest note
+
+```markdown
+---
+type: quest
+title: "Residence permit"
+tags: [residency, insurance]
+status: active
+owner: "[[residency-agent]]"
+deadline: 2026-11-30
+clocks:
+  - { name: Paperwork, segments: 6, filled: 3, deadline: 2026-10-31 }
+relations: [{ rel: part_of, target: "[[lisbon-arc]]" }, { rel: requires, target: "[[apartment-hunt]]" }]
+---
+
+%% hippo:begin objectives %%
+- [x] Address proof
+- [x] Health insurance
+- [ ] Online application
+- [ ] Agency appointment
+- [ ] Residence card in hand
+%% hippo:end objectives %%
+
+## Notes
+Anything you write here is yours.
+```
+
+| Property | Meaning |
+| --- | --- |
+| `status` | `active`, `blocked`, `done`, `failed` or `dormant` |
+| `owner` | The party member whose lane it is, as a link |
+| `deadline` | When the whole quest is due (ISO date) |
+| `clocks` | Progress clocks: `name`, `segments`, `filled`, optional `deadline` |
+| `tags` | Domains, which also decide who has authority over the quest's facts |
+| `relations` | Usually `part_of` a campaign; `requires` and `blocks` link quests to each other |
+
+The curator also renders the clocks as a readable line in a `clocks` region, like `⏱ Paperwork ■■■□□□ 3/6 · due 2026-10-31`.
+
+## Statuses
+
+| Status | Use it when |
+| --- | --- |
+| `active` | Work is under way (the default) |
+| `blocked` | Waiting on something outside the party's control |
+| `dormant` | Parked on purpose, for later |
+| `done` | Finished |
+| `failed` | Abandoned, or no longer possible |
+
+Every quest that isn't `done` or `failed` is listed as active in `HANDBOOK.md`, with its owner, progress and deadline. When an agent calls `onboard`, its own quests come first.
+
+## Objectives
+
+Objectives are an ordinary markdown checklist inside the note's `objectives` region, so there are four ways to tick one:
+
+- **In Obsidian**: click the checkbox.
+- **On the Quest board**: tick it, or untick it if it was marked done by mistake.
+- **An agent**: `update_quest` with `complete`, `reopen` or `add`.
+- **The curator**: when an episode reports progress, often one with `kind: task`, the sleep marks objectives done or adds new next steps.
+
+Matching is forgiving. Names are compared without case, accents or punctuation, and a partial name works too, so `"insurance"` finds "Health insurance". Completing an objective that doesn't exist adds it, already ticked. `add` skips objectives that already exist, and `reopen` ignores names it can't find.
+
+## Clocks
+
+Some progress isn't a checklist. How close is the lease? How much paperwork is left before the appointment? For that, quests carry **clocks**, borrowed from *Blades in the Dark*: a circle cut into segments that you fill as things move.
+
+<div class="guide-clocks">
+  <Clock name="Paperwork" segments={6} filled={3} deadline="2026-10-31" />
+  <Clock name="Lease signing" segments={4} filled={2} />
+  <Clock name="Portal access" segments={8} filled={1} />
+</div>
+
+- **Segments** default to 6. Through `update_quest` a clock can have 2 to 12.
+- **Ticking** adds or removes segments (`tick: 1`, `tick: -1`) and always stays between empty and full. Shrinking a clock never leaves it overfull.
+- **A deadline** on a clock turns it into a countdown, and it shows up among the upcoming dates.
+
+On the Quest board, click a segment to fill the clock up to it, or click the last filled segment to empty it. With the keyboard, focus a clock and use the arrow keys.
+
+<Aside kind="tip">
+
+Use objectives for steps you can name, and clocks for momentum you can only estimate. "Pay first-term tuition" is an objective. "How ready is the enrollment paperwork" is a clock.
+
+</Aside>
+
+## Deadlines and what's coming up
+
+Hippocampus collects every date it can find:
+
+- quest `deadline`s and clock `deadline`s;
+- date-like facts on any note, whose field name contains `date`, `deadline`, `expir`, `appointment`, `due`, `until`, `start` or `end` and whose value is an ISO date, such as `appointment_date` on the Migration Agency.
+
+Agents get them in `briefing`, which looks 30 days ahead by default (`horizon_days`, up to 365). The dashboard's Tavern looks 90 days ahead, with how many days are left.
+
+## Updating quests as an agent
+
+`update_quest` is applied **directly**: no inbox, no sleep. The quest note and `HANDBOOK.md` are saved at once, as one commit when the vault is on GitHub or behind the Worker.
+
+```json
+{
+  "quest": "residence-permit",
+  "complete": ["online application"],
+  "clock": { "name": "Paperwork", "tick": 1 },
+  "deadline": "2026-11-30"
+}
+```
+
+| Argument | Effect |
+| --- | --- |
+| `status` | Set the quest's status |
+| `complete` / `reopen` / `add` | Tick, untick, or add objectives |
+| `clock` | `name` plus any of `segments`, `tick`, `filled`, `deadline`. An unknown name creates the clock |
+| `deadline` | The quest's due date |
+| `owner` | Hand the quest to another party member |
+
+The note's `updated_by` records who made the change. On the Worker, an agent needs the `quest` scope to see this tool at all. Edits you make on the Quest board are filed under your own id. More on scopes in <Link guide="connecting-agents">Connecting agents</Link>.

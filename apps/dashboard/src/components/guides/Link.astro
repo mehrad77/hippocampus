@@ -1,0 +1,12 @@
+---
+import { href, type Page } from "../../lib/routes.ts";
+
+/**
+ * A link that respects the dashboard's base path, for MDX: `<Link guide="secrets">` to another
+ * guide, `<Link page="council">` to a dashboard page.
+ */
+type Props = { guide: string; page?: never; hash?: string } | { page: Page; guide?: never; hash?: string };
+const { guide, page, hash = "" } = Astro.props;
+const url = guide ? `${href.guide(guide)}${hash}` : href.page(page!, hash);
+---
+<a href={url}><slot /></a>

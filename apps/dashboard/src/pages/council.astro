@@ -1,0 +1,7 @@
+---
+import Shell from "../layouts/Shell.astro";
+import CouncilView from "../islands/CouncilView.tsx";
+---
+<Shell title="Council" page="council">
+  <CouncilView client:only="react" />
+</Shell>

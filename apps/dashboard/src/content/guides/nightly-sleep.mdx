@@ -1,0 +1,112 @@
+---
+title: The nightly sleep
+summary: What happens while the party sleeps, step by step. Plus the morning review, scheduling, choosing a model, dry runs, and why nothing is ever lost.
+order: 8
+section: Running it
+sigil: moonStars
+---
+import Aside from "../../components/guides/Aside.astro";
+import Link from "../../components/guides/Link.astro";
+
+`hippo sleep` is the curator's shift. It reads the inbox, turns raw episodes into canon, writes the chronicle, opens disputes, and leaves you a morning review. It runs wherever your model is, typically your own machine with LM Studio or Ollama, once a night.
+
+```bash
+HIPPO_LLM_PROVIDER=lmstudio HIPPO_LLM_MODEL=google/gemma-4-26b-a4b-qat npx @mehrad77/hippocampus@0.1 -v ~/vaults/my-campaign sleep
+```
+
+## Step by step
+
+1. **Pull.** In a git checkout with an upstream, `git pull --rebase --autostash`, so agents' inbox commits are in.
+2. **Rulings.** Every open dispute with a `ruling:` becomes canon by you, before anything else.
+3. **Batch.** Takes up to `batch_size` episodes (25 by default), oldest first. `--limit` lowers it for one run.
+4. **For each episode:**
+   - **Hints**: names and links in `about` are matched to notes directly, with no model involved.
+   - **Mentions**: the model lists the entities the episode talks about.
+   - **Resolve**: each mention is matched by name and alias. Failing that, the model picks from search candidates or says it's new. New notes are tagged with your domains, or the reporter's lane.
+   - **Claims**: the model extracts facts, relations and quest progress, reusing the field names a note already has.
+   - **Reconcile and apply**: deterministic code decides each fact's status (<Link guide="precedence-and-disputes">precedence</Link>), adds relations, updates quests, and encrypts secrets.
+   - **Chronicle**: the episode is appended to `chronicle/YYYY/MM/YYYY-MM-DD.md` as a callout, with the notes it touched and secrets redacted. Then it leaves the inbox.
+5. **Summaries.** Each touched note (party sheets aside) gets its summary paragraph refreshed, if `curator.summaries` is on.
+6. **Review and handbook.** `_hippo/review.md` and `HANDBOOK.md` are regenerated.
+7. **Commit and push.** Only the paths the curator changed are staged, never your unrelated edits. The commit is signed *Hippocampus* (`chore(sleep): consolidate 4 episodes`, one line per episode), then pushed.
+
+With `--github you/my-campaign`, steps 1 and 7 collapse into one commit through the GitHub API, with no clone needed.
+
+<Aside kind="lore" title="Why so many small steps?">
+
+Each model call has one narrow job and a strict schema. That's what lets a small local model do this overnight. Local servers default to **prompt** mode: the schema goes into the prompt, the model may think freely, and the first JSON object in its answer is checked. If it doesn't validate, the call is retried, up to three attempts, with the errors fed back.
+
+</Aside>
+
+## Failures stay in the inbox
+
+If anything goes wrong with an episode, such as a timeout, invalid output or an unreachable model, it **stays in the inbox** for the next night, and the error is recorded. A sleep never loses a memory. When an episode fails:
+
+- the morning review lists it under "Episodes that failed to consolidate", with its path and the error;
+- the dashboard's Satchel and Tavern mark episodes that have already waited through a sleep;
+- `hippo sleep` exits with status 2, so a scheduler can notice.
+
+Episodes that didn't fit in this run's batch simply wait their turn.
+
+## The morning review
+
+`_hippo/review.md` is your summary of the night. It records when it ran, which model it used, how many episodes it consolidated, how many failed and how many remain. Then it lists:
+
+| Section | What to do |
+| --- | --- |
+| ⚖ Disputes awaiting your ruling | Rule in the Council, or write `ruling:` |
+| ❓ Rumors (unverified) | Confirm, correct, or leave for corroboration |
+| 🕸 Stale canon | Re-confirm facts older than `stale_after_days` |
+| 🧩 Orphan notes | Link them to something, or delete the ones that are noise |
+| ✗ Failed episodes | Check the error; they'll be retried |
+
+The dashboard's Tavern shows the same list, live, and adds agents without a party sheet. Five minutes with a coffee is usually enough.
+
+## Choosing a model
+
+| Variable | Meaning |
+| --- | --- |
+| `HIPPO_LLM_PROVIDER` | `lmstudio` (default), `ollama`, `openai-compatible`, `anthropic` or `xai` |
+| `HIPPO_LLM_MODEL` | The model id. Each provider has a default, but set it yourself |
+| `HIPPO_LLM_BASE_URL` | Server URL. LM Studio defaults to port 1234, Ollama to 11434. Required for `openai-compatible` |
+| `HIPPO_LLM_API_KEY` | Or `ANTHROPIC_API_KEY` / `XAI_API_KEY` for hosted providers |
+| `HIPPO_LLM_STRUCTURED` | `prompt` (default for local servers) or `native` (default for hosted ones) |
+| `HIPPO_LLM_TIMEOUT_MS` | Per-call timeout, default 180000 (3 minutes) |
+| `HIPPO_LLM_MAX_TOKENS` | Output cap per call, default 8192 |
+
+Mixture-of-experts models with around 4B active parameters have been a good balance, at roughly one to two minutes per episode. Very long "thinking" models can run into the per-call timeout. Session Zero's Curator step saves these settings, lists the models your local server offers, and tests the connection.
+
+<Aside kind="warn" title="Hosted models see your episodes">
+
+With `anthropic`, `xai` or a hosted OpenAI-compatible API, episode text is sent to that provider, including secrets before they're encrypted. A local model keeps everything on your machine.
+
+</Aside>
+
+## Rehearsals: dry runs
+
+```bash
+npx @mehrad77/hippocampus -v ~/vaults/my-campaign sleep --dry-run --limit 3
+```
+
+`--dry-run` runs the whole curator, models included, and prints what it did, but **writes nothing** and touches no git. It's the safe way to try a new model or a new version. Session Zero can run the same rehearsal from the browser. Other switches: `--no-git` (don't pull, commit or push) and `--no-push` (commit, but don't push).
+
+## Scheduling it
+
+**macOS.** Session Zero's Nightly sleep step installs a launchd job at the hour you pick. Or use the plist in the repo's `ops/` folder and load it with `launchctl`. Make sure your model server is running at that hour.
+
+**Linux and elsewhere.** A cron line works:
+
+```bash
+30 3 * * * cd ~/vaults/my-campaign && HIPPO_LLM_PROVIDER=ollama HIPPO_LLM_MODEL=<model> npx -y @mehrad77/hippocampus@0.1 sleep >> /tmp/hippocampus-sleep.log 2>&1
+```
+
+**GitHub Actions.** The vault template's `.github/workflows/validate.yml` has a commented-out nightly `sleep` job, for hosted models only (a CI runner can't reach your local LM Studio).
+
+Pin the version (`@0.1`) wherever you schedule it, so upgrades happen when you choose. Then run `hippo migrate` if the vault format changed. See <Link guide="cli">the command line</Link>.
+
+## Things sleep never does
+
+- It never rewrites your prose outside `%% hippo:… %%` regions.
+- It never stages your unrelated edits.
+- It never decrypts a secret.
+- It never deletes an episode it failed to consolidate.

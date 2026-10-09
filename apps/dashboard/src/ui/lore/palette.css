@@ -1,0 +1,216 @@
+/* The ⌘K command palette. Loaded on every page (Global mounts it), so it stays small. */
+
+.palette {
+  width: min(640px, calc(100vw - 24px));
+  max-height: min(620px, calc(100dvh - 24px));
+  margin: min(12vh, 120px) auto auto;
+  padding: 0;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-l);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+.palette[open] {
+  display: flex;
+  flex-direction: column;
+  animation: dialog-in 140ms ease-out;
+}
+
+.palette::backdrop {
+  background: var(--overlay);
+  backdrop-filter: blur(2px);
+}
+
+.palette__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--rule);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+}
+
+.palette__head > svg {
+  flex: none;
+  color: var(--gold);
+}
+
+.palette__input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 0;
+  border: 0;
+  background: none;
+  font-size: 1.15rem;
+  color: var(--ink);
+  outline: none;
+}
+
+.palette__input::placeholder {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.palette__input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.palette__esc {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--rule-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-s);
+  background: var(--surface-2);
+  color: var(--ink-3);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.palette__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+}
+
+.palette__section {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-3) var(--space-1);
+  font-family: var(--font-display);
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.palette__spin {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--gold-soft);
+  border-top-color: var(--gold);
+  animation: palette-spin 700ms linear infinite;
+}
+
+@keyframes palette-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pal-opt {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 7px var(--space-3);
+  border-radius: var(--radius);
+  cursor: pointer;
+  scroll-margin: 8px;
+}
+
+.pal-opt.is-active {
+  background: color-mix(in oklab, var(--accent) 11%, var(--surface-2));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.pal-opt__icon {
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+}
+
+.pal-opt__icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.pal-opt.is-active .pal-opt__icon {
+  color: var(--accent);
+}
+
+.pal-opt__main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pal-opt__label {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pal-opt__sub {
+  font-size: 0.84rem;
+  color: var(--ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pal-opt__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+.pal-opt__enter {
+  visibility: hidden;
+}
+
+.pal-opt.is-active .pal-opt__enter {
+  visibility: visible;
+}
+
+.palette__empty {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--ink-3);
+}
+
+.palette__empty strong {
+  display: block;
+  font-family: var(--font-display);
+  color: var(--ink-2);
+  letter-spacing: 0.04em;
+}
+
+.palette__foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--rule);
+  background: var(--surface-sunk);
+  font-size: 0.78rem;
+  color: var(--ink-3);
+}
+
+@media (max-width: 600px) {
+  .palette {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    margin-top: 8px;
+  }
+
+  .palette__foot {
+    display: none;
+  }
+
+  .pal-opt__hint {
+    display: none;
+  }
+}

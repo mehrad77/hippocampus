@@ -1,0 +1,28 @@
+---
+import NavIcon from "../../ui/NavIcon.astro";
+import type { IconName } from "../../lib/icons.ts";
+
+/**
+ * A boxed aside for guides. `lore` is flavor and background, `tip` a good habit,
+ * `warn` a common mistake, `rule` a hard rule (privacy, secrets).
+ */
+interface Props {
+  kind?: "lore" | "tip" | "warn" | "rule";
+  title?: string;
+}
+const { kind = "lore", title } = Astro.props;
+const LOOK: Record<NonNullable<Props["kind"]>, { icon: IconName; title: string; tone: string }> = {
+  lore: { icon: "scroll", title: "From the lore", tone: "" },
+  tip: { icon: "sparkle", title: "Game master's tip", tone: "callout--ok" },
+  warn: { icon: "warn", title: "Watch your step", tone: "callout--warn" },
+  rule: { icon: "lock", title: "House rule", tone: "callout--danger" },
+};
+const look = LOOK[kind];
+---
+<aside class:list={["callout", "guide-aside", look.tone]} aria-label={title ?? look.title}>
+  <NavIcon name={look.icon} size={22} />
+  <div class="guide-aside__body">
+    <p class="guide-aside__title">{title ?? look.title}</p>
+    <slot />
+  </div>
+</aside>
