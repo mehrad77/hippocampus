@@ -1,0 +1,28 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "hippocampus",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "SCRIBE", "class_name": "Scribe" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Scribe"] }],
+  // Create with `wrangler d1 create hippocampus-index`, `wrangler kv namespace create TOKENS` and
+  // `wrangler kv namespace create OAUTH_KV`, then paste the ids here. `wrangler dev` works with the placeholders.
+  "d1_databases": [{ "binding": "INDEX", "database_name": "hippocampus-index", "database_id": "00000000-0000-0000-0000-000000000000" }],
+  "kv_namespaces": [
+    { "binding": "TOKENS", "id": "00000000000000000000000000000000" },
+    { "binding": "OAUTH_KV", "id": "11111111111111111111111111111111" }
+  ],
+  // GITHUB_REPO (owner/name of the private vault repo) and GITHUB_TOKEN are secrets, so neither ends up in
+  // this public repo: `wrangler secret put GITHUB_REPO` and `wrangler secret put GITHUB_TOKEN`.
+  // OAuth for Claude.ai / ChatGPT connectors is off until these secrets are set: HIPPO_PUBLIC_URL (this
+  // Worker's https origin), HIPPO_OWNERS (GitHub logins allowed to connect apps), and a GitHub OAuth app's
+  // GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET (callback: <HIPPO_PUBLIC_URL>/oauth/github/callback).
+  "vars": { "GITHUB_BRANCH": "main" },
+  // Semantic recall (optional): uncomment and set HIPPO_EMBED_PROVIDER=workers-ai, or point
+  // HIPPO_EMBED_PROVIDER/BASE_URL/MODEL/API_KEY at any OpenAI-compatible embeddings API.
+  // "ai": { "binding": "AI" },
+  "observability": { "enabled": true }
+}

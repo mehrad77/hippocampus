@@ -1,8 +1,8 @@
-import { MemoryStore, generateKeyPair, parseDoc, decryptSecret } from "@hippocampus/core";
+import { MemoryStore, generateKeyPair, parseDoc, decryptSecret, type Change, type CommitMeta } from "@hippocampus/core";
 import { describe, expect, it } from "vitest";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
 import { ScriptedLLM } from "./llm.ts";
-import { sleep } from "./sleep.ts";
+import { CURATOR_AUTHOR, sleep } from "./sleep.ts";
 
 const now = () => new Date("2026-09-27T21:00:00.000Z");
 
@@ -104,5 +104,24 @@ describe("sleep", () => {
     const report = await sleep({ store, llm: new ScriptedLLM(), now, dryRun: true });
     expect(report.failed).toHaveLength(3);
     expect((store as MemoryStore).files).toEqual(before);
+  });
+
+  it("persists a run as one batch with the curator's commit message and author", async () => {
+    const { store } = await setup();
+    const batches: { changes: Change[]; meta: CommitMeta }[] = [];
+    const atomic = Object.assign(Object.create(store) as MemoryStore, {
+      async apply(changes: Change[], meta: CommitMeta) {
+        batches.push({ changes, meta });
+        for (const c of changes) "remove" in c ? store.files.delete(c.path) : store.files.set(c.path, c.content);
+      },
+    });
+    const report = await sleep({ store: atomic, llm: script(), now });
+    expect(batches).toHaveLength(1);
+    expect(batches[0]!.meta.author).toEqual(CURATOR_AUTHOR);
+    expect(batches[0]!.meta.message).toMatch(/^chore\(sleep\): consolidate 3 episodes\n/);
+    expect(batches[0]!.meta.message).toContain("model: scripted");
+    expect(batches[0]!.changes.map((c) => c.path)).toEqual(report.changed);
+    // Consolidated episodes leave the inbox in the same commit.
+    expect(batches[0]!.changes.filter((c) => "remove" in c && c.path.startsWith("inbox/"))).toHaveLength(3);
   });
 });

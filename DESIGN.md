@@ -40,9 +40,9 @@ Hippocampus absorbs the Archivist's job (canonical facts, disputes). The Game Ma
  Agents (Grok / Claude.ai / ChatGPT / own bots / Claude Code)
      │ remote MCP (HTTPS, bearer or OAuth)       │ GitHub (connector or API)
      ▼                                            ▼
- ┌────────────── Cloudflare Worker (later) ─────┐   writes only inbox/<agent>/*.md
- │ MCP server (McpAgent, streamable HTTP)       │   + reads HANDBOOK.md & canon
- │ OAuth provider + per-agent tokens/scopes     │
+ ┌────────────── Cloudflare Worker ─────────────┐   writes only inbox/<agent>/*.md
+ │ MCP server (stateless streamable HTTP)       │   + reads HANDBOOK.md & canon
+ │ OAuth (consent + GitHub) + agent tokens      │
  │ Durable Object "Scribe" = single git writer  │──► private GitHub repo (vault) ◄── the human, in Obsidian (obsidian-git)
  │ D1 index (FTS5 + links + claims)             │◄── push webhook → reindex
  │ Curator API (claim batch / apply patch)      │
@@ -56,7 +56,7 @@ Key properties:
 - **One writer.** Agents only append new files to `inbox/`, so agent writes never collide. Everything else is written by the curator (and the human). In the Worker, every GitHub write goes through the Scribe Durable Object as an atomic multi-file commit.
 - **The curator is a client, not a component.** It pulls pending episodes and writes structured changes back, so it can run wherever the LLM is, including next to a local model.
 - **Human edits win.** The human's word outranks every agent. The curator only rewrites *managed regions* of a note and never touches human prose.
-- **Ports and adapters.** `core` defines a `VaultStore` port. Adapters: filesystem (local) now, GitHub API (Worker) later.
+- **Ports and adapters.** `core` defines a `VaultStore` port. Adapters: filesystem (local) and GitHub API (no checkout; the Worker's backend). Stores with `apply()` persist each flush as one atomic batch.
 
 ## 2. Vault structure (TTRPG campaign wiki)
 
@@ -202,13 +202,17 @@ seeds/             example campaigns (fictional)
 | Reconcile | ✅ | Pure function, table-tested |
 | Disputes + human rulings | ✅ | `ruling:` is applied on the next sleep |
 | Secrets | ✅ | age, one file per field; the curator needs only the public key |
-| Search | ✅ | In-memory MiniSearch with diacritic folding, rebuilt per request (small vaults, runs anywhere) |
+| Search | ✅ | `Searcher` port. CLI default: persistent SQLite FTS5 index (`packages/index`, `node:sqlite`, a cache in `~/.cache/hippocampus`) that syncs by content hash, with trigram typo fallback and a relations table. In-memory MiniSearch remains the fallback (`--no-index`) |
 | Curator pipeline | ✅ | mentions → resolve → claims → reconcile → apply → chronicle → summaries → review + handbook |
 | LLM adapter | ✅ | `prompt` structured mode (default for local servers) and `native` (hosted). Per-call timeout and token cap |
 | MCP (stdio + local HTTP) | ✅ | 8 tools + 2 resources |
 | `hippo sleep` with git | ✅ | pull --rebase --autostash → curate → stage own paths → commit → push |
+| GitHub API store | ✅ | `packages/store-github`: reads pinned to one commit, blob cache by sha, each flush is one commit via the Git Data API, rebases past unrelated pushes, `StoreConflictError` on same-file races. `hippo --github owner/repo` |
 | Distribution | ✅ | npm package (tsup bundle + template + seeds), vault format version + `hippo migrate`, privacy guard + pre-commit hook, CI for this repo and for vaults |
-| Worker, OAuth, embeddings | ⏳ | M3–M5 |
+| Worker | ✅ | `apps/worker`: stateless MCP over `WebStandardStreamableHTTPServerTransport`; per-request `GitHubStore` with per-isolate blob and tree caches (tarball on cold start); D1 index; Scribe DO serializes commits on the writer's base commit; per-agent bearer tokens (hashed in KV) with `read`/`remember`/`quest` scopes |
+| Semantic recall | ✅ | `packages/embeddings`: `Embedder` adapters for OpenAI-compatible servers (LM Studio, Ollama, hosted) and Workers AI, opt-in via `HIPPO_EMBED_*`. The index stores one normalized vector per doc version and model, mirrored in memory, and embeds only what changed. Search fuses FTS and cosine hits with reciprocal rank fusion, then lets the top hits lift related candidates (never above themselves). Embedder failures fall back to keywords |
+| OAuth for connectors | ✅ | `@cloudflare/workers-oauth-provider`: the Worker is authorization server and resource (RFC 9728 discovery, DCR, PKCE, refresh). `/authorize` shows a consent page (agent id and scopes per app; unframeable, browser-bound), then GitHub sign-in restricted to `HIPPO_OWNERS`. OAuth scopes come from the token, so refreshes can narrow them. Agent tokens are accepted through `resolveExternalToken` |
+| Push webhook reindex, CIMD | ⏳ | Every request syncs the index with the vault it loads, so a webhook only matters once reads stop loading the whole vault. Client ID Metadata Documents need `global_fetch_strictly_public`, which would block the local fake GitHub in `wrangler dev`; DCR covers today's connectors |
 
 **Lessons from local models.** LM Studio with a reasoning model returned grammar-constrained JSON in `reasoning_content`, and constrained decoding suppressed its thinking, which made classification worse. Local providers therefore default to `prompt` mode:
 - The JSON Schema goes in the system prompt.

@@ -9,5 +9,7 @@ export default defineConfig({
   outDir: "dist",
   clean: true,
   noExternal: [/^@hippocampus\//],
+  // Keep `node:` specifiers: some builtins (node:sqlite) only exist under the prefix.
+  removeNodeProtocol: false,
   banner: { js: "#!/usr/bin/env node" },
 });

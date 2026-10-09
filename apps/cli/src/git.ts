@@ -2,10 +2,10 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { CURATOR_AUTHOR } from "@hippocampus/curator";
 
 const exec = promisify(execFile);
 
-export const CURATOR_AUTHOR = { name: "Hippocampus", email: "hippocampus@users.noreply.github.com" };
 
 export class Git {
   constructor(readonly dir: string) {}

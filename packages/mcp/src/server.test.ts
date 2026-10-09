@@ -3,11 +3,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
-import { createHippoServer } from "./server.ts";
+import { createHippoServer, type Scope } from "./server.ts";
 
-async function connect(agent?: string) {
+async function connect(agent?: string, scopes?: Scope[]) {
   const store = fixtureStore();
-  const server = createHippoServer({ service: new HippoService(store), agent });
+  const server = createHippoServer({ service: new HippoService(store), agent, scopes });
   const client = new Client({ name: "test", version: "0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -47,5 +47,19 @@ describe("MCP server", () => {
     const r = await call("get", { entity: "migration agencyy" });
     expect(r.isError).toBe(true);
     expect(r.text).toContain("did you mean [[migration-agency]]");
+  });
+
+  it("only exposes what the connection's scopes allow", async () => {
+    const readOnly = await connect("campus-agent", ["read"]);
+    const tools = (await readOnly.client.listTools()).tools.map((t) => t.name);
+    expect(tools).not.toContain("remember");
+    expect(tools).not.toContain("update_quest");
+    expect(tools).toContain("recall");
+    expect((await readOnly.call("remember", { text: "x" })).isError).toBe(true);
+    expect(await readOnly.store.list("inbox")).toEqual([]);
+
+    const writeOnly = await connect("campus-agent", ["remember"]);
+    expect((await writeOnly.client.listTools()).tools.map((t) => t.name)).toEqual(["remember"]);
+    await expect(writeOnly.client.readResource({ uri: "hippo://handbook" })).rejects.toThrow();
   });
 });
