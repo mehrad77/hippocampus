@@ -63,6 +63,9 @@ importers:
       '@hippocampus/curator':
         specifier: workspace:*
         version: link:../../packages/curator
+      '@hippocampus/embeddings':
+        specifier: workspace:*
+        version: link:../../packages/embeddings
       '@hippocampus/index':
         specifier: workspace:*
         version: link:../../packages/index
@@ -87,6 +90,9 @@ importers:
       '@hippocampus/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@hippocampus/embeddings':
+        specifier: workspace:*
+        version: link:../../packages/embeddings
       '@hippocampus/index':
         specifier: workspace:*
         version: link:../../packages/index
@@ -142,6 +148,18 @@ importers:
       zod:
         specifier: ^4.6.5
         version: 4.6.5
+
+  packages/embeddings:
+    dependencies:
+      '@ai-sdk/openai-compatible':
+        specifier: ^3.0.57
+        version: 3.0.57(zod@4.6.5)
+      '@hippocampus/index':
+        specifier: workspace:*
+        version: link:../index
+      ai:
+        specifier: ^7.0.118
+        version: 7.0.118(zod@4.6.5)
 
   packages/index:
     dependencies:

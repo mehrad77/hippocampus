@@ -12,6 +12,7 @@
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
     "@hippocampus/core": "workspace:*",
+    "@hippocampus/embeddings": "workspace:*",
     "@hippocampus/index": "workspace:*",
     "@hippocampus/mcp": "workspace:*",
     "@hippocampus/store-github": "workspace:*",

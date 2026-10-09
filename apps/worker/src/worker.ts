@@ -1,4 +1,5 @@
 import { HippoService } from "@hippocampus/core";
+import { createEmbedder, embedConfigFromEnv, type AiLike } from "@hippocampus/embeddings";
 import { HippoIndex, d1 } from "@hippocampus/index";
 import { GitHubStore, MemoryBlobCache, SnapshotCache } from "@hippocampus/store-github";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
@@ -17,6 +18,9 @@ export interface Env {
   GITHUB_TOKEN: string;
   /** Only for local development against a fake GitHub. */
   GITHUB_API_URL?: string;
+  /** Workers AI, for semantic recall with HIPPO_EMBED_PROVIDER=workers-ai. Other HIPPO_EMBED_* settings work as in the CLI. */
+  AI?: AiLike;
+  HIPPO_EMBED_PROVIDER?: string;
 }
 
 // Per isolate, shared by its requests. Both caches are keyed by immutable git ids.
@@ -29,10 +33,14 @@ const github = (env: Env) =>
   new GitHubStore({ repo: env.GITHUB_REPO, branch: env.GITHUB_BRANCH || undefined, token: env.GITHUB_TOKEN, apiUrl: env.GITHUB_API_URL || undefined, cache: blobs, snapshots });
 
 function openIndex(env: Env): Promise<HippoIndex> {
-  index ??= HippoIndex.open(d1(env.INDEX)).catch((err: unknown) => {
-    index = undefined;
-    throw err;
-  });
+  if (!index) {
+    const embed = embedConfigFromEnv({ ...env });
+    const opts = embed ? { embedder: createEmbedder(embed, { ai: env.AI }), minSimilarity: embed.minSimilarity } : {};
+    index = HippoIndex.open(d1(env.INDEX), opts).catch((err: unknown) => {
+      index = undefined;
+      throw err;
+    });
+  }
   return index;
 }
 

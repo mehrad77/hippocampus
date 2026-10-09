@@ -1,4 +1,4 @@
-export type SqlValue = string | number | null;
+export type SqlValue = string | number | null | Uint8Array;
 
 export interface SqlStatement {
   sql: string;

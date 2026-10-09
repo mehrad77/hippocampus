@@ -15,5 +15,8 @@
   // GITHUB_REPO (owner/name of the private vault repo) and GITHUB_TOKEN are secrets, so neither ends up in
   // this public repo: `wrangler secret put GITHUB_REPO` and `wrangler secret put GITHUB_TOKEN`.
   "vars": { "GITHUB_BRANCH": "main" },
+  // Semantic recall (optional): uncomment and set HIPPO_EMBED_PROVIDER=workers-ai, or point
+  // HIPPO_EMBED_PROVIDER/BASE_URL/MODEL/API_KEY at any OpenAI-compatible embeddings API.
+  // "ai": { "binding": "AI" },
   "observability": { "enabled": true }
 }

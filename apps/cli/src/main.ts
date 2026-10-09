@@ -24,7 +24,8 @@ import {
 } from "@hippocampus/core";
 import { FsStore } from "@hippocampus/core/node";
 import { aiSdkLLM, commitMessage, llmConfigFromEnv, sleep, type SleepReport } from "@hippocampus/curator";
-import { HippoIndex } from "@hippocampus/index";
+import { createEmbedder, embedConfigFromEnv } from "@hippocampus/embeddings";
+import { HippoIndex, type IndexOptions } from "@hippocampus/index";
 import { nodeSqlite } from "@hippocampus/index/node";
 import { createHippoServer } from "@hippocampus/mcp";
 import { GitHubStore } from "@hippocampus/store-github";
@@ -78,9 +79,15 @@ function indexPath(): string {
   return join(cache, "hippocampus", `${createHash("sha1").update(key).digest("hex").slice(0, 16)}.sqlite`);
 }
 
+/** Semantic recall when `HIPPO_EMBED_MODEL` is set; keyword search otherwise. */
+function indexOptions(): IndexOptions {
+  const cfg = embedConfigFromEnv(process.env);
+  return cfg ? { embedder: createEmbedder(cfg), minSimilarity: cfg.minSimilarity } : {};
+}
+
 async function openSearcher(): Promise<SearcherFactory | undefined> {
   if (!program.opts<{ index: boolean }>().index) return undefined;
-  return (await HippoIndex.open(nodeSqlite(indexPath()))).searcher;
+  return (await HippoIndex.open(nodeSqlite(indexPath()), indexOptions())).searcher;
 }
 
 function localOnly(command: string): void {
@@ -255,11 +262,13 @@ program
   .command("index")
   .description("Rebuild the persistent search index from the vault (it's a cache; this is always safe).")
   .action(async () => {
-    const index = await HippoIndex.open(nodeSqlite(indexPath()));
+    const opts = indexOptions();
+    const index = await HippoIndex.open(nodeSqlite(indexPath()), opts);
     await index.rebuild();
     const stats = await index.sync(await Vault.load(openStore()));
     const { edges } = await index.counts();
     err(`✓ indexed ${stats.added} docs and ${edges} relations in ${indexPath()}`);
+    if (opts.embedder) err(`${stats.embedFailed ? "⚠" : "✓"} embedded ${stats.embedded} docs with ${opts.embedder.id}${index.lastEmbedError ? `: ${index.lastEmbedError.message}` : ""}`);
   });
 
 const secrets = program.command("secrets").description("Manage age-encrypted secret facts.");

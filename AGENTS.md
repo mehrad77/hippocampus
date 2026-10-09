@@ -19,7 +19,8 @@ This repo is **public**. Users' memories live in **separate private vault repos*
 | Path | What |
 | --- | --- |
 | `packages/core` | storage port + `MemoryStore` + adapter contract tests (`store.ts`, `store.contract.ts`), zod schemas (`schema.ts`), markdown + managed regions (`markdown.ts`), vault model (`vault.ts`), reconcile rules (`reconcile.ts`), fact/relation/quest ops (`ops.ts`), search port + in-memory MiniSearch (`search.ts`), handbook (`handbook.ts`), service used by MCP/CLI (`service.ts`), age secrets (`secrets.ts`), format versioning (`migrations.ts`) |
-| `packages/index` | Persistent FTS5 + relations index behind core's `Searcher` port (`hippo-index.ts`), `SqlDriver` port (`sql.ts`), `node:sqlite` driver (`node.ts`) |
+| `packages/index` | Persistent FTS5 + relations + vectors index behind core's `Searcher` port (`hippo-index.ts`), hybrid ranking (`hybrid.ts`), `Embedder` port (`embedder.ts`), `SqlDriver` port (`sql.ts`), `node:sqlite` driver (`node.ts`) |
+| `packages/embeddings` | `Embedder` adapters: OpenAI-compatible via AI SDK (LM Studio/Ollama/hosted), Workers AI; `HIPPO_EMBED_*` config (`embedders.ts`) |
 | `packages/curator` | LLM adapter (`llm.ts`, AI SDK; `prompt` vs `native` structured output), prompts and schemas (`prompts.ts`), sleep pipeline (`sleep.ts`) |
 | `packages/mcp` | MCP tools and resources over `HippoService` (`server.ts`) |
 | `packages/store-github` | `VaultStore` over the GitHub API: pinned-commit reads, atomic commits (`github-store.ts`), `FakeGitHub` for tests (`fake-github.ts`) |
