@@ -124,7 +124,8 @@ export async function pingLLM(cfg: LLMConfig, opts: { timeoutMs?: number; model?
     const message = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").trim();
     return done({ ok: false, error: message.length > 300 ? `${message.slice(0, 300)}…` : message || "unknown error" });
   } finally {
-    clearTimeout(timer);
+    // Workers' clearTimeout takes no undefined.
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

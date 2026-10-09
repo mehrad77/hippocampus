@@ -1,5 +1,9 @@
 import {
+  ACTOR_TRAILER,
+  AuditError,
+  CURATOR_RULES_PATH,
   HANDBOOK_PATH,
+  MODEL_TRAILER,
   REVIEW_PATH,
   Vault,
   miniSearcher,
@@ -8,14 +12,18 @@ import {
   applyFact,
   applyQuestUpdate,
   applyRulings,
+  auditChanges,
   findings,
   link,
   normalizeName,
+  parseDoc,
   redact,
   renderDoc,
   renderHandbook,
   setSummary,
+  slugify,
   viewContext,
+  withTrailers,
   type Entity,
   type Episode,
   type FactResult,
@@ -58,69 +66,132 @@ export interface SleepOptions {
   searcher?: SearcherFactory;
 }
 
-/** One consolidation pass: inbox episodes → canon, like sleep turning episodic into semantic memory. */
+export interface EpisodeOutcome extends EpisodeReport {
+  /** What the summary step may read about this episode: redacted text, or a placeholder for secret-bearing ones. */
+  evidence: string;
+  /** Plaintext secret values this episode carried. In memory only, never persisted or reported. */
+  secrets: string[];
+}
+
+/**
+ * One consolidation pass: inbox episodes → canon, like sleep turning episodic into semantic memory.
+ * Composes the exported steps, which a run driven from outside (one step per call) replays the same way.
+ */
 export async function sleep(opts: SleepOptions): Promise<SleepReport> {
   const log = opts.log ?? (() => {});
   const llm = timed(opts.llm, log);
   const vault = await Vault.load(opts.store, { now: opts.now });
+  const houseRules = await loadHouseRules(opts.store);
   const report: SleepReport = { model: opts.llm.name, rulings: [], consolidated: [], failed: [], summaries: [], remaining: 0, changed: [], warnings: [] };
 
-  report.rulings = applyRulings(vault);
+  report.rulings = beginRun(vault);
   for (const r of report.rulings) log(`⚖ ruling applied: ${r}`);
 
-  const batch = vault.episodes.slice(0, opts.limit ?? vault.config.curator.batch_size);
   const evidence = new Map<string, string[]>();
-  for (const ep of batch) {
-    log(`… ${ep.id} (${ep.agent}): ${ep.text.slice(0, 70).replace(/\s+/g, " ")}`);
+  const secrets: string[] = [];
+  for (const ep of pickBatch(vault, opts.limit)) {
+    log(`… ${ep.id} (${ep.agent}): ${ep.secret ? "(secret)" : ep.text.slice(0, 70).replace(/\s+/g, " ")}`);
+    const before = vault.snapshot();
     try {
-      const r = await consolidate(vault, llm, ep, opts.searcher ?? miniSearcher);
+      const { evidence: text, secrets: seen, ...r } = await consolidate(vault, llm, ep, opts.searcher ?? miniSearcher, { houseRules });
       report.consolidated.push(r);
-      for (const slug of r.touched) evidence.set(slug, [...(evidence.get(slug) ?? []), ep.secret ? "(secret-bearing episode)" : ep.text]);
+      secrets.push(...seen);
+      for (const slug of r.touched) evidence.set(slug, [...(evidence.get(slug) ?? []), text]);
       log(`  ✓ touched ${r.touched.join(", ") || "nothing"}${r.created.length ? `; new: ${r.created.join(", ")}` : ""}`);
     } catch (err) {
+      // Half an episode (say, an entity created from a mention whose claims then failed) would be
+      // committed without its chronicle entry, and before its secrets were redacted.
+      vault.restore(before);
       const message = err instanceof Error ? err.message : String(err);
       report.failed.push({ id: ep.id, path: ep.path, error: message });
       log(`  ✗ ${message.slice(0, 200)} (left in inbox)`);
     }
   }
 
-  if (vault.config.curator.summaries) {
-    for (const [slug, texts] of evidence) {
-      const e = vault.entities.get(slug);
-      if (!e || e.fm.type === "party") continue;
-      try {
-        const { summary } = await llm.object({ name: "summary", schema: summarySchema, ...summaryPrompt(vault, e, texts) });
-        setSummary(e, summary);
-        vault.markDirty(e);
-        report.summaries.push(slug);
-      } catch (err) {
-        report.warnings.push(`summary for ${slug} failed: ${(err as Error).message}`);
-      }
+  for (const { entity, texts } of summaryTargets(vault, evidence)) {
+    try {
+      await summarize(vault, llm, entity, texts, { houseRules });
+      report.summaries.push(entity.slug);
+    } catch (err) {
+      report.warnings.push(`summary for ${entity.slug} failed: ${(err as Error).message}`);
     }
   }
 
-  vault.writeFile(REVIEW_PATH, renderReview(vault, report));
-  vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
-  report.remaining = vault.episodes.length;
-  report.warnings.push(...vault.warnings);
+  finishRun(vault, report);
+  const violations = await auditChanges({ before: opts.store, changes: vault.changes(), actor: { kind: "curator" }, forbidden: secrets });
+  if (violations.length) throw new AuditError(violations);
   if (!opts.dryRun) report.changed = await vault.flush({ message: commitMessage(report), author: CURATOR_AUTHOR });
   return report;
+}
+
+/** Start a run: apply the human's rulings written into dispute notes since the last one. */
+export function beginRun(vault: Vault): string[] {
+  return applyRulings(vault);
+}
+
+/** The episodes this run consolidates, oldest first. */
+export function pickBatch(vault: Vault, limit?: number): Episode[] {
+  return vault.episodes.slice(0, limit ?? vault.config.curator.batch_size);
+}
+
+/** Entities whose summary this run rewrites, with the evidence gathered for each (never party notes). */
+export function summaryTargets(vault: Vault, evidence: ReadonlyMap<string, readonly string[]>): { entity: Entity; texts: string[] }[] {
+  if (!vault.config.curator.summaries) return [];
+  const out: { entity: Entity; texts: string[] }[] = [];
+  for (const [slug, texts] of evidence) {
+    const entity = vault.entities.get(slug);
+    if (entity && entity.fm.type !== "party") out.push({ entity, texts: [...texts] });
+  }
+  return out;
+}
+
+/** Rewrite one entity's summary region. Errors propagate: the caller decides whether a failed summary matters. */
+export async function summarize(vault: Vault, llm: LLM, entity: Entity, texts: string[], o: { houseRules?: string } = {}): Promise<void> {
+  const { summary } = await llm.object({ name: "summary", schema: summarySchema, ...summaryPrompt(vault, entity, texts, o.houseRules) });
+  setSummary(entity, summary);
+  vault.markDirty(entity);
+}
+
+/** End a run: write the morning review and the handbook, and fill in what's left and what went wrong. */
+export function finishRun(vault: Vault, report: SleepReport): void {
+  // Counted first: the review reports it.
+  report.remaining = vault.episodes.length;
+  vault.writeFile(REVIEW_PATH, renderReview(vault, report));
+  vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
+  report.warnings.push(...vault.warnings);
+}
+
+/** The human's house rules (`_hippo/curator.md`) without frontmatter or comments, or undefined when there are none. */
+export async function loadHouseRules(store: VaultStore): Promise<string | undefined> {
+  const raw = await store.read(CURATOR_RULES_PATH);
+  if (!raw) return undefined;
+  // Comments are notes to the human (hidden in Obsidian's reading view), not rules for the model.
+  const rules = parseDoc(raw)
+    .body.replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/%%[\s\S]*?%%/g, "")
+    .trim();
+  return rules || undefined;
 }
 
 /** Git identity for the curator's commits, so they're easy to tell apart from the human's. */
 export const CURATOR_AUTHOR = { name: "Hippocampus", email: "hippocampus@users.noreply.github.com" };
 
-export function commitMessage(r: SleepReport): string {
-  const lines = r.consolidated.map((c) => {
-    const bits = [
-      c.touched.length ? `touched ${c.touched.join(", ")}` : "nothing durable",
-      c.created.length ? `new ${c.created.join(", ")}` : "",
-      c.facts.some((f) => f.decision === "dispute") ? "⚖ dispute" : "",
-      c.quests.length ? c.quests.join("; ") : "",
-    ].filter(Boolean);
-    return `- ${c.id} (${c.agent}): ${bits.join(" · ")}`;
-  });
+/** What one episode did, in a line: touched notes, new ones, disputes, quest progress. */
+export function describeEpisode(c: EpisodeReport): string {
   return [
+    c.touched.length ? `touched ${c.touched.join(", ")}` : "nothing durable",
+    c.created.length ? `new ${c.created.join(", ")}` : "",
+    c.facts.some((f) => f.decision === "dispute") ? "⚖ dispute" : "",
+    c.quests.length ? c.quests.join("; ") : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** The run's commit message, with the trailers `hippo audit` checks each commit by. */
+export function commitMessage(r: SleepReport): string {
+  const lines = r.consolidated.map((c) => `- ${c.id} (${c.agent}): ${describeEpisode(c)}`);
+  const message = [
     `chore(sleep): consolidate ${r.consolidated.length} episode${r.consolidated.length === 1 ? "" : "s"}`,
     "",
     ...r.rulings.map((x) => `- ruling: ${x}`),
@@ -129,9 +200,14 @@ export function commitMessage(r: SleepReport): string {
     "",
     `model: ${r.model}`,
   ].join("\n");
+  return withTrailers(message, { [ACTOR_TRAILER]: "curator", [MODEL_TRAILER]: r.model });
 }
 
-async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher: SearcherFactory): Promise<EpisodeReport> {
+/**
+ * Consolidate one episode: mentions → entities → claims → canon, then into the chronicle and out of
+ * the inbox. On error the vault is left half-changed: snapshot it first and restore on failure.
+ */
+export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher: SearcherFactory, o: { houseRules?: string } = {}): Promise<EpisodeOutcome> {
   const report: EpisodeReport = { id: ep.id, agent: ep.agent, created: [], touched: [], facts: [], relations: [], quests: [] };
   const prov = { by: ep.agent, at: ep.at, src: [ep.id] };
   const entities = new Map<string, Entity>();
@@ -143,7 +219,7 @@ async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher: Search
   }
 
   // 1. Mentions
-  const { entities: mentions } = await llm.object({ name: "mentions", schema: mentionsSchema(vault.config), ...mentionsPrompt(vault, ep) });
+  const { entities: mentions } = await llm.object({ name: "mentions", schema: mentionsSchema(vault.config), ...mentionsPrompt(vault, ep, o.houseRules) });
 
   // 2. Resolve each mention to an existing entity, or create one.
   for (const m of mentions) {
@@ -156,7 +232,7 @@ async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher: Search
         .map((h) => vault.entities.get(h.id)!)
         .filter((c) => c && c.fm.type !== "party");
       if (candidates.length) {
-        const { match } = await llm.object({ name: "match", schema: matchSchema(candidates.map((c) => c.slug)), ...matchPrompt(m.name, m.type, ep, candidates) });
+        const { match } = await llm.object({ name: "match", schema: matchSchema(candidates.map((c) => c.slug)), ...matchPrompt(m.name, m.type, ep, candidates, o.houseRules) });
         e = match === "new" ? undefined : vault.entities.get(match);
       }
     }
@@ -165,7 +241,7 @@ async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher: Search
     } else {
       const allowed = new Set(vault.config.domains.map((d) => d.toLowerCase()));
       let tags = m.domains.map((d) => d.toLowerCase()).filter((d) => allowed.has(d));
-      if (!tags.length) tags = (vault.party(ep.agent)?.fm.authority ?? []).map((d) => d.toLowerCase());
+      if (!tags.length) tags = (vault.partyMember(ep.agent)?.fm.authority ?? []).map((d) => d.toLowerCase());
       e = vault.createEntity({ type: m.type, title: m.name, aliases: m.aliases, tags, by: ep.agent });
       report.created.push(e.slug);
     }
@@ -181,7 +257,7 @@ async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher: Search
     const claims = await llm.object({
       name: "claims",
       schema: claimsSchema(vault.config, slugs, quests.map((q) => q.slug)),
-      ...claimsPrompt(vault, ep, list, quests),
+      ...claimsPrompt(vault, ep, list, quests, o.houseRules),
     });
 
     // 4. Reconcile & apply (deterministic).
@@ -190,8 +266,10 @@ async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher: Search
       const value = f.value.trim();
       if (!e || !value || /^(unknown|n\/a|none|null)$/i.test(value)) continue;
       const secret = f.secret || (ep.secret === true && looksLikeIdentifier(value));
-      if (secret) secretsSeen.push(value);
-      report.facts.push(await applyFact(vault, e, f.field, value, prov, { secret }));
+      const result = await applyFact(vault, e, f.field, value, prov, { secret });
+      // A secret field or an existing secret:// ref makes a fact secret even when the model didn't say so.
+      if (result.secret) secretsSeen.push(value);
+      report.facts.push(result);
     }
     for (const r of claims.relations) {
       const from = entities.get(r.from);
@@ -211,6 +289,9 @@ async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher: Search
 
   // Belt and braces: a model may echo a secret as a name or alias; it must never reach a note.
   if (secretsSeen.length) {
+    // A file name can't be redacted after the fact (links point at it), so the episode fails instead.
+    const slugs = secretsSeen.map(slugify).filter((s) => s.length >= 6);
+    if (report.created.some((slug) => slugs.some((s) => slug.includes(s)))) throw new Error("a new note would be named after a secret value");
     for (const e of entities.values()) {
       const leaks = (v: string) => secretsSeen.some((s) => v.includes(s));
       const before = e.fm.aliases.length;
@@ -222,9 +303,10 @@ async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher: Search
 
   report.touched = [...new Set([...entities.keys()])];
   // 5. Episodic → chronicle (secrets redacted), then out of the inbox.
-  await vault.appendChronicle(ep, report.touched, redact(ep.text, secretsSeen));
+  const redacted = redact(ep.text, secretsSeen);
+  await vault.appendChronicle(ep, report.touched, redacted);
   vault.archiveEpisode(ep);
-  return report;
+  return { ...report, evidence: ep.secret ? "(secret-bearing episode)" : redacted, secrets: secretsSeen };
 }
 
 function timed(llm: LLM, log: (msg: string) => void): LLM {
