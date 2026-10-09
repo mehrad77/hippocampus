@@ -25,7 +25,9 @@ This repo is **public**. Users' memories live in **separate private vault repos*
 | `packages/mcp` | MCP tools and resources over `HippoService` (`server.ts`) |
 | `packages/store-github` | `VaultStore` over the GitHub API: pinned-commit reads, atomic commits (`github-store.ts`), `FakeGitHub` for tests (`fake-github.ts`) |
 | `apps/worker` | Cloudflare Worker MCP server: request handling and auth (`app.ts`, `auth.ts`), Scribe single writer (`scribe.ts`), OAuth consent and GitHub sign-in (`oauth.ts`), Workers entry point with bindings (`worker.ts`), agent tokens (`scripts/token.ts`). Not published |
-| `apps/cli` | `hippo` CLI (`src/main.ts`, `src/git.ts`), published as `@mehrad77/hippocampus` (tsup bundle) |
+| `packages/dashboard` | The dashboard's web-standard JSON API (`api.ts`), guards and errors (`http.ts`), `DashboardSource` port (`source.ts`) with service and MCP adapters (`service-source.ts`, `mcp-source.ts`), the Session Zero contract (`setup.ts`), node:http adapter and static serving (`node.ts`), the fictional demo campaign (`demo.ts`, `demo-setup.ts`), the `astro dev` API (`dev.ts`) |
+| `apps/dashboard` | The dashboard UI: Astro static build (base `/dashboard`, hash-based CSP) with React islands (`src/islands`), shared UI (`src/ui`), data/cache helpers (`src/lib`), design tokens (`src/styles/tokens.css`), guides (`src/content/guides`). Not published on its own; the CLI and Worker serve its build |
+| `apps/cli` | `hippo` CLI (`src/main.ts`, `src/git.ts`, `src/dashboard/` for `hippo dashboard` and the local Session Zero backend), published as `@mehrad77/hippocampus` (tsup bundle + the dashboard build) |
 | `vault-template/` | What `hippo init` copies: config, Obsidian templates, Dataview dashboards, vault CI |
 | `seeds/example-relocation/` | Fictional example campaign |
 | `scripts/` | Privacy guard test and pack check |
@@ -68,6 +70,12 @@ Run the CLI from source:
 ./apps/cli/bin/hippo --help
 ```
 
+Work on the dashboard UI against the fictional demo campaign (hot reload; set `HIPPO_VAULT` to use a local vault instead, which is private data):
+
+```bash
+pnpm dev:dashboard
+```
+
 ## Conventions
 
 - TypeScript ESM, Node 24. Relative imports use the `.ts` extension. Workspace packages export `src/*.ts` directly (no build step except the CLI bundle).
@@ -77,6 +85,7 @@ Run the CLI from source:
 - `main` is protected: work on a branch and open a PR. Never bump versions by hand. Git tags are the version of record (`scripts/release.mjs`).
 - Each curator LLM step is small and schema-validated (zod). The LLM never writes files directly. Deterministic code applies its structured output.
 - Curator changes get a golden test with `ScriptedLLM` in `packages/curator/src/sleep.test.ts`.
+- Dashboard: read models live in `packages/core/src/views.ts` (secrets are masked there, nowhere else). UI logic that can be pure lives in `apps/dashboard/src/lib` with `*.test.ts` tests. Colors come from the tokens in `tokens.css` only; fact status always pairs glyph, word and color. Screenshots and examples come from `--demo` only.
 - Reconcile rule changes update the precedence table comment in `reconcile.ts` and `reconcile.test.ts` together.
 - Changes to on-disk vault format bump `CURRENT_VAULT_VERSION`, add a migration, and get a CHANGELOG entry.
 

@@ -49,6 +49,8 @@ Hippocampus absorbs the Archivist's job (canonical facts, disputes). The Game Ma
  └──────────────────────────────────────────────┘
      ▲ curator API (HTTPS)
  Curator "sleep" runner: runs on the owner's machine (LM Studio/Ollama), later a cron/queue with a hosted LLM
+
+ The human: Obsidian, plus the dashboard (`hippo dashboard` on 127.0.0.1, or the Worker's /dashboard behind GitHub sign-in)
 ```
 
 Key properties:
@@ -131,7 +133,31 @@ Free human prose — never touched by the curator.
 | `briefing(since?, horizon_days?)` | "Previously on…": chronicle, recently changed notes, upcoming deadlines and clocks, open disputes. |
 | `update_quest(quest, status?, complete?, add?, clock?, deadline?, owner?)` | Structured quest and clock edits, applied directly. |
 
-Resources: `hippo://handbook`, `hippo://entity/{slug}`.
+Resources: `hippo://handbook`, `hippo://entity/{slug}`. The dashboard's read models are also served as resource templates under `hippo://dashboard/…` (`overview`, `catalog`, `graph`, `whoami`, `entity/{slug}`, `chronicle/{month}`, `search{?q,limit}`). They are left out of `resources/list` so agent hosts never see them. A dashboard can therefore run on top of any Hippocampus MCP server with a `read` token.
+
+## 3b. The human's dashboard
+
+Agents get small, verb-oriented tools. The human gets a different view: everything at once, structured, and with secrets masked in one place (`packages/core/src/views.ts`).
+
+- **Read models** (pure functions over the vault):
+  - `overview`: counts, attention, quests, upcoming dates, party, inbox, chronicle, and activity.
+  - `catalog`, `entityDetail` (facts with full provenance), `graph` and `chroniclePage`.
+  - Secret refs, prior secret values, and secret-bearing inbox episodes never leave as plain text.
+- **Human actions** are the human's edits, so they carry human authority:
+  - Rule on a dispute (`rule`, which applies at once through the same `applyRuling` the sleep uses).
+  - Tick and reopen objectives, turn clocks (`updateQuest` as `config.human`).
+  - Scribe a memory into the inbox (`remember` as the human).
+  - Add a party member.
+  - Typed rulings on secret fields are refused, so a secret can't land in a note as plain text.
+- **One API, two runtimes.** `packages/dashboard` is a web-standard `Request → Response` router over a `DashboardSource` port:
+  - Sources: a `HippoService` (local dir, `--github`, the Worker, the demo) or an MCP client.
+  - `hippo dashboard` serves it on 127.0.0.1 with a launch-token cookie, a Host allowlist and same-origin JSON writes.
+  - The Worker serves it behind GitHub sign-in for `HIPPO_OWNERS`.
+  - The UI (`apps/dashboard`, Astro + React islands) is one static build served by both, with a hash-based CSP.
+- **Session Zero.** The dashboard is also the setup path. A `SetupPort` per runtime does what the machine can do:
+  - Locally: create the vault, forge keys, save curator settings to `~/.config/hippocampus/env`, install the launchd job, and rehearse a dry-run sleep.
+  - It shows the rest as snippets to copy, such as creating the private repo and pushing.
+  - On the Worker it reports health and manages agent tokens.
 
 **GitHub path:** an agent reads `HANDBOOK.md` and commits `inbox/<agent>/<timestamp>-<slug>.md` with the documented frontmatter. The curator ingests these exactly like MCP episodes.
 
@@ -164,7 +190,10 @@ Fields flagged secret by the model, by the episode (`secret: true`), or by the t
 packages/core      schemas, markdown + managed regions, vault model, reconcile, ops, search, handbook, service, secrets
 packages/curator   LLM adapter (AI SDK), prompts, sleep pipeline
 packages/mcp       MCP tools/resources over the service
-apps/cli           `hippo`: init, serve, sleep, fmt, validate, handbook, remember, secrets
+packages/dashboard the dashboard's JSON API, sources (service, MCP), Session Zero contract, demo campaign
+apps/dashboard     the dashboard UI (Astro + React islands), guides, Session Zero wizard
+apps/worker        remote MCP, OAuth, the dashboard behind GitHub sign-in
+apps/cli           `hippo`: init, serve, dashboard, sleep, fmt, validate, handbook, remember, secrets
 vault-template/    starter vault: config, Obsidian templates, Dataview dashboards
 seeds/             example campaigns (fictional)
 ```
@@ -200,7 +229,7 @@ seeds/             example campaigns (fictional)
 | Vault spec + template + example seed | ✅ | `vault-template/`, `seeds/example-relocation/`, `hippo init --seed <name-or-path>` |
 | Core model | ✅ | zod schemas, managed regions, alias/ID/link resolution, typed relations as Dataview inline fields |
 | Reconcile | ✅ | Pure function, table-tested |
-| Disputes + human rulings | ✅ | `ruling:` is applied on the next sleep |
+| Disputes + human rulings | ✅ | `ruling:` is applied on the next sleep, or immediately from the dashboard's Council |
 | Secrets | ✅ | age, one file per field; the curator needs only the public key |
 | Search | ✅ | `Searcher` port. CLI default: persistent SQLite FTS5 index (`packages/index`, `node:sqlite`, a cache in `~/.cache/hippocampus`) that syncs by content hash, with trigram typo fallback and a relations table. In-memory MiniSearch remains the fallback (`--no-index`) |
 | Curator pipeline | ✅ | mentions → resolve → claims → reconcile → apply → chronicle → summaries → review + handbook |
@@ -212,6 +241,8 @@ seeds/             example campaigns (fictional)
 | Worker | ✅ | `apps/worker`: stateless MCP over `WebStandardStreamableHTTPServerTransport`; per-request `GitHubStore` with per-isolate blob and tree caches (tarball on cold start); D1 index; Scribe DO serializes commits on the writer's base commit; per-agent bearer tokens (hashed in KV) with `read`/`remember`/`quest` scopes |
 | Semantic recall | ✅ | `packages/embeddings`: `Embedder` adapters for OpenAI-compatible servers (LM Studio, Ollama, hosted) and Workers AI, opt-in via `HIPPO_EMBED_*`. The index stores one normalized vector per doc version and model, mirrored in memory, and embeds only what changed. Search fuses FTS and cosine hits with reciprocal rank fusion, then lets the top hits lift related candidates (never above themselves). Embedder failures fall back to keywords |
 | OAuth for connectors | ✅ | `@cloudflare/workers-oauth-provider`: the Worker is authorization server and resource (RFC 9728 discovery, DCR, PKCE, refresh). `/authorize` shows a consent page (agent id and scopes per app; unframeable, browser-bound), then GitHub sign-in restricted to `HIPPO_OWNERS`. OAuth scopes come from the token, so refreshes can narrow them. Agent tokens are accepted through `resolveExternalToken` |
+| Dashboard | ✅ | `packages/dashboard` + `apps/dashboard`: Tavern, Quest board, Council, Satchel, Codex, entity sheets, Map, Chronicle, Party, Guides, ⌘K. Sources: local dir, `--github`, `--mcp`, the Worker, `--demo` (fictional, in memory) |
+| Session Zero onboarding | ✅ | Local `SetupPort` in the CLI (vault, party, secrets, curator model, git visibility, agent snippets, launchd schedule, dry-run sleep, remote check). The Worker's port reports health and manages agent tokens |
 | Push webhook reindex, CIMD | ⏳ | Every request syncs the index with the vault it loads, so a webhook only matters once reads stop loading the whole vault. Client ID Metadata Documents need `global_fetch_strictly_public`, which would block the local fake GitHub in `wrangler dev`; DCR covers today's connectors |
 
 **Lessons from local models.** LM Studio with a reasoning model returned grammar-constrained JSON in `reasoning_content`, and constrained decoding suppressed its thinking, which made classification worse. Local providers therefore default to `prompt` mode:

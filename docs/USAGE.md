@@ -13,6 +13,33 @@ The vault depends on the tool, and the tool never knows about any vault. Nothing
 
 Requirements: Node 24+, git, and (for the nightly curator) [LM Studio](https://lmstudio.ai) or [Ollama](https://ollama.com), or an Anthropic or xAI API key.
 
+## 0. The dashboard and Session Zero
+
+Every step below can be done from the dashboard:
+
+```bash
+npx @mehrad77/hippocampus dashboard
+```
+
+If the current directory (or `-v`, or `HIPPO_VAULT`) is not a vault yet, the dashboard opens **Session Zero**, a guided setup. Each step says whether the dashboard *does* it on this machine or *shows* you what to run:
+
+| Step | Done for you | Shown to copy |
+| --- | --- | --- |
+| Vault | create one from the template (optionally with a seed), open one, or connect a GitHub repo or MCP server | `hippo migrate` when the format is older |
+| Party | add agents (`party/<id>.md`), including unknown agents seen in the inbox | |
+| Secrets | forge the age key, or reuse the one on this machine | where to back it up |
+| Curator | save the model settings and test them | key pages for hosted providers |
+| Git | check that the GitHub repo is private | creating the repo and pushing (never done for you) |
+| Agents | | connection snippets per party member |
+| Sleep | install the nightly launchd job, and rehearse a dry run | a cron line on Linux |
+| Remote | check a Worker URL, save embedding settings, rebuild the index | the Worker deploy commands |
+
+Settings that Session Zero saves (curator model and key, default vault, Worker URL) go to `~/.config/hippocampus/env` (mode 0600; set `HIPPO_CONFIG_DIR` to move it). The CLI reads that file after the shell environment and a local `.env`, so those still win. Keys are never sent back to the browser.
+
+After setup, the same command opens your campaign: the **Tavern** (what happened, what needs you), the **Quest board**, the **Council** (disputes), the **Satchel** (the inbox), the **Codex** with entity sheets, the relation **Map**, the **Chronicle**, the **Party**, and **Guides**. Use `--github you/my-campaign` for a vault on GitHub, or `--mcp https://…/mcp` with `HIPPO_MCP_TOKEN` for any Hippocampus MCP server. Over MCP, writes are filed as that token's agent and rulings aren't available. `--demo` opens a fictional campaign to explore.
+
+The dashboard listens on 127.0.0.1 only. The terminal prints a one-time sign-in link that sets a cookie for that browser. Other local users and other websites can't use it. Secret values never reach the page, and secret-bearing inbox episodes are shown sealed.
+
 ## 1. Create your vault
 
 Start from the empty template, the fictional example campaign, or your own seed directory:
@@ -102,14 +129,14 @@ Failed episodes stay in the inbox for the next night.
 HIPPO_LLM_PROVIDER=lmstudio HIPPO_LLM_MODEL=google/gemma-4-26b-a4b-qat npx @mehrad77/hippocampus@0.1 -v ~/vaults/my-campaign sleep
 ```
 
-With `--github you/my-campaign`, steps 1 and 5 collapse into a single commit made through the API, with no clone needed. Pin the version (`@0.1`) so upgrades are deliberate. To schedule it on macOS, use [ops/com.hippocampus.sleep.plist](../ops/com.hippocampus.sleep.plist). Elsewhere, use cron or systemd. Models that worked well locally are MoE models with ~4B active parameters. Very long "thinking" models can hit the per-call timeout (`HIPPO_LLM_TIMEOUT_MS`). See [.env.example](../.env.example) for all settings.
+With `--github you/my-campaign`, steps 1 and 5 collapse into a single commit made through the API, with no clone needed. Pin the version (`@0.1`) so upgrades are deliberate. To schedule it on macOS, let Session Zero install it (Setup → Nightly sleep), or use [ops/com.hippocampus.sleep.plist](../ops/com.hippocampus.sleep.plist). Elsewhere, use cron or systemd. Models that worked well locally are MoE models with ~4B active parameters. Very long "thinking" models can hit the per-call timeout (`HIPPO_LLM_TIMEOUT_MS`). See [.env.example](../.env.example) for all settings.
 
 ## 6. The daily loop
 
-1. Open `_hippo/review.md` (the morning review). It lists disputes, unverified rumors, stale facts, orphan notes, and episodes that failed.
-2. **Rule on disputes:** open the dispute note and set `ruling: <correct value>`. The next sleep makes it canon.
+1. Open the dashboard's Tavern, or `_hippo/review.md` (the morning review). Both list disputes, unverified rumors, stale facts, orphan notes, and episodes that failed.
+2. **Rule on disputes:** in the dashboard's Council, pick the right claim or type the value; it becomes canon immediately, by you. Or open the dispute note in Obsidian and set `ruling: <correct value>`, and the next sleep makes it canon.
 3. Edit anything in Obsidian. Your word outranks every agent. The curator only rewrites `%% hippo:… %%` regions and the `facts`/`relations` properties, never your prose.
-4. Tick quest objectives directly in quest notes.
+4. Tick quest objectives and turn clocks on the dashboard's Quest board, or directly in quest notes.
 
 ## 7. Upgrading
 
@@ -153,7 +180,7 @@ Connect the agent:
 claude mcp add --transport http hippocampus https://hippocampus.<your-subdomain>.workers.dev/mcp --header "Authorization: Bearer hippo_…"
 ```
 
-Revoke with `pnpm agent-token revoke <token> --remote`. For semantic recall, uncomment the `ai` binding in `wrangler.jsonc` and run `wrangler secret put HIPPO_EMBED_PROVIDER` with the value `workers-ai` (it uses `@cf/baai/bge-m3`), or point the `HIPPO_EMBED_*` settings at any OpenAI-compatible embeddings API. The Worker doesn't run `sleep`, so keep the nightly run (with a checkout or with `--github`). A cold start downloads the vault as one tarball, which fits the free plan's subrequest limit, but parsing a large vault on every request needs the paid plan's CPU time. OAuth for the Claude.ai and ChatGPT connectors comes later.
+Revoke with `pnpm agent-token revoke <token> --remote`. For semantic recall, uncomment the `ai` binding in `wrangler.jsonc` and run `wrangler secret put HIPPO_EMBED_PROVIDER` with the value `workers-ai` (it uses `@cf/baai/bge-m3`), or point the `HIPPO_EMBED_*` settings at any OpenAI-compatible embeddings API. The Worker doesn't run `sleep`, so keep the nightly run (with a checkout or with `--github`). A cold start downloads the vault as one tarball, which fits the free plan's subrequest limit, but parsing a large vault on every request needs the paid plan's CPU time.
 
 **Connect Claude.ai or ChatGPT (OAuth).** Apps that add MCP servers as connectors sign in with OAuth instead of a token. The Worker is its own OAuth server: you approve each app on a consent page, choosing the agent it acts as and what it may do, then sign in with GitHub to prove you own the vault. To turn it on:
 
@@ -172,6 +199,8 @@ Revoke with `pnpm agent-token revoke <token> --remote`. For semantic recall, unc
 3. In the app, add a custom connector with the URL `https://hippocampus.<your-subdomain>.workers.dev/mcp`.
 
 Agent tokens keep working next to OAuth. A connection lasts 30 days from when you approve it (the app refreshes its access in between); connect again to renew or to change its permissions.
+
+**The dashboard on the Worker.** With OAuth on, the Worker also serves the dashboard at `https://hippocampus.<your-subdomain>.workers.dev/dashboard/`. Sign in with GitHub; only `HIPPO_OWNERS` get in. Owners are re-checked on every request, so removing a login takes effect at once. A session lasts 7 days and is kept in `OAUTH_KV`. Until OAuth is configured, the pages load but the API answers 503 and lists the missing settings. It uses the same GitHub OAuth app with the callback `…/oauth/github/callback/dashboard`. GitHub accepts it as a subdirectory of the registered callback; if your app refuses it, add it as a second callback URL. Its Setup page shows the Worker's health and lets you mint, list and revoke agent tokens without the CLI. `deploy` builds the dashboard first.
 
 For local development, copy `.dev.vars.example` to `.dev.vars` and run `pnpm --filter @hippocampus/worker dev`. Mint local tokens with `pnpm agent-token create <agent>` (no `--remote`).
 

@@ -20,7 +20,13 @@ The vault uses the tool, and the tool never knows about any vault. Your memory n
 
 Requires Node 24+ and git.
 
-Create a vault (omit `--seed` for an empty one, or pass your own seed directory):
+The easiest way in is the dashboard. Run it anywhere: with no vault yet, it opens **Session Zero**, a guided setup that creates the vault, the party, the secrets key, the curator model and the nightly schedule:
+
+```bash
+npx @mehrad77/hippocampus dashboard
+```
+
+Or set it up by hand. Create a vault (omit `--seed` for an empty one, or pass your own seed directory):
 
 ```bash
 npx @mehrad77/hippocampus init ~/vaults/my-campaign --seed example-relocation
@@ -39,6 +45,25 @@ HIPPO_LLM_PROVIDER=lmstudio HIPPO_LLM_MODEL=google/gemma-4-26b-a4b-qat npx @mehr
 ```
 
 The full guide, [docs/USAGE.md](docs/USAGE.md), covers connecting agents, scheduling, the daily review, disputes, upgrades, and vault CI.
+
+## The dashboard
+
+`hippo dashboard` opens your memory as a campaign codex in the browser:
+
+- **Tavern**: "previously on…", what needs your eye, quests in motion, the party, and activity.
+- **Quest board**: tick objectives, turn progress clocks, set status and deadlines.
+- **Council**: rule on disputes. Your ruling becomes canon at once.
+- **Satchel**: episodes waiting for the next sleep.
+- **Codex**, **entity sheets**, **Map** (the relation graph), **Chronicle** and **Party**.
+- **Guides** on how Hippocampus works, ⌘K search, and "Scribe a memory".
+
+It reads a local vault (`-v`), a GitHub repo (`--github`), or any Hippocampus MCP server (`--mcp <url>`). It listens on 127.0.0.1 only, and opens through a one-time link printed in the terminal. Secret values are never shown. To look around without a vault of your own, try the fictional demo campaign:
+
+```bash
+npx @mehrad77/hippocampus dashboard --demo
+```
+
+The Cloudflare Worker serves the same dashboard at `/dashboard`, behind GitHub sign-in for the vault's owners.
 
 ## MCP tools
 
@@ -59,7 +84,7 @@ For local agents, `hippo serve --agent <id>` (stdio) or `hippo serve --http <por
 - Every fact has a status: `canon` / `rumor` / `disputed` / `retconned`.
 - An agent is **authoritative** for entities tagged with its `authority` domains (`party/<id>.md`). There its word is canon immediately. Elsewhere it's a rumor until another agent corroborates it.
 - Precedence is **human > lane authority > corroboration > recency**. A source may correct its own earlier report.
-- Contradictions between peers, or against the human, open `disputes/<…>.md`. Set `ruling:` there and the next sleep makes it canon.
+- Contradictions between peers, or against the human, open `disputes/<…>.md`. Rule in the dashboard's Council (canon at once), or set `ruling:` in the note and the next sleep makes it canon.
 - Secret fields are age-encrypted to `secrets/<entity>/<field>.age`. The note only holds `secret://…`, and the curator can encrypt but never decrypt.
 
 ## Contributing
@@ -81,6 +106,8 @@ pnpm typecheck
 | `packages/core` | Schemas, markdown and managed regions, vault model, reconcile rules, search, handbook, service, secrets, migrations |
 | `packages/curator` | LLM adapter (AI SDK) and the sleep pipeline |
 | `packages/mcp` | MCP tools and resources |
+| `packages/dashboard` | The dashboard's JSON API, its data sources (vault, GitHub, MCP), and the demo campaign |
+| `apps/dashboard` | The dashboard UI (Astro + React), including the guides and Session Zero |
 | `apps/cli` | The `hippo` CLI, published as `@mehrad77/hippocampus` |
 | `vault-template/` | What `hippo init` copies |
 | `seeds/example-relocation/` | Fictional example campaign |
