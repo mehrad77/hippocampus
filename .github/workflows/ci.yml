@@ -42,7 +42,8 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          registry-url: https://registry.npmjs.org
+          # No registry-url: it writes an .npmrc with a placeholder NODE_AUTH_TOKEN that npm silently
+          # falls back to when the OIDC exchange fails, turning the real error into a misleading E404.
       - run: pnpm install --frozen-lockfile
       - id: version
         run: node scripts/release.mjs --write
@@ -60,12 +61,13 @@ jobs:
         run: pnpm build && pnpm pack:check
       # npm trusted publishing (OIDC via id-token: write): no NPM_TOKEN secret, provenance included.
       # Configured on npmjs.com → @mehrad77/hippocampus → Settings → Trusted Publisher (repo + ci.yml).
+      # --loglevel verbose: npm only reports why the OIDC token exchange failed at verbose level.
       - name: Publish to npm
         if: steps.version.outputs.version && !steps.npm.outputs.published
         working-directory: apps/cli
         run: |
           pnpm pack --pack-destination ../../dist-pack
-          npm publish ../../dist-pack/*.tgz --access public --provenance
+          npm publish ../../dist-pack/*.tgz --access public --provenance --loglevel verbose
       - name: Tag and create GitHub Release
         if: steps.version.outputs.version
         env:
