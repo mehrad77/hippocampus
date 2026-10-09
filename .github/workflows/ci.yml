@@ -45,6 +45,16 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @hippocampus/dashboard-ui build
       - run: pnpm --filter @hippocampus/worker bundle:check
+      # The official instance's config (scripts/deploy.mjs), with stand-in ids, still builds.
+      - name: Deploy config dry run
+        env:
+          HIPPO_HOST: hippo.example.test
+          CF_REGISTRY_DATABASE_ID: 8c1f2b3a-4d5e-4f60-9a7b-1c2d3e4f5a6b
+          CF_OAUTH_KV_ID: 0f1e2d3c4b5a69788796a5b4c3d2e1f0
+          WRANGLER_SEND_METRICS: "false"
+        run: |
+          node scripts/deploy.mjs config
+          cd apps/worker && pnpm exec wrangler deploy --dry-run -c wrangler.deploy.json --outdir "$RUNNER_TEMP/dry-run"
       - run: pnpm --filter @hippocampus/worker smoke
 
   # actionlint on this repo's workflows and the ones vaults get (scripts/lint-workflows.mjs).
@@ -121,3 +131,100 @@ jobs:
             git push origin "v$VERSION"
           fi
           gh release view "v$VERSION" >/dev/null 2>&1 || gh release create "v$VERSION" --generate-notes --title "v$VERSION"
+
+  # Only main's newest commit deploys, so an older run that finishes late can't roll production back:
+  # the newer run deploys everything this one would have.
+  tip:
+    needs: release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      current: ${{ steps.main.outputs.current }}
+    steps:
+      - id: main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$GITHUB_SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::main has moved past ${GITHUB_SHA::7}; its newer run deploys"
+          fi
+
+  # The hosted app on the official instance, once npm has the release: the vault template the Worker
+  # writes runs `npx @mehrad77/hippocampus@0 …`. The host and resource ids live in the `production`
+  # environment (main only), so wrangler.jsonc stays generic. Worker secrets are set on Cloudflare and
+  # never pass through here. Setup and rollback: docs/DEVELOPING.md, "The official instance".
+  deploy:
+    needs: tip
+    if: needs.tip.outputs.current == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://${{ vars.HIPPO_HOST }}
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the release's v* tag, and main's tip
+          persist-credentials: false
+      # Pinned: this job holds the Cloudflare token.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @hippocampus/dashboard-ui build
+      - name: Production config
+        env:
+          HIPPO_HOST: ${{ vars.HIPPO_HOST }}
+          CF_REGISTRY_DATABASE_ID: ${{ vars.CF_REGISTRY_DATABASE_ID }}
+          CF_OAUTH_KV_ID: ${{ vars.CF_OAUTH_KV_ID }}
+        run: node scripts/deploy.mjs config
+      # "Re-run failed jobs" on an old run reuses tip's answer, so check again before touching anything.
+      - name: Still main's tip
+        run: |
+          git fetch --quiet origin main
+          if [ "$(git rev-parse origin/main)" != "$GITHUB_SHA" ]; then
+            echo "::error::main has moved past ${GITHUB_SHA::7}; not deploying it"
+            exit 1
+          fi
+      # Before the code that needs them. They must also work with the previous Worker, since a rollback
+      # restores code, not schema.
+      - name: Registry migrations
+        working-directory: apps/worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm exec wrangler d1 migrations apply REGISTRY --remote -c wrangler.deploy.json
+      - id: deploy
+        name: Deploy
+        working-directory: apps/worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          tag=$(git describe --tags --exact-match --match 'v[0-9]*' HEAD 2>/dev/null || echo untagged)
+          pnpm exec wrangler deploy -c wrangler.deploy.json --tag "$tag" --message "$GITHUB_SHA"
+      - name: Probe
+        env:
+          HIPPO_HOST: ${{ vars.HIPPO_HOST }}
+        run: node scripts/deploy.mjs probe
+      # Only when this run's version went live and then failed the probe; when the deploy itself failed,
+      # production is still on the previous version. Can't cross a Durable Object class change.
+      - name: Roll back
+        if: failure() && steps.deploy.outcome == 'success'
+        working-directory: apps/worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm exec wrangler rollback -c wrangler.deploy.json --message "probe failed for ${GITHUB_SHA::7}"

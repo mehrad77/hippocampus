@@ -19,6 +19,8 @@ seeds/private-*/
 # Cloudflare Worker local state and secrets
 .wrangler/
 .dev.vars
+# The official instance's config, stamped by scripts/deploy.mjs
+apps/worker/wrangler.deploy.json
 
 # Astro generated types and cache
 .astro/
