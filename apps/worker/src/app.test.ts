@@ -47,6 +47,19 @@ describe("the hosted Worker's pages", () => {
       expect(text).not.toContain("REGISTRY");
     });
   });
+
+  it("refuses plain http and a GitHub stand-in in production, naming the setting but not its value", async () => {
+    const all = { VAULT_HOST: {}, REGISTRY: {}, OAUTH_KV: {}, ASSETS: {}, HIPPO_ADMINS: "4242", GITHUB_APP_ID: "4321", GITHUB_APP_SLUG: "s", GITHUB_APP_CLIENT_ID: "c", GITHUB_APP_CLIENT_SECRET: "x", GITHUB_APP_PRIVATE_KEY: "k", GITHUB_APP_WEBHOOK_SECRET: "w" };
+    expect(configProblem({ ...all, HIPPO_PUBLIC_URL: ORIGIN })).toBeUndefined();
+    const http = configProblem({ ...all, HIPPO_PUBLIC_URL: "http://hippo.test" });
+    expect(http?.status).toBe(503);
+    expect(await http!.text()).toContain("must be this Worker's https URL");
+    const fake = configProblem({ ...all, HIPPO_PUBLIC_URL: ORIGIN, GITHUB_API_URL: "https://stand-in.test" });
+    const text = await fake!.text();
+    expect(fake!.status).toBe(503);
+    expect(text).toContain("only for local development");
+    expect(text).not.toContain("stand-in");
+  });
 });
 
 describe("the dashboard API", () => {
