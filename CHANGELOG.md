@@ -10,6 +10,10 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
   - **Actions:** rule on disputes, tick and reopen objectives, turn clocks, scribe a memory as the player, and add party members.
   - **Sources:** a local vault, `--github`, or `--mcp <url>`; `--demo` serves a fictional campaign.
   - **Access:** local runs bind to 127.0.0.1 and open through a one-time link; on the Worker, GitHub sign-in is limited to `HIPPO_OWNERS`.
+- Two looks for the dashboard, chosen under Setup & health → Personalization and saved per browser:
+  - **Plain** (the default) is built on IBM's Carbon design system: IBM Plex, gray-10/gray-100, high contrast. It uses everyday names: Home, Goals, Disputes, Inbox, Records, Timeline, Agents, and Confirmed/Unverified for fact status.
+  - **Campaign codex** is the tabletop look and vocabulary.
+  - Personalization also sets the colors (match the device, light or dark) and the text size (standard or large).
 - Session Zero: guided setup from the dashboard.
   - It can create or open the vault, add the party, forge the secrets key, configure and test the curator model, check that the GitHub repo is private, and generate agent connection snippets.
   - It can also install the nightly sleep (launchd) and rehearse a dry run.

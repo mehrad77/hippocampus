@@ -57,6 +57,8 @@ The full guide, [docs/USAGE.md](docs/USAGE.md), covers connecting agents, schedu
 - **Codex**, **entity sheets**, **Map** (the relation graph), **Chronicle** and **Party**.
 - **Guides** on how Hippocampus works, ⌘K search, and "Scribe a memory".
 
+It comes in two looks: **Plain** (the default) is built on IBM's Carbon design system and uses everyday names (Home, Goals, Disputes, Inbox), and **Campaign codex** is the tabletop look with its tabletop names. Switch under Setup & health → Personalization, where you can also choose light or dark colors and larger text. The page names above are the codex ones.
+
 It reads a local vault (`-v`), a GitHub repo (`--github`), or any Hippocampus MCP server (`--mcp <url>`). It listens on 127.0.0.1 only, and opens through a one-time link printed in the terminal. Secret values are never shown. To look around without a vault of your own, try the fictional demo campaign:
 
 ```bash

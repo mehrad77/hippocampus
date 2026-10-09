@@ -38,6 +38,12 @@ Settings that Session Zero saves (curator model and key, default vault, Worker U
 
 After setup, the same command opens your campaign: the **Tavern** (what happened, what needs you), the **Quest board**, the **Council** (disputes), the **Satchel** (the inbox), the **Codex** with entity sheets, the relation **Map**, the **Chronicle**, the **Party**, and **Guides**. Use `--github you/my-campaign` for a vault on GitHub, or `--mcp https://…/mcp` with `HIPPO_MCP_TOKEN` for any Hippocampus MCP server. Over MCP, writes are filed as that token's agent and rulings aren't available. `--demo` opens a fictional campaign to explore.
 
+The dashboard has two looks, set under **Setup & health → Personalization** (the last card) and saved in your browser:
+- **Plain** (the default): IBM Carbon design, everyday names (Home, Goals, Disputes, Inbox, Records, Timeline, Agents) and Confirmed/Unverified for fact status.
+- **Campaign codex**: the tabletop look and names used in this guide.
+
+Personalization also sets the colors (match your device, light or dark) and the text size.
+
 The dashboard listens on 127.0.0.1 only. The terminal prints a one-time sign-in link that sets a cookie for that browser. Other local users and other websites can't use it. Secret values never reach the page, and secret-bearing inbox episodes are shown sealed.
 
 ## 1. Create your vault
