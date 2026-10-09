@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "pnpm --filter @hippocampus/dashboard-ui build && wrangler d1 migrations apply REGISTRY --local && wrangler dev",
     "dev:github": "tsx scripts/fake-github.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "bundle:check": "node scripts/bundle-check.mjs",
     "deploy": "pnpm --filter @hippocampus/dashboard-ui build && wrangler deploy",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json"
   },

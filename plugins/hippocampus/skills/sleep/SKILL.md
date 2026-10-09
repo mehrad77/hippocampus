@@ -20,6 +20,7 @@ The connection needs a **curator key** (the `curate` scope). If there are no `sl
    - Answers listed under `rejected` were not accepted: fix them and send them again.
    - A question can come back when the vault changed meanwhile: answer it again.
 5. If an episode is unclear, or isn't yours to decide, call `sleep_skip` with a short reason. It stays in the inbox for the person.
+   - If you have to stop partway, call `sleep_abort` with the run id. What it already committed stays; the rest stays in the inbox.
 6. Finish with a short report: how many memories were consolidated, failed and skipped. Don't quote memory content.
 
 ## Rules

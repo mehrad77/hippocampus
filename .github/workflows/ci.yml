@@ -4,6 +4,15 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+# A new push to a pull request cancels its older run. Each push to main gets a group of its own, so a
+# run that would release is never cancelled, nor replaced while it waits.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -20,11 +29,44 @@ jobs:
       - run: pnpm build
       - run: pnpm pack:check
 
+  # The hosted Worker in the real Workers runtime: its deploy bundle (`wrangler deploy --dry-run`, no
+  # Cloudflare account involved), then sign-in, onboarding, MCP and sleep end to end in `wrangler dev`
+  # against the fake GitHub (apps/worker/scripts/smoke.ts).
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @hippocampus/dashboard-ui build
+      - run: pnpm --filter @hippocampus/worker bundle:check
+      - run: pnpm --filter @hippocampus/worker smoke
+
+  # actionlint on this repo's workflows and the ones vaults get (scripts/lint-workflows.mjs).
+  workflows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install actionlint
+        run: bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7 "$RUNNER_TEMP"
+      - run: node scripts/lint-workflows.mjs
+        env:
+          ACTIONLINT: ${{ runner.temp }}/actionlint
+
   # Every push to main (= every merged PR, since main is protected) releases the CLI:
   # next version from conventional commits since the last v* tag → npm publish → tag + GitHub Release.
   # Nothing is committed back to main; the version of record is the git tag.
   release:
-    needs: check
+    needs: [check, worker, workflows]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     concurrency:

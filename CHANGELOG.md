@@ -24,6 +24,7 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 - `buildVaultFiles` (core) builds a vault without a filesystem; `@hippocampus/template` bundles `vault-template/` and `seeds/` for the Worker (`pnpm gen:template`).
 - `GitHubStore`: token refresh after a 401, `initialize()` for empty repos (`EmptyRepositoryError`), a `persist` filter for blobs that mustn't be cached at rest, and `SqliteBlobCache`. `doSql` runs the search index on Durable Object SQLite.
 - `HIPPO_DEMO_HOSTED=1 pnpm dev:dashboard` walks the hosted onboarding against the demo campaign; `pnpm --filter @hippocampus/worker dev:github` is a fake GitHub for running the Worker offline.
+- CI runs the hosted Worker in the real Workers runtime: `pnpm --filter @hippocampus/worker bundle:check` (`wrangler deploy --dry-run`) and `pnpm smoke:worker`, an end-to-end smoke test under `wrangler dev` against the fake GitHub. It also lints every workflow it owns or ships to vaults with actionlint (`pnpm lint:workflows`), and checks the Claude Code plugin's manifests and skills. `release` waits for all of it.
 - SECURITY.md: the threat model, what a hosted operator can see, keys, and reporting.
 - The dashboard (`hippo dashboard`, and `/dashboard` on the hosted app), a campaign codex for humans:
   - **Pages:** Tavern, Quest board, Council, Satchel, Codex, entity sheets, relation Map, Chronicle, Party and Guides, plus ⌘K search.

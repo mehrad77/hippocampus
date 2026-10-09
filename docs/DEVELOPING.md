@@ -103,9 +103,27 @@ If a change alters files in existing vaults (frontmatter keys, folder layout, re
 2. Add a `Migration` that rewrites old vaults, with a test.
 3. Note it under "Vault format" in [CHANGELOG.md](../CHANGELOG.md).
 
+## Tests and CI
+
+`.github/workflows/ci.yml` runs three jobs in parallel on every pull request and push to `main`; `release` runs only after all three pass.
+
+- **check:** `pnpm typecheck`, `pnpm test` (every package's unit tests in Node, the privacy guard, and the checks in `scripts/`: the template bundle, the Claude Code plugin's manifests and skills, and what each shipped workflow does), `pnpm build` and `pnpm pack:check`.
+- **worker:** the hosted Worker in the real Workers runtime. `bundle:check` builds it as `wrangler deploy --dry-run` would (no Cloudflare account) and checks the bundle's size. `smoke` (`apps/worker/scripts/smoke.ts`) starts the fake GitHub and `wrangler dev --local`, then walks it end to end: sign-in and the waitlist, installing the app, setting up a vault from the example seed, keys, MCP as an agent and as the curator (a whole sleep run), and that one account's keys never see another's vault.
+- **workflows:** `scripts/lint-workflows.mjs` runs actionlint on this repo's workflows, the vault template's `validate.yml`, and the `sleep.yml` the hosted app writes into vault repos.
+
+Run the Worker checks locally (they need the dashboard UI built, and leave `apps/worker/.dev.vars` and `.wrangler/` alone: everything goes in a temp dir):
+
+```bash
+pnpm --filter @hippocampus/dashboard-ui build
+pnpm --filter @hippocampus/worker bundle:check
+pnpm smoke:worker
+```
+
+`pnpm lint:workflows` needs [actionlint](https://github.com/rhysd/actionlint) on your `PATH` (or `ACTIONLINT=/path/to/actionlint`); without it, it skips locally and fails in CI.
+
 ## Branches and releases
 
-`main` is protected. All changes land through pull requests, and CI (`check`) must pass.
+`main` is protected. All changes land through pull requests, and CI (`check`, `worker` and `workflows`) must pass.
 
 **Every merge to `main` releases the CLI automatically** (`release` job in `.github/workflows/ci.yml`):
 1. The next version is computed from the conventional commits since the last `v*` tag (`scripts/release.mjs`):
