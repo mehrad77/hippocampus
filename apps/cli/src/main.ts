@@ -1,10 +1,6 @@
-import { chmod, cp, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { createServer } from "node:http";
-import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import {
   CONFIG_PATH,
   CURRENT_VAULT_VERSION,
@@ -13,7 +9,6 @@ import {
   Vault,
   applyChanges,
   decryptSecret,
-  generateKeyPair,
   isSecretRef,
   migrate,
   renderHandbook,
@@ -22,34 +17,22 @@ import {
   type SearcherFactory,
   type VaultStore,
 } from "@hippocampus/core";
-import { FsStore } from "@hippocampus/core/node";
 import { aiSdkLLM, commitMessage, llmConfigFromEnv, sleep, type SleepReport } from "@hippocampus/curator";
-import { createEmbedder, embedConfigFromEnv } from "@hippocampus/embeddings";
-import { HippoIndex, type IndexOptions } from "@hippocampus/index";
-import { nodeSqlite } from "@hippocampus/index/node";
 import { createHippoServer } from "@hippocampus/mcp";
 import { GitHubStore } from "@hippocampus/store-github";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Command } from "commander";
-import { parseDocument } from "yaml";
+import { runDashboard } from "./dashboard/command.ts";
+import { loadEnv } from "./env-file.ts";
 import { Git } from "./git.ts";
+import { assetRoot, expandHome, identityFile, indexKey, userEnvFile } from "./paths.ts";
+import { openIndex, openSearcher as searcherFor, openStore as storeFor } from "./stores.ts";
+import { initVault, keygen } from "./vault-setup.ts";
 
-/**
- * Where `vault-template/` and `seeds/` live: next to the published package (dist/..),
- * or at the repo root when running from source.
- */
-function assetRoot(): string {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const candidates = [resolve(here, ".."), resolve(here, "../../..")];
-  return candidates.find((dir) => existsSync(join(dir, "vault-template"))) ?? candidates[1]!;
-}
-// Local settings (HIPPO_VAULT, HIPPO_LLM_*) from a gitignored .env in the working directory.
-if (existsSync(".env")) process.loadEnvFile(".env");
-
-const expandHome = (p: string) => (p === "~" || p.startsWith("~/") ? join(homedir(), p.slice(1)) : p);
-
-const IDENTITY_FILE = process.env.HIPPO_AGE_IDENTITY_FILE ? expandHome(process.env.HIPPO_AGE_IDENTITY_FILE) : join(homedir(), ".config", "hippocampus", "age-identity.txt");
+// Settings: the shell, then a gitignored .env in the working directory, then the user env file
+// (~/.config/hippocampus/env, written by `hippo dashboard`). Earlier sources win.
+const envOrigins = loadEnv({ userFile: () => userEnvFile() });
 
 const program = new Command()
   .name("hippo")
@@ -60,35 +43,13 @@ const program = new Command()
 
 const vaultDir = () => resolve(expandHome(program.opts<{ vault: string }>().vault));
 const github = () => program.opts<{ github?: string }>().github;
+const useIndex = () => program.opts<{ index: boolean }>().index;
 const err = (msg: string) => process.stderr.write(`${msg}\n`);
+const vaultKey = () => indexKey({ dir: vaultDir(), github: github() });
 
 /** The vault: a GitHub repo with `--github`, else the local directory. */
-function openStore(): VaultStore {
-  const repo = github();
-  if (!repo) return new FsStore(vaultDir());
-  const token = process.env.HIPPO_GITHUB_TOKEN ?? process.env.GITHUB_TOKEN;
-  if (!token) throw new Error("--github needs a token in HIPPO_GITHUB_TOKEN (fine-grained, Contents: read and write on the vault repo)");
-  const [name, branch] = repo.split("#");
-  return new GitHubStore({ repo: name!, branch: branch || undefined, token, apiUrl: process.env.HIPPO_GITHUB_API_URL });
-}
-
-/** The search index is a cache outside the vault, one file per vault directory or repo. */
-function indexPath(): string {
-  const key = github() ? `github:${github()}` : vaultDir();
-  const cache = process.env.XDG_CACHE_HOME ? expandHome(process.env.XDG_CACHE_HOME) : join(homedir(), ".cache");
-  return join(cache, "hippocampus", `${createHash("sha1").update(key).digest("hex").slice(0, 16)}.sqlite`);
-}
-
-/** Semantic recall when `HIPPO_EMBED_MODEL` is set; keyword search otherwise. */
-function indexOptions(): IndexOptions {
-  const cfg = embedConfigFromEnv(process.env);
-  return cfg ? { embedder: createEmbedder(cfg), minSimilarity: cfg.minSimilarity } : {};
-}
-
-async function openSearcher(): Promise<SearcherFactory | undefined> {
-  if (!program.opts<{ index: boolean }>().index) return undefined;
-  return (await HippoIndex.open(nodeSqlite(indexPath()), indexOptions())).searcher;
-}
+const openStore = (): VaultStore => storeFor({ dir: vaultDir(), github: github() });
+const openSearcher = (): Promise<SearcherFactory | undefined> => searcherFor(vaultKey(), { index: useIndex() });
 
 function localOnly(command: string): void {
   if (github()) throw new Error(`\`hippo ${command}\` works on a local vault directory; drop --github`);
@@ -96,33 +57,21 @@ function localOnly(command: string): void {
 
 program
   .command("init")
-  .argument("<dir>", "where to create the vault")
+  .argument("<dir>", "where to create the vault (a new or empty folder)")
   .option("--seed <name-or-path>", "also copy a seed campaign: a bundled name from seeds/ (e.g. example-relocation) or a directory path")
+  .option("--campaign <name>", "campaign name (shown in the Player's Handbook)")
+  .option("--human <id>", "your party id; your word outranks every agent (default: player)")
+  .option("--timezone <iana>", "IANA timezone for chronicle days, e.g. Europe/Lisbon")
+  .option("--domains <list>", "comma-separated lane domains, e.g. residency,housing,career")
   .description("Create a new vault from the template (and optionally a seed campaign).")
-  .action(async (dir: string, opts: { seed?: string }) => {
+  .action(async (dir: string, opts: { seed?: string; campaign?: string; human?: string; timezone?: string; domains?: string }) => {
     localOnly("init");
-    const target = resolve(expandHome(dir));
-    if (existsSync(join(target, CONFIG_PATH))) throw new Error(`${target} already has ${CONFIG_PATH}`);
-    await mkdir(target, { recursive: true });
-    await cp(join(assetRoot(), "vault-template"), target, { recursive: true });
-    // Published packages carry the template's .gitignore as `gitignore` (npm strips dotfile ignores).
-    if (existsSync(join(target, "gitignore"))) await rename(join(target, "gitignore"), join(target, ".gitignore"));
-    if (opts.seed) {
-      const bundled = join(assetRoot(), "seeds", opts.seed);
-      const seed = existsSync(bundled) ? bundled : resolve(opts.seed);
-      if (!existsSync(seed)) throw new Error(`no seed "${opts.seed}" (neither ${bundled} nor a directory path)`);
-      await cp(seed, target, { recursive: true, force: true });
-    }
-    const store = new FsStore(target);
-    // The template's placeholder PC is replaced by the seed's own player character.
-    if ((await Vault.load(store)).config.human !== "player") await store.remove("characters/player.md");
-    const vault = await Vault.load(store);
-    for (const e of vault.entities.values()) vault.markDirty(e);
-    vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
-    await vault.flush();
-    const git = new Git(target);
-    if (!git.isRepo()) await git.run("init", "--quiet", "-b", "main");
-    err(`✓ vault created at ${target}\n  next: open it in Obsidian, push it to a private GitHub repo, and run \`hippo secrets keygen -v ${dir}\``);
+    const domains = opts.domains
+      ?.split(",")
+      .map((d) => d.trim())
+      .filter(Boolean);
+    const r = await initVault({ target: dir, seed: opts.seed, assets: assetRoot(), campaign: opts.campaign, human: opts.human, timezone: opts.timezone, domains });
+    err(`✓ vault created at ${r.dir}\n  next: open it in Obsidian, push it to a private GitHub repo, and run \`hippo secrets keygen -v ${dir}\` (or \`hippo dashboard -v ${dir}\`)`);
   });
 
 program
@@ -262,12 +211,11 @@ program
   .command("index")
   .description("Rebuild the persistent search index from the vault (it's a cache; this is always safe).")
   .action(async () => {
-    const opts = indexOptions();
-    const index = await HippoIndex.open(nodeSqlite(indexPath()), opts);
+    const { index, path, options: opts } = await openIndex(vaultKey());
     await index.rebuild();
     const stats = await index.sync(await Vault.load(openStore()));
     const { edges } = await index.counts();
-    err(`✓ indexed ${stats.added} docs and ${edges} relations in ${indexPath()}`);
+    err(`✓ indexed ${stats.added} docs and ${edges} relations in ${path}`);
     if (opts.embedder) err(`${stats.embedFailed ? "⚠" : "✓"} embedded ${stats.embedded} docs with ${opts.embedder.id}${index.lastEmbedError ? `: ${index.lastEmbedError.message}` : ""}`);
   });
 
@@ -275,20 +223,13 @@ const secrets = program.command("secrets").description("Manage age-encrypted sec
 
 secrets
   .command("keygen")
-  .description(`Create an age identity (${IDENTITY_FILE}) and set its recipient in ${CONFIG_PATH}.`)
-  .action(async () => {
-    if (existsSync(IDENTITY_FILE)) throw new Error(`${IDENTITY_FILE} already exists; refusing to overwrite`);
-    const store = openStore();
-    const config = await store.read(CONFIG_PATH);
-    if (config === undefined) throw new Error(`no ${CONFIG_PATH} here; is this a vault?`);
-    const { identity, recipient } = await generateKeyPair();
-    await mkdir(dirname(IDENTITY_FILE), { recursive: true });
-    await writeFile(IDENTITY_FILE, `${identity}\n`, { mode: 0o600 });
-    await chmod(IDENTITY_FILE, 0o600);
-    const doc = parseDocument(config);
-    doc.setIn(["secrets", "recipient"], recipient);
-    await applyChanges(store, [{ path: CONFIG_PATH, content: doc.toString() }], { message: "chore: set the secrets recipient" });
-    err(`✓ identity saved to ${IDENTITY_FILE} (back it up, e.g. in your password manager)\n✓ recipient ${recipient} written to ${CONFIG_PATH}`);
+  .description(`Create an age identity (${identityFile()}) and set its recipient in ${CONFIG_PATH}.`)
+  .option("--reuse", "use the identity that already exists on this machine (e.g. for a second vault)")
+  .action(async (opts: { reuse?: boolean }) => {
+    const r = await keygen({ store: openStore(), identityFile: identityFile(), reuseExisting: opts.reuse });
+    err(
+      `${r.created ? `✓ identity saved to ${r.identityFile} (back it up, e.g. in your password manager)` : `✓ reusing the identity in ${r.identityFile}`}\n✓ recipient ${r.recipient} written to ${CONFIG_PATH}`,
+    );
   });
 
 secrets
@@ -301,12 +242,24 @@ secrets
     const vault = await Vault.load(store);
     const e = vault.resolve(ref);
     if (!e) throw new Error(`no entity "${ref}"`);
-    const identity = (await readFile(IDENTITY_FILE, "utf8")).trim();
+    const identity = (await readFile(identityFile(), "utf8")).trim();
     for (const [k, f] of Object.entries(e.fm.facts)) {
       if ((field && k !== field) || !isSecretRef(f.value)) continue;
       const armored = await store.read(secretPath(vault.config.folders.secrets, f.value));
       console.log(`${k}: ${armored ? await decryptSecret(identity, armored) : "(missing ciphertext)"}`);
     }
+  });
+
+program
+  .command("dashboard")
+  .description("Open the dashboard in your browser: the campaign at a glance, rulings, quests, and Session Zero setup.")
+  .option("-p, --port <n>", "port on 127.0.0.1 (the next free one if it's taken)", "4747")
+  .option("--no-open", "print the sign-in link without opening a browser")
+  .option("--demo", "the fictional example campaign, in memory")
+  .option("--mcp <url>", "a Hippocampus MCP server (e.g. your Worker's /mcp); token from HIPPO_MCP_TOKEN or --token")
+  .option("--token <token>", "bearer token for --mcp")
+  .action(async (opts: { port: string; open: boolean; demo?: boolean; mcp?: string; token?: string }) => {
+    await runDashboard({ ...opts, vault: program.opts<{ vault: string }>().vault, github: github(), index: useIndex(), origins: envOrigins, log: err });
   });
 
 function printReport(r: SleepReport): void {

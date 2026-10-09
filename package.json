@@ -13,6 +13,7 @@
     "prepare": "git rev-parse --git-dir >/dev/null 2>&1 && git config core.hooksPath .githooks || true",
     "hippo": "tsx apps/cli/src/main.ts",
     "build": "pnpm --filter @mehrad77/hippocampus run build",
+    "dev:dashboard": "pnpm --filter @hippocampus/dashboard-ui dev",
     "pack:check": "node scripts/pack-check.mjs",
     "typecheck": "turbo run typecheck",
     "test": "vitest run",

@@ -49,8 +49,8 @@ function languageModel(cfg: LLMConfig): LanguageModel {
   }
 }
 
-export function aiSdkLLM(cfg: LLMConfig): LLM {
-  const model = languageModel(cfg);
+/** `model` overrides the provider's model (tests pass a mock). */
+export function aiSdkLLM(cfg: LLMConfig, model: LanguageModel = languageModel(cfg)): LLM {
   const mode = cfg.structured ?? (cfg.provider === "anthropic" || cfg.provider === "xai" ? "native" : "prompt");
   const timeoutMs = cfg.timeoutMs ?? 180_000;
   const common = () => ({
@@ -86,6 +86,46 @@ export function aiSdkLLM(cfg: LLMConfig): LLM {
       throw new Error(`${name}: model output invalid after 3 attempts: ${lastError}`);
     },
   };
+}
+
+export interface PingResult {
+  ok: boolean;
+  model: string;
+  ms: number;
+  error?: string;
+}
+
+const Ping = z.object({ ok: z.boolean() });
+
+/**
+ * One tiny schema-validated call through the same adapter the curator uses, to check that the
+ * model answers and its structured output parses. Never throws.
+ */
+export async function pingLLM(cfg: LLMConfig, opts: { timeoutMs?: number; model?: LanguageModel } = {}): Promise<PingResult> {
+  const timeoutMs = opts.timeoutMs ?? 60_000;
+  const started = Date.now();
+  const done = (r: { ok: boolean; error?: string }): PingResult => ({ ...r, model: cfg.model, ms: Date.now() - started });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    // Reasoning models think even about trivia: leave room for it, but don't retry a dead server.
+    const llm = aiSdkLLM({ ...cfg, timeoutMs, maxRetries: 0, maxOutputTokens: cfg.maxOutputTokens ?? 2048 }, opts.model);
+    const call = llm.object({
+      name: "ping",
+      schema: Ping,
+      system: "You are a health check for a JSON API.",
+      prompt: 'Answer with exactly this JSON object: {"ok": true}',
+    });
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no answer within ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
+    });
+    const answer = await Promise.race([call, timeout]);
+    return done(answer.ok ? { ok: true } : { ok: false, error: "the model answered, but not with ok: true" });
+  } catch (err) {
+    const message = (err instanceof Error ? err.message : String(err)).replace(/\s+/g, " ").trim();
+    return done({ ok: false, error: message.length > 300 ? `${message.slice(0, 300)}…` : message || "unknown error" });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Find the first balanced JSON object in text (tolerates prose and code fences around it). */
