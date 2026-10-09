@@ -9,7 +9,8 @@ export function html(status: number, body: string, headers = new Headers()): Res
   headers.set("Content-Type", "text/html; charset=utf-8");
   headers.set("Cache-Control", "no-store");
   headers.set("X-Frame-Options", "DENY");
-  headers.set("Referrer-Policy", "no-referrer");
+  // Not no-referrer: with it, browsers send `Origin: null` on form posts, and the consent form's origin check refuses them.
+  headers.set("Referrer-Policy", "same-origin");
   headers.set("X-Content-Type-Options", "nosniff");
   // A second policy on top of the OAuth library's frame-ancestors: no scripts or remote content at all.
   // No form-action: browsers apply it to the redirect after the consent form, which goes to the app.

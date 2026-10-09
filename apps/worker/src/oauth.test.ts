@@ -123,6 +123,8 @@ describe("connecting an app over OAuth", () => {
     const flow = await consent(h, visit, { clientName: `<script>alert("hi")</script>`, scope: "read remember quest curate" });
     expect(flow.res.status).toBe(200);
     expect(flow.res.headers.get("x-frame-options")).toBe("DENY");
+    // Browsers send `Origin: null` on a form post from a no-referrer page, which the origin check would refuse.
+    expect(flow.res.headers.get("referrer-policy")).toBe("same-origin");
     expect(flow.res.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
     const page = flow.page;
     expect(page).not.toContain("<script>");
