@@ -1,12 +1,14 @@
 import { displayName, formatValue, getObjectives, getSummary, type Entity } from "./entity.ts";
 import { createEpisode, type NewEpisode } from "./episode.ts";
 import { HANDBOOK_PATH, renderHandbook, renderOnboarding } from "./handbook.ts";
+import { INTRODUCTION_LIMITS, createIntroduction, type NewIntroduction } from "./introduction.ts";
 import { humanText } from "./markdown.ts";
-import { addPartyMember, applyQuestUpdate, applyRuling, isSecretField, type NewPartyMember, type QuestUpdate } from "./ops.ts";
+import { addPartyMember, applyQuestUpdate, applyRuling, assertAgentId, isSecretField, type NewPartyMember, type QuestUpdate } from "./ops.ts";
 import { miniSearcher, type SearcherFactory } from "./search.ts";
 import type { Clock, FactStatus, FactValue } from "./schema.ts";
 import { StoreConflictError, type VaultStore } from "./store.ts";
 import { fold, isoDate, truncate } from "./text.ts";
+import { ACTOR_TRAILER, actorTrailer, withTrailers } from "./trailers.ts";
 import { Vault, VaultError } from "./vault.ts";
 import {
   catalog,
@@ -78,6 +80,46 @@ function factViews(e: Entity, limit = Infinity): FactView[] {
     .map(([field, f]) => ({ field, value: formatValue(f.value), status: f.status, by: f.by ?? "human", at: f.at }));
 }
 
+/** Episode text limit: a memory is one concrete thing, and every byte goes through the curator's prompts. */
+export const MAX_EPISODE_BYTES = 8 * 1024;
+
+export interface ActAs {
+  /** Act as the vault's human (`config.human`) instead of the agent named in the call. */
+  asHuman?: boolean;
+}
+
+function actingAs(vault: Vault, agent: string, opts: ActAs): string {
+  return opts.asHuman ? vault.config.human : assertAgentId(vault, agent);
+}
+
+/** `message` signed with who made it, for `hippo audit`: `agent` is an agent id, or undefined for the human. */
+function signed(message: string, agent?: string): string {
+  return withTrailers(message, { [ACTOR_TRAILER]: actorTrailer(agent ? { kind: "agent", id: agent } : { kind: "human" }) });
+}
+
+export interface ApproveIntroduction {
+  /** The human's choices; the introduction's own title and lane fill in what's left out. */
+  title?: string;
+  lane?: string;
+  authority?: string[];
+}
+
+export interface IntroduceResult {
+  /** `pending` until the human approves; `member` if the agent already has a party note (`path`). */
+  status: "pending" | "member";
+  agent: string;
+  path: string;
+  message: string;
+}
+
+function checkIntroduction(input: NewIntroduction): void {
+  if (!input.title?.trim()) throw new VaultError("title is required");
+  for (const [field, max] of Object.entries(INTRODUCTION_LIMITS) as [keyof NewIntroduction, number][]) {
+    const value = input[field];
+    if (value && value.length > max) throw new VaultError(`${field} can be at most ${max} characters`);
+  }
+}
+
 function brief(e: Entity, factLimit = 8): EntityBrief {
   return { ref: link(e.slug), type: e.fm.type, title: displayName(e), summary: truncate(getSummary(e), 400), facts: factViews(e, factLimit) };
 }
@@ -124,13 +166,19 @@ export class HippoService {
     return renderOnboarding(await this.vault(), agent);
   }
 
-  async remember(agent: string, input: Omit<NewEpisode, "agent">): Promise<{ id: string; path: string }> {
+  /**
+   * File one episode in the inbox. `agent` must be an agent's exact id; the human's own memories
+   * (the dashboard, `hippo remember` without `-a`) pass `asHuman`, which files them under `config.human`.
+   */
+  async remember(agent: string, input: Omit<NewEpisode, "agent">, opts: ActAs = {}): Promise<{ id: string; path: string }> {
     if (!input.text?.trim()) throw new VaultError("text is required");
+    const bytes = new TextEncoder().encode(input.text).length;
+    if (bytes > MAX_EPISODE_BYTES) throw new VaultError(`text is ${bytes} bytes; one memory can be at most ${MAX_EPISODE_BYTES} (8 KB), so split it into several`);
     const vault = await this.vault();
-    const id = vault.party(agent)?.slug ?? agent;
+    const id = actingAs(vault, agent, opts);
     const ep = createEpisode(vault.config.folders.inbox, { ...input, agent: id }, this.opts.now?.());
     vault.addEpisode(ep);
-    await vault.flush({ message: `remember(${id}): ${ep.id}` });
+    await vault.flush({ message: signed(`remember(${id}): ${ep.id}`, opts.asHuman ? undefined : id) });
     return { id: ep.id, path: ep.path };
   }
 
@@ -267,13 +315,14 @@ export class HippoService {
     };
   }
 
-  async updateQuest(agent: string, ref: string, update: QuestUpdate) {
+  async updateQuest(agent: string, ref: string, update: QuestUpdate, opts: ActAs = {}) {
     return this.mutate((vault) => {
+      const by = actingAs(vault, agent, opts);
       const quest = vault.resolve(ref);
       if (!quest || quest.fm.type !== "quest") throw new VaultError(`no quest "${ref}"`);
-      const changes = applyQuestUpdate(vault, quest, update, agent);
+      const changes = applyQuestUpdate(vault, quest, update, by);
       if (changes.length) vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
-      return { message: `quest(${quest.slug}): ${changes.join("; ")}`, result: { quest: link(quest.slug), changes } };
+      return { message: signed(`quest(${quest.slug}): ${changes.join("; ")}`, opts.asHuman ? undefined : by), result: { quest: link(quest.slug), changes } };
     });
   }
 
@@ -353,16 +402,68 @@ export class HippoService {
       applyRuling(vault, d, value);
       vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
       const result: { dispute: string; entity: string; field: string } & Shown = { dispute: slug, entity: entity.slug, field: d.fm.field, ...shown(value) };
-      return { message: `rule(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): ${entity.slug}.${d.fm.field} = ${result.secret ? "🔒" : result.value}`, result };
+      return { message: signed(`rule(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): ${entity.slug}.${d.fm.field} = ${result.secret ? "🔒" : result.value}`), result };
     });
   }
 
-  /** The human adds an agent to the party. */
+  /** The human adds an agent to the party (which settles any introduction it had pending). */
   async addPartyMember(input: NewPartyMember, opts: { via?: string } = {}) {
     return this.mutate((vault) => {
       const e = addPartyMember(vault, input);
+      vault.removeIntroductions(e.slug);
       vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
-      return { message: `party(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): add ${e.slug}`, result: { slug: e.slug, path: e.path } };
+      return { message: signed(`party(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): add ${e.slug}`), result: { slug: e.slug, path: e.path } };
+    });
+  }
+
+  /**
+   * An agent asks to join the party. It stays an outsider (its word counts as rumor) until the human
+   * approves; a new introduction replaces its earlier one. A party member just hears that it's in.
+   */
+  async introduce(agent: string, input: NewIntroduction): Promise<IntroduceResult> {
+    checkIntroduction(input);
+    return this.mutate<IntroduceResult>((vault) => {
+      const id = assertAgentId(vault, agent);
+      const member = vault.partyMember(id);
+      if (member) {
+        return { message: "", result: { status: "member", agent: id, path: member.path, message: `already in the party as ${displayName(member)} (${member.path})` } };
+      }
+      const intro = createIntroduction(vault.config.folders.inbox, id, input, this.opts.now?.());
+      vault.addIntroduction(intro);
+      const human = vault.config.human;
+      return {
+        message: signed(`introduce(${id}): ${intro.title}`, id),
+        result: { status: "pending", agent: id, path: intro.path, message: `waiting for ${human}'s approval. Until then your memories count as rumors.` },
+      };
+    });
+  }
+
+  /** The human seats an introduced agent: its party note gets the human's choices over what it asked for. */
+  async approveIntroduction(agent: string, choice: ApproveIntroduction = {}, opts: { via?: string } = {}) {
+    return this.mutate((vault) => {
+      const id = assertAgentId(vault, agent);
+      const intro = vault.introductionOf(id);
+      if (!intro) throw new VaultError(`no pending introduction from "${id}"`);
+      const e = addPartyMember(vault, {
+        id,
+        title: choice.title?.trim() || intro.title,
+        lane: choice.lane ?? intro.lane,
+        authority: choice.authority,
+        host: intro.host,
+      });
+      vault.removeIntroductions(id);
+      vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
+      return { message: signed(`party(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): approve ${id}`), result: { slug: e.slug, path: e.path } };
+    });
+  }
+
+  /** The human turns an introduction down. The agent can still write; its word stays a rumor. */
+  async dismissIntroduction(agent: string, opts: { via?: string } = {}) {
+    return this.mutate((vault) => {
+      const id = assertAgentId(vault, agent);
+      const removed = vault.removeIntroductions(id);
+      if (!removed.length) throw new VaultError(`no pending introduction from "${id}"`);
+      return { message: signed(`party(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): dismiss ${id}`), result: { agent: id, removed } };
     });
   }
 

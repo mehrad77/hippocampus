@@ -86,6 +86,7 @@ describe("dashboard views", () => {
     expect(o.attention.orphans.map((r) => r.slug)).toEqual(["harbor-cafe", "passport"]);
     expect(o.attention.waiting.map((e) => e.id)).toEqual(["ep-in2"]);
     expect(o.attention.unknownAgents).toEqual(["job-scout"]);
+    expect(o.attention.introductions).toEqual([]);
     const quest = o.quests[0]!;
     expect(quest).toMatchObject({ slug: "residence-permit", owner: { slug: "residency-agent", type: "party" }, deadline: "2026-11-30", daysLeft: 64, degree: 1 });
     expect(quest.objectives).toHaveLength(2);
@@ -96,6 +97,16 @@ describe("dashboard views", () => {
     expect(o.activity).toHaveLength(30);
     expect(o.activity.find((d) => d.date === "2026-09-25")).toMatchObject({ chronicled: 2, byAgent: { "residency-agent": 1, "job-scout": 1 } });
     expect(o.inbox[0]?.id).toBe("ep-in3");
+  });
+
+  it("lists introductions in place of unknown agents, and drops members' leftovers", async () => {
+    const store = richStore();
+    await store.write("inbox/job-scout/_introduction-01aaa.md", "---\ntype: introduction\nagent: job-scout\ntitle: Job Scout\nlane: Part-time work\nat: 2026-09-26T13:00:00.000Z\n---\n");
+    await store.write("inbox/residency-agent/_introduction-01bbb.md", "---\ntype: introduction\nagent: residency-agent\ntitle: Residency Agent\nat: 2026-09-20T13:00:00.000Z\n---\n");
+    const o = await new HippoService(store, { now }).overview();
+    expect(o.attention.unknownAgents).toEqual([]);
+    expect(o.attention.introductions).toEqual([{ agent: "job-scout", title: "Job Scout", lane: "Part-time work", at: "2026-09-26T13:00:00.000Z" }]);
+    expect(o.counts.inbox).toBe(3);
   });
 
   it("never shows secret values or secret episodes", async () => {

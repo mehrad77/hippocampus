@@ -2,6 +2,7 @@ import { CONFIG_PATH, parseConfig } from "./config.ts";
 import { assertVaultVersion } from "./migrations.ts";
 import { basename, displayName, parseEntity, renderEntity, type Entity } from "./entity.ts";
 import { parseEpisode, renderEpisode, type Episode } from "./episode.ts";
+import { isIntroductionPath, parseIntroduction, renderIntroduction, type Introduction } from "./introduction.ts";
 import { parseDoc, renderDoc } from "./markdown.ts";
 import { DisputeFrontmatter, type Claim, type HippoConfig } from "./schema.ts";
 import { applyChanges, type Change, type CommitMeta, type VaultStore } from "./store.ts";
@@ -25,6 +26,19 @@ export interface VaultOptions {
 
 export class VaultError extends Error {}
 
+/** Everything a curator step can change, deep-copied (see `Vault.snapshot`). */
+export interface VaultSnapshot {
+  readonly entities: Map<string, Entity>;
+  readonly disputes: Map<string, Dispute>;
+  readonly episodes: Episode[];
+  readonly warnings: string[];
+  readonly aliasIndex: Map<string, Set<string>>;
+  readonly idIndex: Map<string, string>;
+  readonly dirty: Set<string>;
+  readonly pendingFiles: Map<string, string>;
+  readonly removals: Set<string>;
+}
+
 /**
  * In-memory model of the vault. Load once, mutate through methods (which track dirty files),
  * then `flush()` to write everything back through the store.
@@ -34,6 +48,8 @@ export class Vault {
   readonly disputes = new Map<string, Dispute>();
   /** Pending inbox episodes, oldest first. */
   episodes: Episode[] = [];
+  /** Agents asking to join the party, oldest first. */
+  introductions: Introduction[] = [];
   readonly warnings: string[] = [];
 
   private readonly aliasIndex = new Map<string, Set<string>>();
@@ -91,12 +107,23 @@ export class Vault {
     }
     const fallbackAt = this.now().toISOString();
     const eps: Episode[] = [];
+    const intros: Introduction[] = [];
     for (const path of await this.store.list(folders.inbox)) {
+      if (isIntroductionPath(path)) {
+        const raw = await this.store.read(path);
+        try {
+          if (raw !== undefined) intros.push(parseIntroduction(path, raw, folders.inbox));
+        } catch (err) {
+          this.warnings.push(`skipped introduction ${path}: ${(err as Error).message}`);
+        }
+        continue;
+      }
       if (!path.endsWith(".md") || basename(path).startsWith("_") || basename(path) === "README") continue;
       const raw = await this.store.read(path);
       if (raw !== undefined) eps.push(parseEpisode(path, raw, folders.inbox, fallbackAt));
     }
     this.episodes = eps.sort((a, b) => a.at.localeCompare(b.at) || a.path.localeCompare(b.path));
+    this.introductions = intros.sort((a, b) => a.at.localeCompare(b.at) || a.path.localeCompare(b.path));
   }
 
   nowIso(): string {
@@ -139,8 +166,15 @@ export class Vault {
     return [...this.entities.values()].filter((e) => e.fm.type === type);
   }
 
+  /** A party note found by any name (for display). Identity and authority use `partyMember`. */
   party(agent: string): Entity | undefined {
     const e = this.resolve(agent);
+    return e?.fm.type === "party" ? e : undefined;
+  }
+
+  /** The party member whose slug is exactly `id`: an agent's title or alias never grants its authority. */
+  partyMember(id: string): Entity | undefined {
+    const e = this.entities.get(id);
     return e?.fm.type === "party" ? e : undefined;
   }
 
@@ -151,7 +185,7 @@ export class Vault {
   /** How much weight `agent`'s word carries about `entity` (lane authority matches entity tags/type). */
   authorityOf(agent: string | undefined, entity: Entity): Authority {
     if (this.isHuman(agent)) return "human";
-    const domains = this.party(agent!)?.fm.authority ?? [];
+    const domains = this.partyMember(agent!)?.fm.authority ?? [];
     const scope = new Set([...entity.fm.tags.map((t) => t.toLowerCase()), entity.fm.type]);
     return domains.some((d) => scope.has(d.toLowerCase())) ? "authority" : "none";
   }
@@ -281,6 +315,30 @@ export class Vault {
     this.removals.add(ep.path);
   }
 
+  /** An agent's pending introduction (the newest, if a local tool left several). */
+  introductionOf(agent: string): Introduction | undefined {
+    return this.introductions.findLast((i) => i.agent === agent);
+  }
+
+  /** File an introduction in place of the agent's earlier ones. Returns the paths it replaced. */
+  addIntroduction(intro: Introduction): string[] {
+    const replaced = this.removeIntroductions(intro.agent);
+    this.introductions.push(intro);
+    this.writeFile(intro.path, renderIntroduction(intro));
+    return replaced;
+  }
+
+  /** Withdraw an agent's introductions (approved, dismissed or replaced). Returns their paths. */
+  removeIntroductions(agent: string): string[] {
+    const gone = this.introductions.filter((i) => i.agent === agent);
+    this.introductions = this.introductions.filter((i) => i.agent !== agent);
+    for (const i of gone) {
+      // One filed in this same batch was never written, so there is nothing to remove.
+      if (!this.pendingFiles.delete(i.path)) this.removals.add(i.path);
+    }
+    return gone.map((i) => i.path);
+  }
+
   chroniclePath(at: string): string {
     const day = localParts(at, this.config.timezone).date;
     return `${this.config.folders.chronicle}/${day.slice(0, 4)}/${day.slice(5, 7)}/${day}.md`;
@@ -318,6 +376,43 @@ export class Vault {
 
   hasChanges(): boolean {
     return this.dirty.size > 0 || this.pendingFiles.size > 0 || this.removals.size > 0;
+  }
+
+  /** A deep copy of all mutable state, so a step that fails halfway can be rolled back with `restore`. */
+  snapshot(): VaultSnapshot {
+    return structuredClone({
+      entities: this.entities,
+      disputes: this.disputes,
+      episodes: this.episodes,
+      warnings: this.warnings,
+      aliasIndex: this.aliasIndex,
+      idIndex: this.idIndex,
+      dirty: this.dirty,
+      pendingFiles: this.pendingFiles,
+      removals: this.removals,
+    });
+  }
+
+  restore(snapshot: VaultSnapshot): void {
+    // Cloned again so the same snapshot can be restored more than once.
+    const s = structuredClone(snapshot);
+    const refill = <K, V>(target: Map<K, V>, from: Map<K, V>) => {
+      target.clear();
+      for (const [k, v] of from) target.set(k, v);
+    };
+    const refillSet = <T>(target: Set<T>, from: Set<T>) => {
+      target.clear();
+      for (const v of from) target.add(v);
+    };
+    refill(this.entities, s.entities);
+    refill(this.disputes, s.disputes);
+    refill(this.aliasIndex, s.aliasIndex);
+    refill(this.idIndex, s.idIndex);
+    refill(this.pendingFiles, s.pendingFiles);
+    refillSet(this.dirty, s.dirty);
+    refillSet(this.removals, s.removals);
+    this.episodes = s.episodes;
+    this.warnings.splice(0, this.warnings.length, ...s.warnings);
   }
 
   /** Everything `flush()` would persist, in order. */

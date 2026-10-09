@@ -145,8 +145,20 @@ export interface Attention {
   orphans: Ref[];
   /** Episodes that sat through a sleep without being consolidated. */
   waiting: EpisodeView[];
-  /** Agents writing to the inbox or chronicle who have no `party/` note (their word counts as rumor). */
+  /** Agents writing to the inbox or chronicle who have no `party/` note and haven't introduced themselves (their word counts as rumor). */
   unknownAgents: string[];
+  /** Agents asking to join the party, oldest first. Their text is their own: show it as plain text. */
+  introductions: IntroductionView[];
+}
+
+export interface IntroductionView {
+  agent: string;
+  title: string;
+  lane?: string;
+  host?: string;
+  model?: string;
+  at: string;
+  about?: string;
 }
 
 export interface Upcoming {
@@ -501,7 +513,16 @@ function partyMembers(ctx: ViewContext, chronicle30d: ChronicleEntryView[]): Par
 
 function unknownAgents(vault: Vault, chronicle: ChronicleEntryView[]): string[] {
   const agents = new Set([...vault.episodes.map((e) => e.agent), ...chronicle.map((c) => c.agent)]);
-  return [...agents].filter((a) => !vault.isHuman(a) && !vault.party(a)).sort();
+  return [...agents].filter((a) => !vault.isHuman(a) && !vault.party(a) && !vault.introductionOf(a)).sort();
+}
+
+/** One per agent outside the party: a member's leftover introduction has nothing left to approve. */
+export function introductions(vault: Vault): IntroductionView[] {
+  const latest = new Map(vault.introductions.map((i) => [i.agent, i]));
+  return [...latest.values()]
+    .filter((i) => !vault.partyMember(i.agent))
+    .sort((a, b) => a.at.localeCompare(b.at))
+    .map(({ agent, title, lane, host, model, at, about }) => ({ agent, title, lane, host, model, at, about }));
 }
 
 // ── Views ────────────────────────────────────────────────────────────────────────
@@ -545,7 +566,7 @@ export async function overview(vault: Vault): Promise<Overview> {
     lastSleep,
     version: { vault: config.version, tool: CURRENT_VAULT_VERSION, status: vaultVersionStatus(config) },
     counts: { entities: vault.entities.size, byType, facts, inbox: vault.episodes.length, disputes: vault.openDisputes().length, quests: questCounts },
-    attention: { ...findings(ctx), waiting: inbox.filter((e) => e.waitedThroughSleep), unknownAgents: unknown },
+    attention: { ...findings(ctx), waiting: inbox.filter((e) => e.waitedThroughSleep), unknownAgents: unknown, introductions: introductions(vault) },
     quests: vault.ofType("quest").map((q) => questCard(ctx, q)),
     upcoming: upcomingDates(vault, ctx.today, horizon).map((u) => ({ what: u.what, date: u.date, daysLeft: daysBetween(ctx.today, u.date), ref: refOf(vault.entities.get(u.slug)!) })),
     party: partyMembers(ctx, chronicle30d),

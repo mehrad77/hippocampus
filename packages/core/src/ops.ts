@@ -222,11 +222,24 @@ export interface NewPartyMember {
 /** Same rule as agent ids in the Worker's OAuth consent, so ids work everywhere. */
 export const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
+/** Names that stand for the human, the curator or a missing author in provenance, so no agent may file under them. */
+export const RESERVED_AGENT_IDS = ["human", "curator", "unknown", "hippocampus"] as const;
+
+/**
+ * The id an agent files under, normalized. Agents are their exact party slug: no alias or title
+ * lookup, and never the human, whose word outranks everyone's.
+ */
+export function assertAgentId(vault: Vault, id: string): string {
+  const norm = id.trim().toLowerCase();
+  if (!AGENT_ID.test(norm)) throw new VaultError(`agent id "${id}" must be lowercase letters, digits and dashes`);
+  if (vault.isHuman(norm)) throw new VaultError(`"${norm}" is the human, not an agent`);
+  if ((RESERVED_AGENT_IDS as readonly string[]).includes(norm)) throw new VaultError(`"${norm}" is reserved, not an agent id`);
+  return norm;
+}
+
 /** Add an agent to the party (`party/<id>.md`), as the human. */
 export function addPartyMember(vault: Vault, input: NewPartyMember): Entity {
-  const id = input.id.trim().toLowerCase();
-  if (!AGENT_ID.test(id)) throw new VaultError(`agent id "${input.id}" must be lowercase letters, digits and dashes`);
-  if (vault.isHuman(id)) throw new VaultError(`"${id}" is the human, not an agent`);
+  const id = assertAgentId(vault, input.id);
   if (vault.entities.has(id)) throw new VaultError(`"${id}" already exists (${vault.entities.get(id)!.path})`);
   const known = new Set(vault.config.domains.map((d) => d.toLowerCase()));
   const authority = [...new Set((input.authority ?? []).map((d) => d.trim().toLowerCase()).filter(Boolean))];
