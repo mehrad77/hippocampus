@@ -113,6 +113,42 @@ npx @mehrad77/hippocampus@<new> -v ~/vaults/my-campaign migrate
 
 The tool refuses to write to a vault whose format version differs from its own. `hippo validate` reports the mismatch, and `migrate` upgrades the files and `_hippo/config.yaml`'s `version`. Read [CHANGELOG.md](../CHANGELOG.md) for format changes.
 
-## 8. Vault CI (optional)
+## 8. Remote MCP on Cloudflare (optional)
+
+`apps/worker` serves the same MCP tools from a Cloudflare Worker, so agents that can't run a local process can use the vault. It reads the vault repo through the GitHub API, keeps its search index in D1, and makes every write as one commit through a single writer (the Scribe Durable Object). If someone pushed to the same file in the meantime, the write is redone on top of their change or refused, never overwritten. Each agent gets its own bearer token, with scopes `read`, `remember` and `quest`.
+
+From a clone of this repository:
+
+```bash
+cd apps/worker
+pnpm exec wrangler d1 create hippocampus-index
+pnpm exec wrangler kv namespace create TOKENS
+```
+
+Paste the two ids into `wrangler.jsonc` (keep that edit local). Then store the repo name and a fine-grained token (Contents: read and write on the vault repo only) as secrets, and deploy:
+
+```bash
+pnpm exec wrangler secret put GITHUB_REPO
+pnpm exec wrangler secret put GITHUB_TOKEN
+pnpm exec wrangler deploy
+```
+
+Mint a token per agent. It's printed once; only its hash is stored:
+
+```bash
+pnpm agent-token create game-master --scopes read,remember,quest --remote
+```
+
+Connect the agent:
+
+```bash
+claude mcp add --transport http hippocampus https://hippocampus.<your-subdomain>.workers.dev/mcp --header "Authorization: Bearer hippo_…"
+```
+
+Revoke with `pnpm agent-token revoke <token> --remote`. The Worker doesn't run `sleep`, so keep the nightly run (with a checkout or with `--github`). A cold start downloads the vault as one tarball, which fits the free plan's subrequest limit, but parsing a large vault on every request needs the paid plan's CPU time. OAuth for the Claude.ai and ChatGPT connectors comes later.
+
+For local development, copy `.dev.vars.example` to `.dev.vars` and run `pnpm --filter @hippocampus/worker dev`. Mint local tokens with `pnpm agent-token create <agent>` (no `--remote`).
+
+## 9. Vault CI (optional)
 
 `hippo init` adds `.github/workflows/validate.yml` to your vault. On every push, including agents' inbox commits, it checks that the vault still loads. It also contains a commented-out nightly `sleep` job for hosted models, since a CI runner can't reach your local LM Studio.

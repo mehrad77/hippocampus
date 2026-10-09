@@ -20,6 +20,8 @@ const TABLES = ["docs", "docs_fts", "names_tri", "edges", "meta"];
 // Same weights as the in-memory index: names count three times as much as body text.
 const BM25 = "bm25(docs_fts, 3.0, 3.0, 1.0)";
 const FUZZY_CANDIDATES = 50;
+// Statements per transaction. A doc's statements never straddle two, so a failed sync leaves no half-indexed doc.
+const BATCH_SIZE = 500;
 const FUZZY_MIN_SIMILARITY = 0.5;
 
 export interface IndexEdge {
@@ -115,7 +117,7 @@ export class HippoIndex implements Searcher {
     const docs = indexedDocs(vault);
     const indexed = new Map((await this.db.all<{ id: string; hash: string }>("SELECT id, hash FROM docs")).map((r) => [r.id, r.hash]));
     const stats: SyncStats = { added: 0, updated: 0, removed: 0, unchanged: 0 };
-    const statements: SqlStatement[] = [];
+    const groups: SqlStatement[][] = [];
     for (const doc of docs.values()) {
       const known = indexed.get(doc.id);
       if (known === doc.hash) {
@@ -123,18 +125,23 @@ export class HippoIndex implements Searcher {
         continue;
       }
       if (known === undefined) stats.added++;
-      else {
-        stats.updated++;
-        statements.push(...deleteDoc(doc.id));
-      }
-      statements.push(...insertDoc(doc));
+      else stats.updated++;
+      groups.push([...(known === undefined ? [] : deleteDoc(doc.id)), ...insertDoc(doc)]);
     }
     for (const id of indexed.keys()) {
       if (docs.has(id)) continue;
       stats.removed++;
-      statements.push(...deleteDoc(id));
+      groups.push(deleteDoc(id));
     }
-    if (statements.length) await this.db.batch(statements);
+    let chunk: SqlStatement[] = [];
+    for (const group of groups) {
+      if (chunk.length && chunk.length + group.length > BATCH_SIZE) {
+        await this.db.batch(chunk);
+        chunk = [];
+      }
+      chunk.push(...group);
+    }
+    if (chunk.length) await this.db.batch(chunk);
     return stats;
   }
 

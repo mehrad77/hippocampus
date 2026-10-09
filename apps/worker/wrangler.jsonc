@@ -1,0 +1,19 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "hippocampus",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "SCRIBE", "class_name": "Scribe" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Scribe"] }],
+  // Create with `wrangler d1 create hippocampus-index` and `wrangler kv namespace create TOKENS`,
+  // then paste the ids here. Local development (`wrangler dev`) works with the placeholders.
+  "d1_databases": [{ "binding": "INDEX", "database_name": "hippocampus-index", "database_id": "00000000-0000-0000-0000-000000000000" }],
+  "kv_namespaces": [{ "binding": "TOKENS", "id": "00000000000000000000000000000000" }],
+  // GITHUB_REPO (owner/name of the private vault repo) and GITHUB_TOKEN are secrets, so neither ends up in
+  // this public repo: `wrangler secret put GITHUB_REPO` and `wrangler secret put GITHUB_TOKEN`.
+  "vars": { "GITHUB_BRANCH": "main" },
+  "observability": { "enabled": true }
+}

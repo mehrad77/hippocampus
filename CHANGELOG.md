@@ -6,6 +6,8 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 
 ### Added
 - `--github owner/repo[#branch]` (or `HIPPO_GITHUB_REPO` + `HIPPO_GITHUB_TOKEN`): run `serve`, `sleep`, `remember` and the other commands against the vault repo on GitHub without a checkout. Every write is one atomic commit.
+- Cloudflare Worker MCP server (`apps/worker`, deployed from a clone, not on npm): GitHub-backed reads, D1 search index, a Scribe Durable Object as the single writer, and per-agent bearer tokens with `read`/`remember`/`quest` scopes.
+- `GitHubStore` downloads a commit as one tarball when many files are uncached, and can share its blob and tree caches between short-lived stores.
 - Persistent search index (SQLite FTS5 via `node:sqlite`) for `serve` and `sleep`: incremental by content hash, typo-tolerant name matching, typed relations. `hippo index` rebuilds it; `--no-index` keeps in-memory search.
 - `VaultStore.apply()` for atomic batches, and `StoreConflictError` when a batch collides with a concurrent change.
 

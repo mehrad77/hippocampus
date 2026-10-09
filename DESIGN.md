@@ -40,9 +40,9 @@ Hippocampus absorbs the Archivist's job (canonical facts, disputes). The Game Ma
  Agents (Grok / Claude.ai / ChatGPT / own bots / Claude Code)
      │ remote MCP (HTTPS, bearer or OAuth)       │ GitHub (connector or API)
      ▼                                            ▼
- ┌────────────── Cloudflare Worker (later) ─────┐   writes only inbox/<agent>/*.md
- │ MCP server (McpAgent, streamable HTTP)       │   + reads HANDBOOK.md & canon
- │ OAuth provider + per-agent tokens/scopes     │
+ ┌────────────── Cloudflare Worker ─────────────┐   writes only inbox/<agent>/*.md
+ │ MCP server (stateless streamable HTTP)       │   + reads HANDBOOK.md & canon
+ │ per-agent tokens/scopes (OAuth: M4)          │
  │ Durable Object "Scribe" = single git writer  │──► private GitHub repo (vault) ◄── the human, in Obsidian (obsidian-git)
  │ D1 index (FTS5 + links + claims)             │◄── push webhook → reindex
  │ Curator API (claim batch / apply patch)      │
@@ -209,7 +209,8 @@ seeds/             example campaigns (fictional)
 | `hippo sleep` with git | ✅ | pull --rebase --autostash → curate → stage own paths → commit → push |
 | GitHub API store | ✅ | `packages/store-github`: reads pinned to one commit, blob cache by sha, each flush is one commit via the Git Data API, rebases past unrelated pushes, `StoreConflictError` on same-file races. `hippo --github owner/repo` |
 | Distribution | ✅ | npm package (tsup bundle + template + seeds), vault format version + `hippo migrate`, privacy guard + pre-commit hook, CI for this repo and for vaults |
-| Worker (D1 index), OAuth, embeddings | ⏳ | M3–M5 |
+| Worker | ✅ | `apps/worker`: stateless MCP over `WebStandardStreamableHTTPServerTransport`; per-request `GitHubStore` with per-isolate blob and tree caches (tarball on cold start); D1 index; Scribe DO serializes commits on the writer's base commit; per-agent bearer tokens (hashed in KV) with `read`/`remember`/`quest` scopes |
+| Push webhook reindex, OAuth, embeddings | ⏳ | Every request syncs the index with the vault it loads, so a webhook only matters once reads stop loading the whole vault. OAuth is M4, embeddings M5 |
 
 **Lessons from local models.** LM Studio with a reasoning model returned grammar-constrained JSON in `reasoning_content`, and constrained decoding suppressed its thinking, which made classification worse. Local providers therefore default to `prompt` mode:
 - The JSON Schema goes in the system prompt.

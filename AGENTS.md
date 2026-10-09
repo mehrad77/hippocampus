@@ -23,6 +23,7 @@ This repo is **public**. Users' memories live in **separate private vault repos*
 | `packages/curator` | LLM adapter (`llm.ts`, AI SDK; `prompt` vs `native` structured output), prompts and schemas (`prompts.ts`), sleep pipeline (`sleep.ts`) |
 | `packages/mcp` | MCP tools and resources over `HippoService` (`server.ts`) |
 | `packages/store-github` | `VaultStore` over the GitHub API: pinned-commit reads, atomic commits (`github-store.ts`), `FakeGitHub` for tests (`fake-github.ts`) |
+| `apps/worker` | Cloudflare Worker MCP server: request handling and auth (`app.ts`, `auth.ts`), Scribe single writer (`scribe.ts`), Workers entry point with bindings (`worker.ts`), agent tokens (`scripts/token.ts`). Not published |
 | `apps/cli` | `hippo` CLI (`src/main.ts`, `src/git.ts`), published as `@mehrad77/hippocampus` (tsup bundle) |
 | `vault-template/` | What `hippo init` copies: config, Obsidian templates, Dataview dashboards, vault CI |
 | `seeds/example-relocation/` | Fictional example campaign |

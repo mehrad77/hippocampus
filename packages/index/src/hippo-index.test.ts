@@ -1,8 +1,10 @@
 import { HippoService, SearchIndex, Vault, type MemoryStore } from "@hippocampus/core";
 import { describe, expect, it } from "vitest";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
+import { d1 } from "./d1.ts";
 import { HippoIndex, INDEX_SCHEMA_VERSION } from "./hippo-index.ts";
 import { nodeSqlite } from "./node.ts";
+import type { SqlValue } from "./sql.ts";
 
 const now = () => new Date("2026-09-27T21:00:00.000Z");
 
@@ -119,5 +121,38 @@ describe("HippoIndex", () => {
     expect(r.entities[0]?.ref).toBe("[[alfama-flat]]");
     expect(r.pending.map((p) => p.text)).toEqual([expect.stringContaining("Viewing of the Alfama flat")]);
     await expect(service.get("migraton agency")).rejects.toThrow(/did you mean \[\[migration-agency\]\]/);
+  });
+});
+
+describe("d1 driver", () => {
+  /** D1's API shape over node:sqlite, to check the adapter's mapping. */
+  function fakeD1() {
+    const db = nodeSqlite(":memory:");
+    const batches: number[] = [];
+    const stmt = (sql: string, params: SqlValue[] = []) => ({
+      sql,
+      params,
+      bind: (...values: SqlValue[]) => stmt(sql, values),
+      all: async <T>() => ({ results: await db.all<T>(sql, params) }),
+    });
+    return {
+      batches,
+      prepare: (sql: string) => stmt(sql),
+      batch: async (statements: ReturnType<typeof stmt>[]) => {
+        batches.push(statements.length);
+        await db.batch(statements.map((s) => ({ sql: s.sql, params: s.params })));
+      },
+    };
+  }
+
+  it("runs the index on D1's API, in bounded batches", async () => {
+    const npcs = Object.fromEntries(Array.from({ length: 150 }, (_, i) => [`characters/npc-${i}.md`, `---\ntype: character\ntitle: NPC ${i}\n---\n`]));
+    const { vault } = await setup({ ...extra, ...npcs });
+    const fake = fakeD1();
+    const index = await HippoIndex.open(d1(fake));
+    await index.sync(vault);
+    expect((await index.search("npc 42", { limit: 1 }))[0]?.id).toBe("npc-42");
+    expect(Math.max(...fake.batches)).toBeLessThanOrEqual(500);
+    expect(fake.batches.length).toBeGreaterThan(2);
   });
 });

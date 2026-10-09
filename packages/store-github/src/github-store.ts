@@ -1,5 +1,6 @@
 import { StoreConflictError, VaultError, type Change, type CommitMeta, type VaultStore } from "@hippocampus/core";
 import { MemoryBlobCache, gitBlobSha, type BlobCache } from "./blob-cache.ts";
+import { untar } from "./tar.ts";
 
 export interface GitHubStoreOptions {
   /** `owner/name` of the (private) vault repo. */
@@ -8,21 +9,50 @@ export interface GitHubStoreOptions {
   /** A token, or a function that mints one (e.g. a GitHub App installation token). */
   token: string | (() => Promise<string>);
   cache?: BlobCache;
+  /** Tree listings by commit. Share one (with `cache`) across short-lived stores, e.g. one store per request. */
+  snapshots?: SnapshotCache;
   fetch?: typeof fetch;
   apiUrl?: string;
   /** Times to rebase a batch onto a moved branch before giving up. */
   maxRebases?: number;
+  /**
+   * When more files than this are missing from the cache, download the commit as one tarball
+   * instead of one request per file (default 20). Keeps cold loads within Workers' subrequest limits.
+   */
+  preloadThreshold?: number;
 }
 
-interface TreeFile {
+export interface TreeFile {
   sha: string;
   mode: string;
 }
 
-interface Snapshot {
+export interface Snapshot {
   commit: string;
   tree: string;
   files: Map<string, TreeFile>;
+}
+
+/** Commit → its file listing. Commits are immutable, so entries never go stale. */
+export class SnapshotCache {
+  private readonly entries = new Map<string, Snapshot>();
+
+  constructor(private readonly max = 8) {}
+
+  get(commit: string): Snapshot | undefined {
+    const hit = this.entries.get(commit);
+    if (hit) {
+      this.entries.delete(commit);
+      this.entries.set(commit, hit);
+    }
+    return hit;
+  }
+
+  set(snap: Snapshot): void {
+    this.entries.delete(snap.commit);
+    this.entries.set(snap.commit, snap);
+    if (this.entries.size > this.max) this.entries.delete(this.entries.keys().next().value!);
+  }
 }
 
 interface TreeEntry {
@@ -57,9 +87,11 @@ export class GitHubStore implements VaultStore {
   readonly repo: string;
   readonly branch: string;
   private readonly cache: BlobCache;
+  private readonly snapshots: SnapshotCache;
   private readonly fetch: typeof fetch;
   private readonly api: string;
   private snap?: Promise<Snapshot>;
+  private preloaded?: { commit: string; done: Promise<void> };
   /** `write`/`remove` outside a batch, until `commit()`. `null` marks a removal. */
   private readonly pending = new Map<string, string | null>();
 
@@ -68,6 +100,7 @@ export class GitHubStore implements VaultStore {
     this.repo = opts.repo;
     this.branch = opts.branch ?? "main";
     this.cache = opts.cache ?? new MemoryBlobCache();
+    this.snapshots = opts.snapshots ?? new SnapshotCache();
     this.fetch = opts.fetch ?? globalThis.fetch.bind(globalThis);
     this.api = (opts.apiUrl ?? "https://api.github.com").replace(/\/$/, "");
   }
@@ -98,10 +131,14 @@ export class GitHubStore implements VaultStore {
 
   async read(path: string): Promise<string | undefined> {
     if (this.pending.has(path)) return this.pending.get(path) ?? undefined;
-    const file = (await this.snapshot()).files.get(path);
+    const snap = await this.snapshot();
+    const file = snap.files.get(path);
     if (!file) return undefined;
     const cached = await this.cache.get(file.sha);
     if (cached !== undefined) return cached;
+    await this.preload(snap);
+    const preloaded = await this.cache.get(file.sha);
+    if (preloaded !== undefined) return preloaded;
     const content = await (await this.request("GET", `git/blobs/${file.sha}`, undefined, "application/vnd.github.raw+json")).text();
     await this.cache.put(file.sha, content);
     return content;
@@ -122,9 +159,13 @@ export class GitHubStore implements VaultStore {
     return changes.map((c) => c.path);
   }
 
-  async apply(changes: Change[], meta: CommitMeta): Promise<void> {
+  /**
+   * Commit a batch. `base` is the commit the changes were computed from, when that isn't this
+   * store's own snapshot (e.g. a writer applying changes read by someone else).
+   */
+  async apply(changes: Change[], meta: CommitMeta, opts: { base?: string } = {}): Promise<void> {
     if (!changes.length) return;
-    let base = await this.snapshot();
+    let base = opts.base ? await this.snapshotAt(opts.base) : await this.snapshot();
     for (let attempt = 0; ; attempt++) {
       const tree = await this.createTree(base, changes);
       if (tree === base.tree) break;
@@ -132,6 +173,7 @@ export class GitHubStore implements VaultStore {
       try {
         await this.request("PATCH", `git/refs/heads/${this.branch}`, { sha: commit, force: false });
         base = await this.advance(base, commit, tree, changes);
+        this.snapshots.set(base);
         break;
       } catch (err) {
         if (!(err instanceof HttpError) || (err.status !== 422 && err.status !== 409)) throw err;
@@ -157,10 +199,40 @@ export class GitHubStore implements VaultStore {
     return this.snap;
   }
 
+  private async snapshotAt(commit: string): Promise<Snapshot> {
+    const current = await this.snap?.catch(() => undefined);
+    return current?.commit === commit ? current : this.fetchSnapshot(commit);
+  }
+
+  /** Fill the cache from the commit's tarball if many files are missing. Once per snapshot; failures fall back to per-file reads. */
+  private preload(snap: Snapshot): Promise<void> {
+    if (this.preloaded?.commit !== snap.commit) this.preloaded = { commit: snap.commit, done: this.preloadNow(snap).catch(() => undefined) };
+    return this.preloaded.done;
+  }
+
+  private async preloadNow(snap: Snapshot): Promise<void> {
+    const threshold = this.opts.preloadThreshold ?? 20;
+    let missing = 0;
+    for (const f of snap.files.values()) if ((await this.cache.get(f.sha)) === undefined && ++missing > threshold) break;
+    if (missing <= threshold) return;
+    const res = await this.request("GET", `tarball/${snap.commit}`);
+    const archive = new Uint8Array(await new Response(res.body!.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
+    const decoder = new TextDecoder();
+    for (const [name, bytes] of untar(archive)) {
+      // Entries sit under one top-level `<owner>-<repo>-<sha>/` directory.
+      const file = snap.files.get(name.slice(name.indexOf("/") + 1));
+      if (file) await this.cache.put(file.sha, decoder.decode(bytes));
+    }
+  }
+
   private async fetchSnapshot(sha?: string): Promise<Snapshot> {
     sha ??= (await this.json<{ object: { sha: string } }>("GET", `git/ref/heads/${this.branch}`)).object.sha;
+    const known = this.snapshots.get(sha);
+    if (known) return known;
     const commit = await this.json<{ tree: { sha: string } }>("GET", `git/commits/${sha}`);
-    return { commit: sha, tree: commit.tree.sha, files: await this.readTree(commit.tree.sha) };
+    const snap = { commit: sha, tree: commit.tree.sha, files: await this.readTree(commit.tree.sha) };
+    this.snapshots.set(snap);
+    return snap;
   }
 
   private async readTree(sha: string): Promise<Map<string, TreeFile>> {

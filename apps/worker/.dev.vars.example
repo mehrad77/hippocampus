@@ -1,0 +1,5 @@
+# Copy to .dev.vars (gitignored) for `wrangler dev`.
+GITHUB_REPO=you/my-campaign
+GITHUB_TOKEN=github_pat_...
+# Point at a fake GitHub for offline development:
+# GITHUB_API_URL=http://127.0.0.1:8787

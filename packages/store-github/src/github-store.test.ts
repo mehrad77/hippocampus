@@ -4,7 +4,7 @@ import { storeContract } from "../../core/src/store.contract.ts";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
 import { MemoryBlobCache, gitBlobSha } from "./blob-cache.ts";
 import { FakeGitHub } from "./fake-github.ts";
-import { GitHubStore } from "./github-store.ts";
+import { GitHubStore, SnapshotCache } from "./github-store.ts";
 
 const now = () => new Date("2026-09-27T21:00:00.000Z");
 
@@ -139,5 +139,77 @@ describe("GitHubStore", () => {
     const store = new GitHubStore({ repo: gh.repo, fetch: gh.fetch, token: async () => `installation-${++minted}` });
     await store.list();
     expect(minted).toBeGreaterThan(0);
+  });
+});
+
+describe("GitHubStore cold loads", () => {
+  const many = (n: number) =>
+    Object.fromEntries(Array.from({ length: n }, (_, i) => [`characters/npc-${i}.md`, `---\ntype: character\ntitle: NPC ${i} João\n---\n`]));
+
+  it("downloads a tarball instead of one blob per file", async () => {
+    const deep = `lore/${"very-long-folder-name/".repeat(6)}procedure.md`;
+    const { gh, store } = await setup({ ...Object.fromEntries(fixtureStore().files), ...many(40), [deep]: "# Procedure\n" });
+    const vault = await Vault.load(store);
+    expect(vault.entities.get("npc-7")?.fm.title).toBe("NPC 7 João");
+    expect(await store.read(deep)).toBe("# Procedure\n");
+    expect(gh.calls.filter((c) => c.startsWith("GET tarball/"))).toHaveLength(1);
+    expect(gh.calls.filter((c) => c.startsWith("GET git/blobs/"))).toHaveLength(0);
+  });
+
+  it("fetches a few changed files one by one", async () => {
+    const { gh, store } = await setup({ ...Object.fromEntries(fixtureStore().files), ...many(40) });
+    await Vault.load(store);
+    await gh.push({ "characters/npc-3.md": "---\ntype: character\ntitle: Renamed\n---\n" });
+    await store.refresh();
+    expect((await Vault.load(store)).entities.get("npc-3")?.fm.title).toBe("Renamed");
+    expect(gh.calls.filter((c) => c.startsWith("GET tarball/"))).toHaveLength(1);
+    expect(gh.calls.filter((c) => c.startsWith("GET git/blobs/"))).toHaveLength(1);
+  });
+
+  it("falls back to blobs when the tarball fails", async () => {
+    const { gh } = await setup(many(30));
+    const store = new GitHubStore({ repo: gh.repo, token: "t", fetch: (u, i) => (String(u).includes("/tarball/") ? Promise.resolve(new Response("nope", { status: 502 })) : gh.fetch(u, i)) });
+    expect(await store.read("characters/npc-1.md")).toContain("NPC 1");
+  });
+});
+
+describe("GitHubStore.apply with an explicit base", () => {
+  it("detects changes made after the writer's base, even when the store itself is newer", async () => {
+    const { gh, store: reader } = await setup();
+    const base = await reader.head();
+    await gh.push({ "quests/residence-permit.md": "---\ntype: quest\ntitle: Human edit\n---\n" });
+    const writer = new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch });
+    await writer.refresh();
+    await expect(writer.apply([{ path: "quests/residence-permit.md", content: "stale" }], { message: "x" }, { base })).rejects.toBeInstanceOf(StoreConflictError);
+    await writer.apply([{ path: "inbox/campus-agent/x.md", content: "new" }], { message: "y" }, { base });
+    expect(gh.files()["quests/residence-permit.md"]).toContain("Human edit");
+    expect(gh.files()["inbox/campus-agent/x.md"]).toBe("new");
+  });
+});
+
+describe("GitHubStore per-request stores", () => {
+  it("share caches, so a warm store costs one ref lookup", async () => {
+    const { gh } = await setup();
+    const cache = new MemoryBlobCache();
+    const snapshots = new SnapshotCache();
+    const open = () => new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch, cache, snapshots });
+    await Vault.load(open());
+    const before = gh.calls.length;
+    const warm = open();
+    await warm.refresh();
+    await Vault.load(warm);
+    expect(gh.calls.slice(before)).toEqual(["GET git/ref/heads/main"]);
+  });
+
+  it("keep their own pinned commit while another moves on", async () => {
+    const { gh } = await setup();
+    const snapshots = new SnapshotCache();
+    const a = new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch, snapshots });
+    const b = new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch, snapshots });
+    await a.list();
+    await gh.push({ "characters/joao-silva.md": "---\ntype: character\ntitle: João\n---\n" });
+    await b.refresh();
+    expect(await a.read("characters/joao-silva.md")).toBeUndefined();
+    expect(await b.read("characters/joao-silva.md")).toContain("João");
   });
 });

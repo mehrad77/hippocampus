@@ -15,3 +15,7 @@ dist/
 seeds/private-*/
 .privacy-denylist
 /dist-pack/
+
+# Cloudflare Worker local state and secrets
+.wrangler/
+.dev.vars

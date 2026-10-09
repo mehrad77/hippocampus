@@ -1,0 +1,67 @@
+import { HippoService } from "@hippocampus/core";
+import { HippoIndex, d1 } from "@hippocampus/index";
+import { GitHubStore, MemoryBlobCache, SnapshotCache } from "@hippocampus/store-github";
+import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
+import { DurableObject } from "cloudflare:workers";
+import { createApp } from "./app.ts";
+import { ScribeQueue, ScribeStore, type CommitRequest, type CommitResult } from "./scribe.ts";
+
+export interface Env {
+  SCRIBE: DurableObjectNamespace<Scribe>;
+  INDEX: D1Database;
+  TOKENS: KVNamespace;
+  /** `owner/name` of the private vault repo (a secret, to keep it out of the public config). */
+  GITHUB_REPO: string;
+  GITHUB_BRANCH?: string;
+  /** Fine-grained token with Contents read and write on the vault repo (a secret). */
+  GITHUB_TOKEN: string;
+  /** Only for local development against a fake GitHub. */
+  GITHUB_API_URL?: string;
+}
+
+// Per isolate, shared by its requests. Both caches are keyed by immutable git ids.
+const blobs = new MemoryBlobCache();
+const snapshots = new SnapshotCache();
+let index: Promise<HippoIndex> | undefined;
+let app: ((request: Request) => Promise<Response>) | undefined;
+
+const github = (env: Env) =>
+  new GitHubStore({ repo: env.GITHUB_REPO, branch: env.GITHUB_BRANCH || undefined, token: env.GITHUB_TOKEN, apiUrl: env.GITHUB_API_URL || undefined, cache: blobs, snapshots });
+
+function openIndex(env: Env): Promise<HippoIndex> {
+  index ??= HippoIndex.open(d1(env.INDEX)).catch((err: unknown) => {
+    index = undefined;
+    throw err;
+  });
+  return index;
+}
+
+/** The single writer for the vault repo: every commit made through the Worker goes through here, one at a time. */
+export class Scribe extends DurableObject<Env> {
+  private readonly queue: ScribeQueue;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.queue = new ScribeQueue(github(env));
+  }
+
+  commit(request: CommitRequest): Promise<CommitResult> {
+    return this.queue.commit(request);
+  }
+}
+
+export default {
+  async fetch(request, env) {
+    if (!env.GITHUB_REPO || !env.GITHUB_TOKEN) return new Response("GITHUB_REPO and GITHUB_TOKEN must be configured\n", { status: 500 });
+    app ??= createApp({
+      tokens: { get: (hash) => env.TOKENS.get(hash, "json") },
+      service: async () => {
+        // A fresh store per request keeps its reads pinned to one commit while other requests move on.
+        const scribe = env.SCRIBE.get(env.SCRIBE.idFromName(env.GITHUB_REPO));
+        return new HippoService(new ScribeStore(github(env), scribe), { searcher: (await openIndex(env)).searcher });
+      },
+      jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
+    });
+    return app(request);
+  },
+} satisfies ExportedHandler<Env>;
