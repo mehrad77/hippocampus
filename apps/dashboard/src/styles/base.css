@@ -312,7 +312,8 @@ textarea {
   font-family: var(--font-body);
 }
 
-.navlink__badge[hidden] {
+.navlink__badge[hidden],
+.navlink[hidden] {
   display: none;
 }
 
@@ -501,4 +502,134 @@ textarea {
 :root:not([data-style="codex"]) .lbl-codex,
 :root[data-style="codex"] .lbl-plain {
   display: none !important;
+}
+
+/* ── Signed-in user (hosted app): rail chip and the phone topbar's avatar ── */
+
+.usermenu {
+  position: relative;
+}
+
+.usermenu__button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 6px var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.usermenu__button:hover {
+  border-color: var(--rule-strong);
+}
+
+.usermenu__avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+.usermenu__who {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.usermenu__hint {
+  font-size: 0.72rem;
+  color: var(--ink-3);
+}
+
+.usermenu__login {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usermenu__chev {
+  flex: none;
+  margin-left: auto;
+  color: var(--ink-3);
+  transform: rotate(-90deg);
+  transition: transform 120ms ease;
+}
+
+.usermenu__button[aria-expanded="true"] .usermenu__chev {
+  transform: rotate(90deg);
+}
+
+.usermenu__list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 70;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+}
+
+.usermenu__list[hidden] {
+  display: none;
+}
+
+.usermenu__list a,
+.usermenu__list button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 8px var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink);
+  font-size: 0.95rem;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.usermenu__list a:hover,
+.usermenu__list button:hover {
+  background: var(--surface-hover, var(--surface-sunk));
+}
+
+.usermenu__list button:disabled {
+  cursor: progress;
+  color: var(--ink-3);
+}
+
+.usermenu--compact .usermenu__button {
+  width: auto;
+  padding: 4px;
+  border-color: transparent;
+  background: none;
+}
+
+.usermenu--compact .usermenu__list {
+  left: auto;
+  right: 0;
+  bottom: auto;
+  top: calc(100% + 6px);
+  min-width: 220px;
 }

@@ -2,6 +2,7 @@
 import Shell from "../layouts/Shell.astro";
 import SetupView from "../islands/SetupView.tsx";
 import "../styles/setup.css";
+import "../styles/hosted.css";
 ---
 <Shell title="Session Zero" page="setup" description="Set up your campaign's memory: vault, party, secrets, curator and the nightly sleep.">
   <SetupView client:only="react" />

@@ -1,8 +1,8 @@
 import { EpisodeKind, QuestStatus } from "@hippocampus/core";
 import { z } from "zod";
-import { HttpError, errorResponse, json, readJson, type Guard } from "./http.ts";
+import { HttpError, errorResponse, json, readJson, type ErrorReport, type Guard, type GuardResult } from "./http.ts";
 import type { SetupPort } from "./setup.ts";
-import { capabilities, type DashboardSource, type SessionInfo } from "./source.ts";
+import { capabilities, type DashboardSource, type SessionInfo, type SetupKind } from "./source.ts";
 
 export interface DashboardApiOptions {
   /** Where the API is mounted, e.g. `/dashboard/api`. */
@@ -10,7 +10,11 @@ export interface DashboardApiOptions {
   /** The current source; `undefined` while there is no vault yet (Session Zero). */
   source: () => DashboardSource | undefined | Promise<DashboardSource | undefined>;
   setup?: SetupPort;
+  /** The session's `capabilities.setup` when Session Zero is answered elsewhere (the hosted app's own routes). */
+  setupKind?: SetupKind;
   guard: Guard;
+  /** Where unexpected errors go (default: console.error). */
+  report?: ErrorReport;
 }
 
 const text = (max: number) => z.string().trim().min(1).max(max);
@@ -59,12 +63,23 @@ const PartyBody = z.object({
   host: z.string().max(120).optional(),
 });
 
+const CuratorBody = z.object({ abort: text(100) });
+
+const IntroductionBody = z.object({
+  agent: text(63),
+  decision: z.enum(["approve", "dismiss"]),
+  title: text(120).optional(),
+  lane: z.string().max(500).optional(),
+  authority: z.array(text(60)).max(20).optional(),
+});
+
 /**
  * The dashboard's JSON API as a web-standard handler, so `hippo dashboard` (node:http) and the
  * Worker serve the same thing. Read routes are GET; actions are JSON POSTs behind the runtime's guard.
  */
 export function createDashboardApi(opts: DashboardApiOptions): (request: Request) => Promise<Response> {
   const { basePath, setup } = opts;
+  const setupKind = setup?.kind ?? opts.setupKind ?? "none";
   return async (request) => {
     try {
       const url = new URL(request.url);
@@ -72,7 +87,7 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
       const path = url.pathname.slice(basePath.length + 1).replace(/\/+$/, "");
       const method = request.method;
       if (method !== "GET" && method !== "POST") throw new HttpError(405, "Method not allowed", "METHOD");
-      const { user } = await opts.guard(request);
+      const who = await opts.guard(request);
       const body = method === "POST" ? await readJson(request) : undefined;
 
       if (path === "setup" || path.startsWith("setup/")) {
@@ -83,9 +98,9 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
       }
 
       const source = await opts.source();
-      if (path === "session" && method === "GET") return json(200, await session(source, setup, user));
+      if (path === "session" && method === "GET") return json(200, await session(source, setupKind, who, opts.report));
       if (!source) throw new HttpError(409, "No vault yet: finish Session Zero first.", "NO_VAULT");
-      const via = user ? `@${user.login}` : undefined;
+      const via = who.user ? `@${who.user.login}` : undefined;
 
       if (method === "GET") {
         switch (path) {
@@ -99,6 +114,8 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
             return json(200, await source.entity(text(200).parse(url.searchParams.get("ref") ?? "")));
           case "chronicle":
             return json(200, await source.chronicle(url.searchParams.get("month") ?? undefined));
+          case "curator":
+            return json(200, await need(source.curator, "the curator's status").status());
           case "search": {
             const q = text(200).parse(url.searchParams.get("q") ?? "");
             const limit = z.coerce.number().int().min(1).max(20).optional().parse(url.searchParams.get("limit") ?? undefined);
@@ -119,11 +136,15 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
             return json(200, await need(source.remember, "remembering").call(source, RememberBody.parse(body)));
           case "actions/party":
             return json(200, await need(source.addParty, "adding party members").call(source, PartyBody.parse(body), via));
+          case "actions/introduction":
+            return json(200, await need(source.introduction, "introductions").call(source, IntroductionBody.parse(body), via));
+          case "actions/curator":
+            return json(200, await need(source.curator, "aborting sleep runs").abort(CuratorBody.parse(body).abort, via));
         }
       }
       throw new HttpError(404, `No such API route: ${method} ${path}`, "NOT_FOUND");
     } catch (err) {
-      return errorResponse(err);
+      return errorResponse(err, opts.report);
     }
   };
 }
@@ -133,15 +154,16 @@ function need<T>(fn: T | undefined, what: string): T {
   return fn;
 }
 
-async function session(source: DashboardSource | undefined, setup: SetupPort | undefined, user: { login: string } | undefined): Promise<SessionInfo> {
-  const caps = capabilities(source, setup?.kind ?? "none");
-  if (!source) return { mode: "setup", user, capabilities: caps };
+async function session(source: DashboardSource | undefined, setup: SetupKind, { user, account }: GuardResult, report?: ErrorReport): Promise<SessionInfo> {
+  const caps = capabilities(source, setup);
+  const who = { user, ...(account ? { account } : {}) };
+  if (!source) return { mode: "setup", ...who, capabilities: caps };
   try {
-    return { ...(await source.info()), user, capabilities: caps };
+    return { ...(await source.info()), ...who, capabilities: caps };
   } catch (err) {
     // A vault that can't load (wrong format version, broken config) still gets a session, so the UI can explain.
-    const res = errorResponse(err);
+    const res = errorResponse(err, report);
     const { error, code } = (await res.json()) as { error: string; code: string };
-    return { mode: "setup", user, capabilities: caps, error: { code, message: error } };
+    return { mode: "setup", ...who, capabilities: caps, error: { code, message: error } };
   }
 }

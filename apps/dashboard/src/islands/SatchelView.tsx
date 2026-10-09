@@ -14,6 +14,7 @@ import { Empty, RelTime, SkeletonPanel } from "../ui/Parts.tsx";
 import { RichText } from "../ui/RichText.tsx";
 import { useHashTarget } from "../ui/play/actions.ts";
 import { PageHead } from "../ui/play/Bits.tsx";
+import { CuratorLine } from "./setup/Curator.tsx";
 import { confidenceLabel, countBy, filterEpisodes, kindLabel, unwrapRef } from "../ui/play/model.ts";
 
 export default function SatchelView() {
@@ -95,6 +96,7 @@ function Satchel({ session }: { session: SessionInfo }) {
         }
       />
 
+      {session.capabilities.curator && <CuratorLine />}
       <SleepPanel o={o} sealed={sealed} voice={voice} />
 
       {waited > 0 && (

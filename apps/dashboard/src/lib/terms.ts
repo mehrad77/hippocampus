@@ -16,6 +16,9 @@ export const TERMS = {
   party: ["Agents", "Party"],
   guides: ["Help", "Guides"],
   setup: ["Setup & health", "Setup & health"],
+  admin: ["Admin", "Admin"],
+  welcome: ["Welcome", "Welcome"],
+  privacy: ["Privacy", "Privacy"],
   sessionZero: ["Setup", "Session Zero"],
   handbook: ["Help & guides", "The Player's Handbook"],
   // Nav sections
@@ -33,6 +36,10 @@ export const TERMS = {
   // Actions
   scribe: ["Add a note", "Scribe a memory"],
   search: ["Search", "Search"],
+  approve: ["Approve", "Seat at the table"],
+  dismiss: ["Dismiss", "Turn away"],
+  // Agents asking to join (`introduce`)
+  introductions: ["Agents asking to join", "At the door"],
   // Fact statuses
   canon: ["Confirmed", "canon"],
   rumor: ["Unverified", "rumor"],

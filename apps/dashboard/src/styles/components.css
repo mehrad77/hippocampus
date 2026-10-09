@@ -272,6 +272,26 @@
   color: var(--ink-3);
 }
 
+/* Hints and problems sit inside .field, whose bare spans are styled as labels (setup's Field, dialogs). */
+.field > .hint,
+.field > .sz-problem {
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.field > .hint {
+  color: var(--ink-3);
+}
+
+.sz-problem {
+  color: var(--disputed);
+  font-size: 0.88rem;
+  font-weight: 600;
+  margin: 0;
+}
+
 .check {
   display: inline-flex;
   align-items: center;

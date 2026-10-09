@@ -62,6 +62,10 @@
   color: var(--ink-2);
 }
 
+:root:not([data-style="codex"]) .field > .hint {
+  font-size: var(--label-size);
+}
+
 :root:not([data-style="codex"]) .page-head__kicker {
   color: var(--ink-2);
 }

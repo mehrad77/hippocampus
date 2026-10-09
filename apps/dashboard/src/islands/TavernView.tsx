@@ -32,7 +32,7 @@ function Tavern({ session }: { session: SessionInfo }) {
       </div>
     );
   const active = o.quests.filter((q) => q.status === "active" || q.status === "blocked");
-  const needs = o.attention.disputes.length + o.attention.waiting.length + o.attention.unknownAgents.length;
+  const needs = o.attention.disputes.length + o.attention.waiting.length + o.attention.introductions.length + o.attention.unknownAgents.length;
   return (
     <div className="stack" style={{ ["--gap" as string]: "28px" }}>
       <header className="page-head">
@@ -201,6 +201,14 @@ function Attention({ o, voice: { t, v } }: { o: Overview; voice: Voice }) {
       title: v(<>A note from {e.agent} wasn't processed by the last nightly update</>, <>An episode from {e.agent} sat through a sleep</>),
       detail: e.text ?? v("Hidden (contains a secret).", "Sealed (secret-bearing)."),
       href: href.page("satchel", `#${e.id}`),
+    })),
+    ...a.introductions.map((i) => ({
+      icon: "party" as const,
+      tone: "warn",
+      title: v(<>{i.title} asks to join as an agent</>, <>{i.title} knocks at the door</>),
+      // The agent's own words: plain text.
+      detail: i.lane ?? v("Waiting for your approval.", "Awaits your word."),
+      href: href.page("party", "#introductions"),
     })),
     ...a.unknownAgents.map((agent) => ({
       icon: "party" as const,

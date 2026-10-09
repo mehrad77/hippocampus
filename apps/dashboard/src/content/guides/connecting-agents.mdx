@@ -1,6 +1,6 @@
 ---
 title: Connecting agents
-summary: The eight MCP tools, three ways to serve them (stdio, local HTTP, the Worker), the GitHub path, and how to write memories the curator gets right.
+summary: The MCP tools, keys and connectors on the hosted app, serving MCP locally, how a new agent introduces itself, and how to write memories the curator gets right.
 order: 7
 section: Running it
 sigil: link
@@ -8,7 +8,7 @@ sigil: link
 import Aside from "../../components/guides/Aside.astro";
 import Link from "../../components/guides/Link.astro";
 
-An agent joins the table through one of two doors. **MCP** gives it tools: remember, recall, ask. **GitHub** is the lowest common denominator: any agent that can commit to a repo can read `HANDBOOK.md` and drop an episode into the inbox. Either way, add the agent to the party first (<Link guide="party-and-lanes">Party and lanes</Link>), so its id carries its lane.
+Agents join the table over **MCP**, which gives them tools: remember, recall, ask. On the hosted app, an agent connects with a key or as a connector. On your own machine, `hippo serve` runs the same tools. Either way, an agent's first call is `onboard`, which tells it who it is, and asks a stranger to introduce itself.
 
 ## The tools
 
@@ -20,14 +20,63 @@ An agent joins the table through one of two doors. **MCP** gives it tools: remem
 | `neighbors` | read | Walk the relation graph, 1 to 3 steps, optionally one relation type |
 | `ask_canon` | read | The canonical answer to a factual question: best-matching facts with status and source, plus any open dispute |
 | `briefing` | read | "Previously on…": the chronicle since a date (default a week), recently changed notes, deadlines and clocks ahead, open disputes |
-| `remember` | remember | Queue one episode: `text`, plus optional `kind`, `about`, `confidence`, `secret`, `at` |
+| `remember` | remember | Queue one episode: `text` (at most 8 KB), plus optional `kind`, `about`, `confidence`, `secret`, `at` |
+| `introduce` | remember | Ask to join the party: `title`, `lane`, and optionally `host`, `model`, `about` |
 | `update_quest` | quest | Quest status, objectives (`complete`, `reopen`, `add`), a clock, deadline or owner, applied at once |
 
-Two resources come with the `read` scope: `hippo://handbook` and `hippo://entity/{slug}`. Secrets are never revealed through any of them; see <Link guide="secrets">Secrets</Link>.
+The curator has five more tools under the `curate` scope; see <Link guide="nightly-sleep">The curator</Link>. Two resources come with the `read` scope: `hippo://handbook` and `hippo://entity/{slug}`. Secrets are never revealed through any of them; see <Link guide="secrets">Secrets</Link>.
+
+Tools outside a connection's scopes are removed, so the client never even sees them.
 
 A good session follows the server's own instructions. Call `onboard` first. Use `recall`, `get` and `ask_canon` before acting on facts. `remember` anything worth keeping. Treat <code>rumor</code> as "verify first" and <code>disputed</code> as "don't act without checking".
 
-## Three ways to serve MCP
+## On the hosted app
+
+Agents connect to your vault's address, `https://<your-instance>/mcp`, shown on the Setup page. They need a key, or, for Claude.ai and ChatGPT, a GitHub sign-in.
+
+### Keys
+
+Mint keys under **Setup → Connect agents**. A key is shown **once**: copy it, or copy one of the snippets next to it, which already carry it. Only a hash is stored, so a lost key can't be shown again; mint a new one. **Revoke** stops a key at once.
+
+| Kind | Scopes | Use it for |
+| --- | --- | --- |
+| Agent key | read, remember, quest | Any of your agents. Each names itself with the `agent` argument |
+| Single-agent key | read, plus remember and quest as you choose | One agent, bound to its id. Use it for an agent you want held to one id, or kept read-only |
+| Curator key | read, curate | The agent that runs sleep. Never give it to an everyday agent |
+
+```bash
+claude mcp add --transport http hippocampus https://<your-instance>/mcp --header "Authorization: Bearer hippo_…"
+```
+
+The Setup page also has snippets for `.mcp.json`, Cursor and VS Code.
+
+**The Claude Code plugin** brings the server and a skill that teaches an agent how to use memory:
+
+```bash
+claude plugin marketplace add mehrad77/hippocampus
+claude plugin install hippocampus@hippocampus
+export HIPPO_MCP_URL=https://<your-instance>/mcp
+export HIPPO_KEY=<your agent key>
+```
+
+Then `/hippocampus:memory` loads the habits: onboard first, read before acting, one memory per call.
+
+### Connectors (Claude.ai, ChatGPT)
+
+In Claude.ai or ChatGPT, add a custom connector with the URL `https://<your-instance>/mcp`. The app asks you to sign in with GitHub, then shows a consent page for your vault:
+
+- pick the **agent id** the app acts as: a party member, to give it that lane, or a new id, which you can seat in the party right away;
+- choose what it may do: read and remember are ticked; quests and curating are yours to add. Curating shows the app every new memory in full, secret ones in plain text, so allow it only for an app you'd trust as the curator.
+
+Your account menu lists connected apps, and disconnects any of them.
+
+<Aside kind="tip">
+
+Give each app its own id (`claude-web`, `chatgpt`), so you can tell their memories apart and trust them separately.
+
+</Aside>
+
+## On your own machine
 
 ### stdio, for local agents
 
@@ -64,50 +113,37 @@ Each agent connects to `http://127.0.0.1:8765/mcp?agent=<id>`, for example:
 claude mcp add --transport http hippocampus "http://127.0.0.1:8765/mcp?agent=job-scout"
 ```
 
-It listens on 127.0.0.1 only and asks for no token, so any program on this machine can connect as any agent. Use it for agents you run yourself.
+It listens on 127.0.0.1 only and asks for no key, so any program on this machine can connect as any agent, curator tools included. Use it for agents you run yourself.
 
-### The Worker, for remote agents
+### Inbox files, without MCP
 
-Agents that can't run a local process, such as Claude.ai, ChatGPT or a hosted bot, connect to the Cloudflare Worker. It serves the same tools from your GitHub vault repo and makes every write a single commit, through one writer. It accepts two kinds of credentials.
-
-**Agent tokens.** One per agent, printed once, stored only as a hash:
-
-```bash
-pnpm agent-token create game-master --scopes read,remember,quest --remote
-```
-
-```bash
-claude mcp add --transport http hippocampus https://hippocampus.<your-subdomain>.workers.dev/mcp --header "Authorization: Bearer hippo_…"
-```
-
-Scopes default to `read,remember`. Revoke a token with `pnpm agent-token revoke <token> --remote`. The Worker's dashboard can also mint, list and revoke tokens from its Setup page.
-
-**OAuth connectors.** In Claude.ai or ChatGPT, add a custom connector with the URL `https://hippocampus.<your-subdomain>.workers.dev/mcp`. The Worker shows a consent page where you pick the **agent id** the app acts as (use a party member's id to give it that lane) and what it may do: read and remember are ticked, and quests only when the app asks for them. Then you sign in with GitHub, and only the accounts in `HIPPO_OWNERS` get through. A connection lasts 30 days; connect again to renew it or change its permissions.
-
-| Scope | Allows |
-| --- | --- |
-| `read` | `onboard`, `recall`, `get`, `neighbors`, `ask_canon`, `briefing`, and the resources |
-| `remember` | `remember` |
-| `quest` | `update_quest` |
-
-Tools outside a connection's scopes are removed, so the client never even sees them.
-
-## The GitHub path
-
-Give the agent access to the **private** vault repo and tell it:
-
-> Read HANDBOOK.md. To remember something, commit one new file to `inbox/<your-id>/`. Never edit other files.
-
-The file is named `inbox/<agent-id>/<YYYY-MM-DDTHHMMSS>-<short-slug>.md`, and the handbook shows its format. The curator treats these exactly like episodes sent over MCP.
+A local tool that can't speak MCP may write one new file per memory to `inbox/<its-id>/<YYYY-MM-DDTHHMMSS>-<short-slug>.md`, in the format the handbook shows, and must never touch other files. Everything else should use the tools: they run the checks, and the vault's `AGENTS.md` tells agents not to edit files.
 
 ## Which agent is speaking?
 
+- **Hosted app:** a single-agent key's agent, the connector's chosen agent, or the `agent` argument with an agent key.
 - **stdio:** `--agent` (or `HIPPO_AGENT`). Without it, the write tools require an `agent` argument.
 - **Local HTTP:** `?agent=` in the URL.
-- **Worker:** the token's agent, or the agent chosen on the OAuth consent page.
-- **GitHub:** the episode's `agent:` property, or its folder in `inbox/`.
+- **Inbox files:** the episode's `agent:` property, which must match its folder.
 
-An id with no party sheet still works, but everything it reports counts as a rumor.
+Ids are exact: lowercase letters, digits and dashes, matching `party/<id>.md`. Your own id and the reserved ids `human`, `curator`, `unknown` and `hippocampus` are refused. See <Link guide="party-and-lanes">Party and lanes</Link>.
+
+## New agents introduce themselves
+
+An id with no party sheet still works, but everything it reports counts as a rumor. `onboard` tells such an agent so, and asks it to call `introduce`:
+
+```json
+{
+  "agent": "job-scout",
+  "title": "Job Scout",
+  "lane": "Finds paid work in Lisbon and tracks applications. Stays out of housing and the permit.",
+  "host": "Claude Desktop",
+  "model": "the model it runs on",
+  "about": "Searches job boards daily and keeps the application quest up to date."
+}
+```
+
+The introduction waits for you on the **Party** page, and the Tavern lists it under what needs your attention. **Approve** seats the agent with the authority domains you pick; **Dismiss** removes the introduction. Introducing again replaces the earlier one.
 
 ## Writing memories the curator gets right
 
@@ -139,6 +175,6 @@ A `remember` call, in full:
 
 <Aside kind="tip">
 
-`remember` returns at once and the episode waits for the night. If the next step depends on it, the agent can still find it: `recall` lists matching inbox episodes under `pending`.
+`remember` returns at once and the episode waits for the next sleep. If the next step depends on it, the agent can still find it: `recall` lists matching inbox episodes under `pending`.
 
 </Aside>

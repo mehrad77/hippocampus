@@ -105,7 +105,7 @@ Agents get them in `briefing`, which looks 30 days ahead by default (`horizon_da
 
 ## Updating quests as an agent
 
-`update_quest` is applied **directly**: no inbox, no sleep. The quest note and `HANDBOOK.md` are saved at once, as one commit when the vault is on GitHub or behind the Worker.
+`update_quest` is applied **directly**: no inbox, no sleep. The quest note and `HANDBOOK.md` are saved at once, as one commit when the vault is on GitHub or on the hosted app.
 
 ```json
 {
@@ -124,4 +124,4 @@ Agents get them in `briefing`, which looks 30 days ahead by default (`horizon_da
 | `deadline` | The quest's due date |
 | `owner` | Hand the quest to another party member |
 
-The note's `updated_by` records who made the change. On the Worker, an agent needs the `quest` scope to see this tool at all. Edits you make on the Quest board are filed under your own id. More on scopes in <Link guide="connecting-agents">Connecting agents</Link>.
+The note's `updated_by` records who made the change. On the hosted app, an agent needs the `quest` scope to see this tool at all. Edits you make on the Quest board are filed under your own id. More on scopes in <Link guide="connecting-agents">Connecting agents</Link>.

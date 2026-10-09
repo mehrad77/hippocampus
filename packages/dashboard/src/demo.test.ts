@@ -33,6 +33,9 @@ describe("demo campaign", () => {
     expect(o.attention.rumors.length).toBeGreaterThan(0);
     expect(o.attention.stale.length).toBeGreaterThan(0);
     expect(o.attention.unknownAgents).toEqual(["calendar-bot"]);
+    // An introduced agent isn't a stranger: it waits for the player's approval instead.
+    expect(o.attention.introductions).toEqual([expect.objectContaining({ agent: "transit-scout", title: "Transit Scout", host: "Claude Desktop" })]);
+    expect(o.inbox.some((e) => e.agent === "transit-scout")).toBe(true);
     expect(Object.keys(o.counts.quests).sort()).toEqual(expect.arrayContaining(["active", "blocked", "dormant"]));
     expect(o.quests.some((q) => q.clocks.length > 0 && q.objectives.some((x) => x.done))).toBe(true);
     expect(o.upcoming.length).toBeGreaterThan(0);

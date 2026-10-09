@@ -20,7 +20,7 @@ These go before the command, e.g. `hippo -v ~/vaults/my-campaign validate`.
 | `--github <owner/repo[#branch]>` | Work on the vault repo through the GitHub API, without a checkout. Each write is one commit, refused rather than overwriting if someone changed the same file. Default: `HIPPO_GITHUB_REPO` |
 | `--no-index` | Search in memory instead of the persistent index |
 
-`--github` needs a fine-grained token with **Contents: read and write** on the vault repo only, in `HIPPO_GITHUB_TOKEN`. Every command except `init` accepts it.
+`--github` needs a fine-grained token with **Contents: read and write** on the vault repo only, in `HIPPO_GITHUB_TOKEN`. Every command except `init` and `audit` accepts it.
 
 ## Commands
 
@@ -28,8 +28,9 @@ These go before the command, e.g. `hippo -v ~/vaults/my-campaign validate`.
 | --- | --- |
 | `init <dir> [--seed <name-or-path>]` | Create a vault from the template in a new or empty folder. `--seed example-relocation` adds the fictional campaign, or pass your own seed folder. `--campaign`, `--human`, `--timezone` and `--domains a,b` fill in the config. Also runs `git init` |
 | `dashboard` | Open the dashboard on 127.0.0.1 (`-p <port>`, default 4747), through a one-time sign-in link. `--no-open` only prints the link. `--demo` for the fictional campaign, `--mcp <url>` (token from `HIPPO_MCP_TOKEN` or `--token`) for any Hippocampus MCP server. With no vault yet, it opens Session Zero |
-| `serve [--agent <id>] [--http <port>]` | The MCP server, over stdio (bound to `--agent`), or over HTTP at `127.0.0.1:<port>/mcp?agent=<id>` |
-| `sleep` | Consolidate the inbox: pull, curate, commit, push. `--limit <n>`, `--dry-run`, `--no-git`, `--no-push` |
+| `serve [--agent <id>] [--http <port>]` | The MCP server, over stdio (bound to `--agent`), or over HTTP at `127.0.0.1:<port>/mcp?agent=<id>`. It includes the curator's `sleep_*` tools, so a local agent can run sleep |
+| `sleep` | Consolidate the inbox with the configured model: pull, curate, audit, commit, push. `--limit <n>`, `--dry-run`, `--no-git`, `--no-push` |
+| `audit [--since <when>] [--range <a..b>]` | Check recent commits by agents and the curator (their `Hippo-Actor` trailer) against what each may change. Default: the last 26 hours. Prints commit, path and rule, never content |
 | `remember <text...>` | Write an episode from the shell. As you by default; `-a <id>` for an agent, `-k <kind>` (default `fact`), `--secret` |
 | `handbook` | Regenerate `HANDBOOK.md` |
 | `validate` | Load the vault and report its format version, counts, and problems such as duplicate note names or invalid frontmatter |
@@ -39,7 +40,7 @@ These go before the command, e.g. `hippo -v ~/vaults/my-campaign validate`.
 | `secrets keygen [--reuse]` | Create the age identity and write its public key into the vault config. `--reuse` uses the identity already on this machine (for a second vault) |
 | `secrets show <entity> [field]` | Decrypt an entity's secret facts on this machine |
 
-Details live in the other guides: <Link guide="nightly-sleep">sleep</Link>, <Link guide="connecting-agents">serve</Link>, <Link guide="dashboard-tour">dashboard</Link>, <Link guide="secrets">secrets</Link>.
+Details live in the other guides: <Link guide="nightly-sleep">sleep and the curator</Link>, <Link guide="connecting-agents">serve</Link>, <Link guide="dashboard-tour">dashboard</Link>, <Link guide="secrets">secrets</Link>.
 
 ## Recipes
 
@@ -61,6 +62,12 @@ Try a new model without writing anything:
 
 ```bash
 HIPPO_LLM_PROVIDER=ollama HIPPO_LLM_MODEL=<model> npx @mehrad77/hippocampus -v ~/vaults/my-campaign sleep --dry-run --limit 3
+```
+
+Check what agents and the curator committed this week:
+
+```bash
+npx @mehrad77/hippocampus -v ~/vaults/my-campaign audit --since "7 days ago"
 ```
 
 Serve a vault on GitHub to a local agent, no clone:
@@ -90,7 +97,7 @@ Settings are read in this order, first one wins: your shell, a `.env` file in th
 
 ## The search index
 
-On your machine, search (`recall`, `ask_canon`) and the curator's entity matching use a persistent SQLite full-text index in `~/.cache/hippocampus/`, one file per vault folder or repo. The Worker keeps its own index in D1. It keeps up with the vault by itself and re-indexes only notes that changed. It's a cache: `hippo index` rebuilds it, deleting it is harmless, and `--no-index` skips it.
+On your machine, search (`recall`, `ask_canon`) and the curator's entity matching use a persistent SQLite full-text index in `~/.cache/hippocampus/`, one file per vault folder or repo. The hosted app keeps a separate index for each vault, in that vault's own storage. The index keeps up with the vault by itself and re-indexes only notes that changed. It's a cache: `hippo index` rebuilds it, deleting it is harmless, and `--no-index` skips it.
 
 **Semantic recall** is opt-in. Load an embedding model in LM Studio or Ollama and set `HIPPO_EMBED_MODEL`:
 
@@ -109,14 +116,14 @@ npx @mehrad77/hippocampus@<new> -v ~/vaults/my-campaign migrate --dry-run
 npx @mehrad77/hippocampus@<new> -v ~/vaults/my-campaign migrate
 ```
 
-Bump the pinned version in your schedule and vault CI at the same time. The CI workflow that `init` adds runs `validate` on every push, agents' inbox commits included.
+Bump the pinned version in your schedule and vault CI at the same time. The CI workflow that `init` (and the hosted app) adds runs `validate` on every push that changes more than the inbox, and `audit` once a day.
 
 ## Exit codes
 
 | Code | When |
 | --- | --- |
 | 0 | All good |
-| 1 | An error (printed as `✗ …`), or `validate` found problems or a version mismatch |
+| 1 | An error (printed as `✗ …`), `validate` found problems or a version mismatch, or `audit` found a violation |
 | 2 | `sleep` finished, but some episodes failed and stayed in the inbox |
 
 <Aside kind="tip">

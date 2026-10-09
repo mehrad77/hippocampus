@@ -112,6 +112,12 @@
   border-style: dashed;
 }
 
+.sz-state--wait {
+  --c: var(--ink-2);
+  --b: var(--surface-sunk);
+  border-style: dotted;
+}
+
 .sz-how {
   font-size: 0.75rem;
   color: var(--ink-3);
@@ -571,32 +577,12 @@
   grid-column: 1 / -1;
 }
 
-/* Hints and problems sit inside .field, whose bare spans are styled as labels. */
-.field > .hint,
-.field > .sz-problem {
-  font-family: var(--font-body);
-  font-size: 0.85rem;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.field > .hint {
-  color: var(--ink-3);
-}
-
 .field > label.check {
   font-family: var(--font-body);
   font-size: 1rem;
   letter-spacing: 0;
   text-transform: none;
   color: var(--ink);
-}
-
-.sz-problem {
-  color: var(--disputed);
-  font-size: 0.88rem;
-  font-weight: 600;
-  margin: 0;
 }
 
 .sz .input[aria-invalid="true"] {
@@ -1060,7 +1046,7 @@
 }
 
 @media (max-width: 640px) {
-  .sz-tokens thead {
+  :is(.sz-tokens, .hz-rtable) thead {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -1069,7 +1055,7 @@
     white-space: nowrap;
   }
 
-  .sz-tokens tr {
+  :is(.sz-tokens, .hz-rtable) tr {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 4px var(--space-3);
@@ -1077,14 +1063,14 @@
     border-bottom: 1px solid var(--rule);
   }
 
-  .sz-tokens td {
+  :is(.sz-tokens, .hz-rtable) td {
     display: block;
     padding: 0;
     border: 0;
     grid-column: 1;
   }
 
-  .sz-tokens td[data-label]::before {
+  :is(.sz-tokens, .hz-rtable) td[data-label]::before {
     content: attr(data-label);
     display: inline-block;
     min-width: 5rem;
@@ -1095,7 +1081,7 @@
     color: var(--ink-3);
   }
 
-  .sz-tokens td.sz-tokens__act {
+  :is(.sz-tokens, .hz-rtable) td.sz-tokens__act {
     grid-column: 2;
     grid-row: 1 / span 4;
     align-self: start;
@@ -1172,7 +1158,8 @@
     margin: 0;
     padding: 0;
     display: grid;
-    grid-template-columns: repeat(10, minmax(0, 1fr));
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
     gap: 4px;
     align-items: center;
   }
@@ -1482,11 +1469,7 @@
   font-size: 0.875rem;
 }
 
-/* Forms: hints at label size, the chips field dressed like a Carbon field. */
-:root:not([data-style="codex"]) .field > .hint {
-  font-size: var(--label-size);
-}
-
+/* Forms: the chips field dressed like a Carbon field. */
 :root:not([data-style="codex"]) .sz-chips {
   border: 0;
   border-bottom: 1px solid var(--rule-strong);
@@ -1564,7 +1547,7 @@
 }
 
 /* Tokens. */
-:root:not([data-style="codex"]) .sz-tokens td[data-label]::before {
+:root:not([data-style="codex"]) :is(.sz-tokens, .hz-rtable) td[data-label]::before {
   font-family: var(--font-body);
   font-size: var(--label-size);
 }

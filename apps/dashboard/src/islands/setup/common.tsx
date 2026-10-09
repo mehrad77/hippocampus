@@ -10,6 +10,31 @@ import { Icon } from "../../ui/Icon.tsx";
 import { CopyButton, Dialog, RelTime } from "../../ui/Parts.tsx";
 import { describeError, STATE_META, type BadgeState, type Wording } from "./model.ts";
 
+/** The URL hash without `#`, kept current: the wizards keep their step there. */
+export function useHash(): string {
+  const [hash, setHash] = useState(() => location.hash.slice(1));
+  useEffect(() => {
+    const onChange = () => setHash(location.hash.slice(1));
+    window.addEventListener("hashchange", onChange);
+    return () => window.removeEventListener("hashchange", onChange);
+  }, []);
+  return hash;
+}
+
+/** Scrolls to the element a non-step hash names (say, #personalization), once it exists. */
+export function useScrollToHash(hash: string, skip: boolean): void {
+  useEffect(() => {
+    if (!hash || skip) return;
+    let target: HTMLElement | null = null;
+    try {
+      target = document.getElementById(decodeURIComponent(hash));
+    } catch {
+      // A malformed hash: nothing to scroll to.
+    }
+    target?.scrollIntoView({ block: "start" });
+  }, [hash, skip]);
+}
+
 /** Refetch setup's status (and the session, which changes when a vault opens). */
 export function refreshSetup(): Promise<void[]> {
   return invalidate((k) => k.startsWith("/setup") || k === "/session");
@@ -18,13 +43,30 @@ export function refreshSetup(): Promise<void[]> {
 /** A setup state as glyph + word (+ color), never color alone. */
 export function StateBadge({ state, compact, className = "" }: { state: BadgeState; compact?: boolean; className?: string }) {
   const meta = STATE_META[state];
+  return <ToneTag tone={state} word={meta.word} title={meta.help} compact={compact} className={className} />;
+}
+
+/** A state in its own words (a vault "Ready", a run "Expired"), dressed like StateBadge: glyph + word + color. */
+export function ToneTag({ tone, word, title, compact, className = "" }: { tone: BadgeState; word: string; title?: string; compact?: boolean; className?: string }) {
   return (
-    <span className={`sz-state sz-state--${state} ${compact ? "sz-state--compact" : ""} ${className}`} title={meta.help}>
+    <span className={`sz-state sz-state--${tone} ${compact ? "sz-state--compact" : ""} ${className}`} title={title ?? STATE_META[tone].help}>
       <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-        <path d={meta.path} />
+        <path d={STATE_META[tone].path} />
       </svg>
-      {meta.word}
+      {word}
     </span>
+  );
+}
+
+/** A value to copy as is (a URL, a public key), with its button. */
+export function CopyLine({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="sz-copyline">
+      <code className="sz-break" aria-label={label}>
+        {value}
+      </code>
+      <CopyButton text={value} />
+    </div>
   );
 }
 
@@ -231,6 +273,22 @@ export function Field({ label, hint, problem, children, wide }: { label: React.R
   );
 }
 
+/** Toggle chips over the vault's domains, so authority only ever names a domain the config knows. */
+export function DomainChips({ domains, value, onChange, label }: { domains: readonly string[]; value: string[]; onChange: (v: string[]) => void; label: string }) {
+  return (
+    <div className="row" role="group" aria-label={label}>
+      {domains.map((d) => {
+        const on = value.includes(d);
+        return (
+          <button key={d} type="button" className="chip" aria-pressed={on} onClick={() => onChange(on ? value.filter((x) => x !== d) : [...value, d])}>
+            {on && <Icon name="check" size={12} />} {d}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Editable chips: type and press Enter (or comma) to add, click a chip to remove it. */
 export function ChipsInput({ values, onChange, validate, label, placeholder }: { values: string[]; onChange: (v: string[]) => void; validate: (raw: string, existing: string[]) => string | undefined; label: string; placeholder?: string }) {
   const [draft, setDraft] = useState("");
@@ -298,7 +356,28 @@ export function ChipsInput({ values, onChange, validate, label, placeholder }: {
 }
 
 /** A confirm dialog that says exactly what is about to happen. */
-export function ConfirmDialog({ open, title, children, confirmLabel, danger, busy, onConfirm, onClose }: { open: boolean; title: React.ReactNode; children: React.ReactNode; confirmLabel: string; danger?: boolean; busy?: boolean; onConfirm: () => void; onClose: () => void }) {
+export function ConfirmDialog({
+  open,
+  title,
+  children,
+  confirmLabel,
+  danger,
+  busy,
+  disabled,
+  onConfirm,
+  onClose,
+}: {
+  open: boolean;
+  title: React.ReactNode;
+  children: React.ReactNode;
+  confirmLabel: string;
+  danger?: boolean;
+  busy?: boolean;
+  /** Not ready to confirm yet (say, a typed confirmation doesn't match). */
+  disabled?: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
   return (
     <Dialog
       open={open}
@@ -309,7 +388,7 @@ export function ConfirmDialog({ open, title, children, confirmLabel, danger, bus
           <button type="button" className="btn btn--ghost" onClick={onClose}>
             Cancel
           </button>
-          <button type="button" className={`btn ${danger ? "btn--danger" : "btn--primary"}`} onClick={onConfirm} disabled={busy}>
+          <button type="button" className={`btn ${danger ? "btn--danger" : "btn--primary"}`} onClick={onConfirm} disabled={busy || disabled}>
             {busy ? "Working…" : confirmLabel}
           </button>
         </>

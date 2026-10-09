@@ -4,7 +4,7 @@ import type { LocalSetupStatus, SessionInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Personalization } from "../../ui/Personalization.tsx";
 import { AgentsStep } from "./AgentsStep.tsx";
-import { StateBadge } from "./common.tsx";
+import { StateBadge, useHash } from "./common.tsx";
 import { DoneStep } from "./DoneStep.tsx";
 import { GitStep } from "./GitStep.tsx";
 import { HealthChecklist } from "./Health.tsx";
@@ -30,16 +30,6 @@ const BODIES: Record<StepId, (p: StepProps) => React.ReactNode> = {
   remote: RemoteStep,
   done: DoneStep,
 };
-
-function useHash(): string {
-  const [hash, setHash] = useState(() => location.hash.slice(1));
-  useEffect(() => {
-    const onChange = () => setHash(location.hash.slice(1));
-    window.addEventListener("hashchange", onChange);
-    return () => window.removeEventListener("hashchange", onChange);
-  }, []);
-  return hash;
-}
 
 /** Setup (Session Zero) against `hippo dashboard`: a wizard driven by `location.hash`, one step per hash. */
 export function LocalWizard({ session, status }: { session: SessionInfo; status: LocalSetupStatus }) {

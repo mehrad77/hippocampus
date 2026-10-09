@@ -1,4 +1,4 @@
-import { StoreConflictError, VaultError, VaultVersionError } from "@hippocampus/core";
+import { AuditError, StoreConflictError, VaultError, VaultVersionError } from "@hippocampus/core";
 import { ZodError } from "zod";
 
 /** An error with an HTTP status and a stable `code` the UI can branch on. */
@@ -34,13 +34,18 @@ export function json(status: number, body: unknown, headers: Record<string, stri
   });
 }
 
-export function errorResponse(err: unknown): Response {
+/** What happens to an unexpected error: logged in full locally; the hosted app logs only that one happened. */
+export type ErrorReport = (err: unknown) => void;
+
+export function errorResponse(err: unknown, report: ErrorReport = console.error): Response {
   if (err instanceof HttpError) return json(err.status, { error: err.message, code: err.code, ...err.extra });
   if (err instanceof ZodError) return json(400, { error: err.issues.map((i) => `${i.path.join(".") || "body"}: ${i.message}`).join("; "), code: "INVALID" });
   if (err instanceof VaultVersionError) return json(409, { error: err.message, code: "VERSION" });
   if (err instanceof StoreConflictError) return json(409, { error: "The vault changed while saving. Reload and try again.", code: "CONFLICT" });
+  // Violations name a path and a rule, never content.
+  if (err instanceof AuditError) return json(409, { error: err.message, code: "AUDIT", violations: err.violations });
   if (err instanceof VaultError) return json(400, { error: err.message, code: "VAULT" });
-  console.error(err);
+  report(err);
   return json(500, { error: "Something went wrong on the server; see its log.", code: "INTERNAL" });
 }
 
@@ -81,6 +86,8 @@ export function safeEqual(a: string, b: string): boolean {
 /** Who the guard let in. Throw an `HttpError` to refuse. */
 export interface GuardResult {
   user?: { login: string };
+  /** The hosted app's account behind `user`, echoed in the session. */
+  account?: { status: "waitlisted" | "approved"; admin: boolean };
 }
 
 export type Guard = (request: Request) => GuardResult | Promise<GuardResult>;

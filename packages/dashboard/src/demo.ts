@@ -8,6 +8,7 @@ import {
   applyQuestUpdate,
   applyRuling,
   createEpisode,
+  createIntroduction,
   generateKeyPair,
   renderDoc,
   renderHandbook,
@@ -241,6 +242,7 @@ function pending(): { hoursAgo: number; agent: string; kind: EpisodeKind; text: 
     { hoursAgo: 3, agent: "home-finder", kind: "task", text: "Lease draft received for the Alfama flat; signing slot offered for Friday.", about: ["[[alfama-flat]]", "[[apartment-hunt]]"], confidence: 0.8 },
     { hoursAgo: 2, agent: "job-scout", kind: "observation", text: "Harbor Cafe trial shift could be on Saturday morning.", about: ["[[harbor-cafe]]"] },
     { hoursAgo: 1, agent: "calendar-bot", kind: "observation", text: "Placed a reminder for the agency appointment the day before.", about: ["[[migration-agency]]"] },
+    { hoursAgo: 0.5, agent: "transit-scout", kind: "observation", text: "Tram 28 stops two streets from the Alfama flat; a monthly transit pass costs 40 EUR.", about: ["[[alfama-flat]]"] },
   ];
 }
 
@@ -343,6 +345,20 @@ export async function buildDemoStore(seed: VaultStore | Record<string, string>, 
     const at = new Date(now.getTime() - p.hoursAgo * 3600_000);
     inbox.addEpisode(createEpisode(inbox.config.folders.inbox, { ...p, at: at.toISOString() }, at));
   }
+  // A newcomer waiting for the player's approval.
+  inbox.addIntroduction(
+    createIntroduction(
+      inbox.config.folders.inbox,
+      "transit-scout",
+      {
+        title: "Transit Scout",
+        lane: "Getting around Lisbon: transit passes, routes and strike notices",
+        host: "Claude Desktop",
+        about: "I plan routes between the flat, the university and the agency, and watch for strikes that could make the player late.",
+      },
+      new Date(now.getTime() - 4 * 3600_000),
+    ),
+  );
   await inbox.flush({ message: "demo: pending episodes" });
   return store;
 }

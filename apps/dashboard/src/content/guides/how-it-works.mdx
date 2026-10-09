@@ -17,9 +17,9 @@ The name describes the mechanism. Agents write fast, raw *episodic* memories. Ev
 
 ## The loop in five beats
 
-1. **Agents remember.** An agent calls `remember` over MCP, or commits one new file to `inbox/<agent-id>/` in the vault repo. Either way it returns at once, without waiting for any model.
+1. **Agents remember.** An agent calls `remember` over MCP (a local tool without MCP can write one new file to `inbox/<agent-id>/` instead). It returns at once, without waiting for any model.
 2. **The inbox holds it.** New episodes are unverified but not invisible. `recall` returns matching ones under `pending`, and the dashboard's Satchel lists them all.
-3. **The party sleeps.** Once a night, `hippo sleep` takes a batch of episodes, oldest first. It works out what each one is about, extracts the claims, and reconciles them with what's already known.
+3. **The party sleeps.** On a schedule, the curator takes a batch of episodes, oldest first: `hippo sleep` with a model of your choice, or an agent you trust answering the server's questions. It works out what each one is about, extracts the claims, and reconciles them with what's already known. See <Link guide="nightly-sleep">The curator</Link>.
 4. **Canon, chronicle, disputes.** Accepted facts land in entity notes with a status and their provenance. Each episode is appended to the day's chronicle, then removed from the inbox. Contradictions the rules can't settle become dispute notes.
 5. **You rule.** You are the player. In the Council, or by writing `ruling:` in a dispute note, you decide what's true, and your word outranks every agent.
 

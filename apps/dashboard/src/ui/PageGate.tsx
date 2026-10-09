@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useTerms } from "../lib/prefs.ts";
-import { BASE, href } from "../lib/routes.ts";
+import { href } from "../lib/routes.ts";
 import { useSession } from "../lib/session.ts";
 import type { SessionInfo } from "../lib/types.ts";
 import { Icon } from "./Icon.tsx";
@@ -26,7 +26,7 @@ export function PageGate({ children, allowSetup }: { children: (session: Session
 function SignInDoor({ code, message }: { code: string; message: string }) {
   const { v } = useTerms();
   const local = code === "LOCAL_TOKEN";
-  const login = `${BASE}/auth/login?return=${encodeURIComponent(location.pathname + location.search)}`;
+  const login = href.login(location.pathname + location.search + location.hash);
   return (
     <div className="door panel">
       <Icon name={local ? "key" : "lock"} size={40} />
@@ -40,15 +40,16 @@ function SignInDoor({ code, message }: { code: string; message: string }) {
         </>
       ) : (
         <>
-          <p>Sign in with the GitHub account that owns this vault.</p>
+          <p>{v("Sign in with GitHub to open your vault.", "Sign in with GitHub to open your campaign's vault.")}</p>
           <a className="btn btn--primary" href={login}>
             <Icon name="github" /> Sign in with GitHub
           </a>
-          <p className="muted small">{message}</p>
+          {message && message !== "Sign in with GitHub to continue." && <p className="muted small">{message}</p>}
         </>
       )}
       <p className="small">
-        New here? Read <a href={href.guide("how-it-works")}>how Hippocampus works</a>.
+        New here? {local ? <>Read </> : <><a href={href.page("welcome")}>What Hippocampus is</a>, or read </>}
+        <a href={href.guide("how-it-works")}>how it works</a>.
       </p>
     </div>
   );

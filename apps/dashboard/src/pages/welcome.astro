@@ -1,0 +1,103 @@
+---
+import Public from "../layouts/Public.astro";
+import NavIcon from "../ui/NavIcon.astro";
+import Term from "../ui/Term.astro";
+import { href } from "../lib/routes.ts";
+
+const login = href.login();
+---
+<Public titles={["Welcome", "Welcome"]} description="Shared, curated memory for your AI agents, kept in your own private GitHub repository.">
+  <section class="pub-hero" aria-labelledby="pub-title">
+    <p class="page-head__kicker">Hippocampus</p>
+    <h1 id="pub-title"><Term plain="Shared memory for your AI agents" codex="One campaign wiki your whole party remembers" /></h1>
+    <p class="pub-hero__lede">
+      <span class="lbl-plain">
+        Claude, ChatGPT, Cursor and your other agents save what they learn in one place, and your own best agent curates it into records you can
+        trust. It lives in <strong>your own private GitHub repository</strong>: read it, edit it in Obsidian, or take it with you.
+      </span>
+      <span class="lbl-codex">
+        Claude, ChatGPT, Cursor and the rest of your party file what they learn in one campaign wiki, and your own best agent curates it into
+        canon. It lives in <strong>your own private GitHub repository</strong>: read it, edit it in Obsidian, or take it with you.
+      </span>
+    </p>
+    <div class="row pub-hero__actions">
+      <a class="btn btn--primary" href={login}><NavIcon name="github" /> Sign in with GitHub</a>
+      <a class="btn" href="#how"><NavIcon name="guides" /> How it works</a>
+    </div>
+    <p class="small muted">New accounts join a short waitlist: an admin lets people in by hand.</p>
+  </section>
+
+  <section class="pub-section" aria-labelledby="how">
+    <h2 id="how">How it works</h2>
+    <ol class="pub-steps">
+      <li class="pub-step">
+        <NavIcon name="lock" size={26} />
+        <h3>Sign in and ask for access</h3>
+        <p>Sign in with GitHub. An admin approves your account, and the setup steps unlock.</p>
+      </li>
+      <li class="pub-step">
+        <NavIcon name="github" size={26} />
+        <h3>Bring your own private repo</h3>
+        <p>Create an empty private repository and install the Hippocampus GitHub App on just that one. The app sets the vault up inside it.</p>
+      </li>
+      <li class="pub-step">
+        <NavIcon name="party" size={26} />
+        <h3><Term plain="Connect your agents" codex="Gather your party" /></h3>
+        <p>
+          <Term
+            plain="One MCP address and a key; Claude.ai and ChatGPT connect with a GitHub sign-in. Each agent introduces itself, and you approve it."
+            codex="One MCP address and a key; Claude.ai and ChatGPT connect with a GitHub sign-in. Each agent knocks, and you seat it at the table."
+          />
+        </p>
+      </li>
+      <li class="pub-step">
+        <NavIcon name="moonStars" size={26} />
+        <h3><Term plain="Your best agent curates" codex="Your best agent keeps the canon" /></h3>
+        <p>
+          <Term
+            plain="On a schedule you choose, a curator agent of yours turns the inbox into confirmed records by clear rules, with your word first. Disagreements come to you."
+            codex="On a schedule you choose, a curator of yours sleeps on the party's notes and turns them into canon by clear rules, with your word first. Disputes come to the council: you."
+          />
+        </p>
+      </li>
+    </ol>
+  </section>
+
+  <section class="pub-section" aria-labelledby="privacy">
+    <h2 id="privacy">Your memory, your repository</h2>
+    <div class="pub-cards">
+      <div class="pub-card">
+        <h3><NavIcon name="codex" size={20} /> It stays yours</h3>
+        <p>Everything is Markdown in a repository on your GitHub account. Clone it, back it up, open it in Obsidian. The app only touches the repository you pick.</p>
+      </div>
+      <div class="pub-card">
+        <h3><NavIcon name="eye" size={20} /> What the operator can see</h3>
+        <p>
+          This service reads and writes your vault to answer your agents, and keeps a search index of it in Cloudflare. Its admin page shows account
+          names and vault states, not content. No third-party analytics, no ads.
+        </p>
+      </div>
+      <div class="pub-card">
+        <h3><NavIcon name="key" size={20} /> Secrets sealed with your key</h3>
+        <p>
+          Passport numbers and passwords are encrypted with a key made in your browser; only you hold its private half. The curator agent you pick
+          does see memories in full while curating, so choose one you trust.
+        </p>
+      </div>
+      <div class="pub-card">
+        <h3><NavIcon name="logout" size={20} /> Leave any time</h3>
+        <p>Delete your account from Setup: keys stop working, the app is uninstalled, and what this service holds for you is erased. Your repository stays with you.</p>
+      </div>
+    </div>
+    <p><a href={href.page("privacy")}>Read the privacy notice →</a></p>
+  </section>
+
+  <section class="pub-section pub-cta" aria-labelledby="ready">
+    <h2 id="ready"><Term plain="Ready?" codex="Ready to roll?" /></h2>
+    <p>Signing in only shares your GitHub login and id. Nothing touches your repositories until you install the app on one.</p>
+    <div class="row">
+      <a class="btn btn--primary" href={login}><NavIcon name="github" /> Sign in with GitHub</a>
+      <a class="btn btn--ghost" href={href.guide("how-it-works")}><NavIcon name="guides" /> <Term plain="Read the guides" codex="Read the Handbook" /></a>
+    </div>
+  </section>
+</Public>

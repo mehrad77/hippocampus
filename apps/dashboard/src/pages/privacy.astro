@@ -1,0 +1,97 @@
+---
+import Public from "../layouts/Public.astro";
+import NavIcon from "../ui/NavIcon.astro";
+import Term from "../ui/Term.astro";
+import { href } from "../lib/routes.ts";
+---
+<Public titles={["Privacy notice", "Privacy notice"]} description="What this Hippocampus processes, where it lives, and how to delete it. Draft.">
+  <article class="pub-doc prose">
+    <div class="callout callout--warn pub-draft" role="note">
+      <NavIcon name="warn" />
+      <div>
+        <strong>Draft: the operator must review this notice before launch.</strong> It describes what the Hippocampus software does. Whoever runs
+        this instance fills in who they are, how to reach them, and anything their setup adds.
+      </div>
+    </div>
+
+    <p class="page-head__kicker">Hippocampus</p>
+    <h1>Privacy notice</h1>
+    <p class="pub-doc__lede">
+      Hippocampus keeps shared memory for your AI agents in a private GitHub repository that you own. This notice says what this service
+      processes to do that, who can see it, and how to make it go away.
+    </p>
+
+    <h2 id="who">Who runs this service</h2>
+    <p><em>[Operator: your name or organization, and where you're based.]</em></p>
+
+    <h2 id="what">What it processes</h2>
+    <ul>
+      <li>
+        <strong>Your GitHub identity.</strong> When you sign in with GitHub, the service keeps your GitHub user id and login. It doesn't keep your
+        password or a lasting GitHub token: the sign-in token is used once to learn who you are, then dropped.
+      </li>
+      <li><strong>Your access request.</strong> The note you write when asking for access, for the admins who approve accounts.</li>
+      <li>
+        <strong>Your vault repository.</strong> Through the GitHub App you install on the repository you select, the service reads and writes that
+        repository's files to answer your agents and to save what they remember. It can't see repositories you didn't select.
+      </li>
+      <li>
+        <strong>A search index and cache of your vault.</strong> Kept per vault in Cloudflare, so search and reads are fast. They hold your notes'
+        text; secret values stay encrypted (see below).
+      </li>
+      <li><strong>Keys.</strong> Only a hash of each agent or curator key, with its label, scopes and when it was last used. The key itself is shown to you once and never stored.</li>
+      <li><strong>Connected apps.</strong> For connectors such as Claude.ai or ChatGPT: which app, which agent it acts as, and its permissions.</li>
+      <li><strong>Operational logs.</strong> Route names, status codes and timings, for keeping the service running. No vault content.</li>
+    </ul>
+    <p>
+      There are no third-party analytics, ads or tracking cookies. Signing in sets a session cookie (and a short-lived one while the sign-in is
+      under way). Your browser keeps a copy of recently viewed pages for this tab and your display preferences; signing out clears the copy.
+    </p>
+
+    <h2 id="agents">Your agents and your curator</h2>
+    <p>
+      Agents you connect read and write your vault within what their key or connection allows, and they run under their own providers' terms.
+      The <strong>curator</strong> you choose reads every new memory in full while curating, <strong>secret values included</strong>, before they're
+      encrypted. Give the curator key only to an agent, and an AI provider, you trust with that.
+    </p>
+
+    <h2 id="secrets">Secret facts</h2>
+    <p>
+      If you made a secrets key during setup, it was made in your browser, and only its public half reached this service. Secret values
+      (passport numbers, account numbers, passwords) are encrypted to it with <a href="https://age-encryption.org" rel="noopener noreferrer">age</a> and
+      stored in your repository. Without your key file nobody can read them: not the operator, and not you.
+    </p>
+
+    <h2 id="where">Where it lives</h2>
+    <p>
+      The service runs on Cloudflare (Workers, D1, Durable Objects, KV); your vault lives on GitHub. Each provider decides where it stores data.
+      <em>[Operator: add the regions and any other processors your setup uses.]</em>
+    </p>
+
+    <h2 id="delete">How long it's kept, and deleting it</h2>
+    <p>Everything above is kept while your account exists. To delete your account, open <a href={href.page("setup", "#account")}>Setup → Account</a> and confirm with your GitHub login. Right away:</p>
+    <ul>
+      <li>every key stops working and connected apps are signed out;</li>
+      <li>the GitHub App is uninstalled from your repository;</li>
+      <li>your account, keys, and your vault's search index and cache are erased from this service.</li>
+    </ul>
+    <p>
+      A minimal record (your GitHub id and login, marked deleted) stays so the deletion holds; you can sign up again later. Your repository stays
+      on GitHub, untouched: <Term plain="your memory is yours" codex="the campaign is yours" />, so delete the repository on GitHub if you want it
+      gone too. Uninstalling the app on GitHub disconnects your vault without deleting your account. Operational logs expire on their own.
+      <em>[Operator: state the log retention.]</em>
+    </p>
+
+    <h2 id="rights">Your choices</h2>
+    <p>
+      Your memory is already in your hands: clone the repository to export it, edit any note to correct it, and delete the account (above) to
+      remove what this service holds. For anything else, contact the operator.
+    </p>
+
+    <h2 id="contact">Contact</h2>
+    <p><em>[Operator: a contact address for privacy questions.]</em></p>
+
+    <h2 id="changes">Changes</h2>
+    <p>Changes to this notice are posted here with a date. <em>Status: draft, not yet in effect.</em></p>
+  </article>
+</Public>

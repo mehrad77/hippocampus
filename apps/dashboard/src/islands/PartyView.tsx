@@ -1,12 +1,12 @@
 import { useId, useState } from "react";
 import "../styles/play.css";
 import { postJson } from "../lib/api.ts";
-import { useResource } from "../lib/cache.ts";
+import { invalidate, useResource } from "../lib/cache.ts";
 import { emit, toast } from "../lib/events.ts";
 import { plural, titleCase } from "../lib/format.ts";
 import { useTerms } from "../lib/prefs.ts";
 import { href } from "../lib/routes.ts";
-import type { Catalog, Overview, PartyMember, SessionInfo } from "../lib/types.ts";
+import type { Catalog, IntroductionDecision, IntroductionResult, IntroductionView, Overview, PartyMember, SessionInfo } from "../lib/types.ts";
 import { EntityLink } from "../ui/EntityLink.tsx";
 import { Icon } from "../ui/Icon.tsx";
 import { PageGate } from "../ui/PageGate.tsx";
@@ -14,6 +14,7 @@ import { Dialog, Empty, Panel, RelTime, SkeletonPanel } from "../ui/Parts.tsx";
 import { errorMessage, settle, useHashTarget } from "../ui/play/actions.ts";
 import { PageHead } from "../ui/play/Bits.tsx";
 import { agentIdProblem, initials } from "../ui/play/model.ts";
+import { ConfirmDialog, DomainChips, Field } from "./setup/common.tsx";
 
 export default function PartyView() {
   return <PageGate>{(session) => <Party session={session} />}</PageGate>;
@@ -23,6 +24,8 @@ function Party({ session }: { session: SessionInfo }) {
   const { t, v } = useTerms();
   const { data: o, error } = useResource<Overview>("/overview", { poll: 60_000 });
   const [adding, setAdding] = useState<{ id: string } | null>(null);
+  const [approving, setApproving] = useState<IntroductionView | null>(null);
+  const [dismissing, setDismissing] = useState<IntroductionView | null>(null);
   useHashTarget(!!o);
   if (error && !o) return <div className="callout callout--danger">{error.message}</div>;
   if (!o)
@@ -37,6 +40,7 @@ function Party({ session }: { session: SessionInfo }) {
   const human = session.human ?? o.human;
   const canAdd = session.capabilities.party;
   const strangers = o.attention.unknownAgents;
+  const intros = o.attention.introductions;
   const members = [...o.party].sort((a, b) => (b.lastSeen ?? "").localeCompare(a.lastSeen ?? "") || a.title.localeCompare(b.title));
   return (
     <div className="stack play" style={{ ["--gap" as string]: "28px" }}>
@@ -77,9 +81,17 @@ function Party({ session }: { session: SessionInfo }) {
         </div>
       )}
 
+      {intros.length > 0 && <Introductions items={intros} canDecide={session.capabilities.introductions} onApprove={setApproving} onDismiss={setDismissing} />}
+
       {strangers.length > 0 && <Strangers ids={strangers} canAdd={canAdd} onAdd={(id) => setAdding({ id })} />}
 
       {canAdd && <AddMemberDialog open={!!adding} initialId={adding?.id ?? ""} party={o.party} human={human} onClose={() => setAdding(null)} />}
+      {session.capabilities.introductions && (
+        <>
+          <ApproveDialog intro={approving} human={human} onClose={() => setApproving(null)} />
+          <DismissDialog intro={dismissing} onClose={() => setDismissing(null)} />
+        </>
+      )}
     </div>
   );
 }
@@ -238,6 +250,202 @@ function Strangers({ ids, canAdd, onAdd }: { ids: string[]; canAdd: boolean; onA
         ))}
       </ul>
     </Panel>
+  );
+}
+
+// ── Introductions ─────────────────────────────────────────────────────────
+
+/** `POST actions/introduction`, then refetch everything that shows the party. */
+async function decide(body: IntroductionDecision): Promise<IntroductionResult> {
+  const res = await postJson<IntroductionResult>("/actions/introduction", body);
+  void invalidate((k) => ["/overview", "/catalog", "/entity", "/graph", "/setup"].some((p) => k.startsWith(p)));
+  return res;
+}
+
+function Introductions({ items, canDecide, onApprove, onDismiss }: { items: IntroductionView[]; canDecide: boolean; onApprove: (i: IntroductionView) => void; onDismiss: (i: IntroductionView) => void }) {
+  const { t, v } = useTerms();
+  return (
+    <Panel title={t("introductions")} icon="party" id="introductions" aside={plural(items.length, "agent")}>
+      <p className="small">
+        {v(
+          "These agents introduced themselves and are waiting for you. Until you approve one, what it reports stays unverified. Approving adds it as an agent, with the areas you choose.",
+          "These agents knocked and wait for your word. Until you seat one, its word counts as rumor. Seating it writes its party note, with the authority you choose.",
+        )}
+      </p>
+      <ul className="list strangers">
+        {items.map((i) => (
+          <li key={i.agent} className="stranger">
+            <span className="sheet__sigil sheet__sigil--small" aria-hidden>
+              {initials(i.title)}
+            </span>
+            {/* Everything but the id is the agent's own text: shown as plain text, never markup. */}
+            <span className="stranger__who stack" style={{ ["--gap" as string]: "2px" }}>
+              <span>
+                <strong>{i.title}</strong> <span className="mono small muted">{i.agent}</span>
+              </span>
+              {i.lane && <span className="small">{i.lane}</span>}
+              {i.about && <span className="small pre-line">{i.about}</span>}
+              <span className="small muted">
+                {i.host && <>runs in {i.host} · </>}
+                {i.model && <>{i.model} · </>}
+                asked <RelTime at={i.at} />
+              </span>
+            </span>
+            {canDecide ? (
+              <span className="row">
+                <button type="button" className="btn btn--sm btn--primary" onClick={() => onApprove(i)}>
+                  <Icon name="check" size={16} /> {t("approve")}…
+                </button>
+                <button type="button" className="btn btn--sm btn--ghost" onClick={() => onDismiss(i)}>
+                  <Icon name="close" size={16} /> {t("dismiss")}…
+                </button>
+              </span>
+            ) : (
+              <span className="small muted">
+                {v("To approve it, add ", "To seat it, add ")}
+                <code>party/{i.agent}.md</code> in Obsidian
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Panel>
+  );
+}
+
+function ApproveDialog({ intro, human, onClose }: { intro: IntroductionView | null; human: string; onClose: () => void }) {
+  const { t, v } = useTerms();
+  const open = !!intro;
+  const catalog = useResource<Catalog>(open ? "/catalog" : null);
+  const [seed, setSeed] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [lane, setLane] = useState("");
+  const [authority, setAuthority] = useState<string[]>([]);
+  const [tried, setTried] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  // Each opening starts from what the agent asked for, with no authority until the human ticks some.
+  const key = intro?.agent ?? null;
+  if (key !== seed) {
+    setSeed(key);
+    if (intro) {
+      setTitle(intro.title);
+      setLane(intro.lane ?? "");
+      setAuthority([]);
+      setTried(false);
+    }
+  }
+
+  const titleProblem = title.trim() ? undefined : v("Enter a display name.", "Give it a name for the sheet.");
+  const domains = catalog.data?.domains ?? [];
+
+  const submit = async (e?: React.SyntheticEvent) => {
+    e?.preventDefault();
+    setTried(true);
+    if (!intro || titleProblem) return;
+    setBusy(true);
+    try {
+      // An emptied lane is sent as "" so it clears what the agent asked for.
+      const res = await decide({ agent: intro.agent, decision: "approve", title: title.trim(), lane: lane.trim(), authority });
+      toast(v(`Approved ${title.trim()} as an agent.`, `${title.trim()} takes a seat at the table.`) + (res.decision === "approve" ? ` ${v("Saved", "Wrote")} ${res.path}.` : ""), "ok");
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onClose={() => !busy && onClose()}
+      title={
+        <span className="row">
+          <Icon name="party" /> {v(`Approve ${intro?.title ?? "agent"}`, `Seat ${intro?.title ?? "the newcomer"}`)}
+        </span>
+      }
+      footer={
+        <>
+          <span className="small muted spacer">Written as {human}</span>
+          <button type="button" className="btn btn--ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <button type="submit" form="approve-introduction" className="btn btn--primary" disabled={busy}>
+            <Icon name="check" /> {busy ? v("Approving…", "Seating…") : t("approve")}
+          </button>
+        </>
+      }
+    >
+      <form id="approve-introduction" className="stack" onSubmit={submit} noValidate>
+        <p className="small muted">
+          {v("This creates ", "This writes ")}
+          <code>party/{intro?.agent}.md</code>
+          {v(", signed by you, and removes the introduction. The agent asked for the name and description below; change them as you like.", ", signed by you, and tears up the introduction. The name and lane are what it asked for; change them as you like.")}
+        </p>
+        <Field label={v("Display name", "Name on the sheet")} problem={tried ? titleProblem : undefined}>
+          {(f) => <input id={f.id} className="input" value={title} onChange={(e) => setTitle(e.target.value)} aria-describedby={f.describedBy} aria-invalid={f.invalid} maxLength={120} required />}
+        </Field>
+        <Field label={v("What it handles (optional)", "Lane (optional)")}>
+          {(f) => <textarea id={f.id} className="textarea textarea--short" value={lane} onChange={(e) => setLane(e.target.value)} aria-describedby={f.describedBy} maxLength={500} />}
+        </Field>
+        <div className="field">
+          <span>{v("Responsible for (optional)", "Authority (optional)")}</span>
+          {catalog.error && !catalog.data ? (
+            <span className="field-error small">
+              {v("Couldn't load the areas: ", "Couldn't load the campaign's domains: ")}
+              {catalog.error.message}
+            </span>
+          ) : catalog.loading && !catalog.data ? (
+            <span className="hint">{v("Loading the areas…", "Loading the campaign's domains…")}</span>
+          ) : domains.length ? (
+            <>
+              <DomainChips domains={domains} value={authority} onChange={setAuthority} label={v("Areas it's responsible for", "Authority domains")} />
+              <span className="hint">
+                {v(
+                  "None is the safe default: its facts stay unverified until another source confirms them. For records of the areas you tick, its facts outrank agents that aren't responsible for them.",
+                  "None is the safe default: its word stays a rumor until corroborated. On entities of the domains you tick, its word outranks agents without authority.",
+                )}
+              </span>
+            </>
+          ) : (
+            <span className="hint">
+              {v("No areas are defined in ", "No domains are defined in ")}
+              <code>_hippo/config.yaml</code>
+              {v(" yet, so it's added without any.", " yet, so it joins without authority.")}
+            </span>
+          )}
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+function DismissDialog({ intro, onClose }: { intro: IntroductionView | null; onClose: () => void }) {
+  const { t, v } = useTerms();
+  const [busy, setBusy] = useState(false);
+  const confirm = async () => {
+    if (!intro) return;
+    setBusy(true);
+    try {
+      await decide({ agent: intro.agent, decision: "dismiss" });
+      toast(v(`Dismissed ${intro.title}'s request.`, `${intro.title} was turned away.`), "ok");
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <ConfirmDialog open={!!intro} title={v(`Dismiss ${intro?.title ?? "this agent"}?`, `Turn ${intro?.title ?? "this newcomer"} away?`)} confirmLabel={t("dismiss")} danger busy={busy} onConfirm={() => void confirm()} onClose={() => !busy && onClose()}>
+      <p>
+        {v(
+          "This removes its request to join. It can still send notes, but what it reports stays unverified, and it can ask again.",
+          "This tears up its introduction. It can still file memories, but its word stays a rumor, and it may knock again.",
+        )}
+      </p>
+    </ConfirmDialog>
   );
 }
 

@@ -146,7 +146,8 @@ export function isLocked(step: StepDef, hasVault: boolean): boolean {
 
 // ── States ──────────────────────────────────────────────────────────────────
 
-export type BadgeState = SetupState | "locked";
+/** `wait`: waiting on someone else (an admin, a commit), not on you. */
+export type BadgeState = SetupState | "locked" | "wait";
 
 /** Each state as a word and a glyph (24×24 path), so color is never the only signal. */
 export const STATE_META: Record<BadgeState, { word: string; help: string; path: string }> = {
@@ -157,6 +158,7 @@ export const STATE_META: Record<BadgeState, { word: string; help: string; path: 
   optional: { word: "Optional", help: "Nice to have", path: "M12 6v12M6 12h12" },
   na: { word: "Not needed", help: "Doesn't apply to this vault", path: "M6 12h12" },
   locked: { word: "Locked", help: "Needs a vault first", path: "M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5V11Zm7 4v2" },
+  wait: { word: "Waiting", help: "Waiting on someone else, not on you", path: "M6 3h12M6 21h12M7 3v3a5 5 0 0 0 10 0V3M7 21v-3a5 5 0 0 1 10 0v3" },
 };
 
 /** A step's badge: its status item's state, `locked` without a vault, nothing for welcome/done. */
@@ -362,61 +364,7 @@ export function providerForServer(name: string): string {
   return "openai-compatible";
 }
 
-// ── Remote ──────────────────────────────────────────────────────────────────
-
-export const PLACEHOLDER_WORKER = "https://hippocampus.<your-subdomain>.workers.dev";
-
-export function workerBase(url: string | undefined): string {
-  return normalizeUrl(url ?? "") ?? PLACEHOLDER_WORKER;
-}
-
-export interface DeployStep {
-  title: string;
-  detail: string;
-  snippets: Snippet[];
-}
-
-/** The guided Worker deploy, with the user's Worker URL filled in when known. Nothing here is run for you. */
-export function workerDeploySteps(url: string | undefined): DeployStep[] {
-  const base = workerBase(url);
-  const put = (name: string) => `pnpm exec wrangler secret put ${name}`;
-  return [
-    {
-      title: "Create the Worker's storage",
-      detail: "From a clone of the Hippocampus repository (pnpm install done), signed in to Cloudflare with wrangler login. Paste the three ids it prints into apps/worker/wrangler.jsonc, and keep that edit local.",
-      snippets: [
-        {
-          label: "Search index, agent tokens and OAuth grants",
-          lang: "bash",
-          code: ["cd apps/worker", "pnpm exec wrangler d1 create hippocampus-index", "pnpm exec wrangler kv namespace create TOKENS", "pnpm exec wrangler kv namespace create OAUTH_KV"].join("\n"),
-        },
-      ],
-    },
-    {
-      title: "Point it at your private vault",
-      detail: "Each command asks for the value. GITHUB_REPO is owner/name of the vault repository. GITHUB_TOKEN is a fine-grained token with Contents: read and write on that repository only.",
-      snippets: [{ label: "Vault access", lang: "bash", code: [put("GITHUB_REPO"), put("GITHUB_TOKEN")].join("\n") }],
-    },
-    {
-      title: "Create a GitHub OAuth app",
-      detail: "GitHub → Settings → Developer settings → OAuth Apps → New OAuth App. Use the Worker URL as the homepage and this callback. The dashboard signs in at …/callback/dashboard, which GitHub accepts under the same callback.",
-      snippets: [
-        { label: "Authorization callback URL", lang: "text", code: `${base}/oauth/github/callback` },
-        { label: "Used by the dashboard sign-in (no separate app needed)", lang: "text", code: `${base}/oauth/github/callback/dashboard` },
-      ],
-    },
-    {
-      title: "Turn on sign-in",
-      detail: `HIPPO_PUBLIC_URL is ${base}. HIPPO_OWNERS is your GitHub login (comma-separate several); only these accounts can sign in and connect apps. The last two come from the OAuth app.`,
-      snippets: [{ label: "Sign-in settings", lang: "bash", code: [put("HIPPO_PUBLIC_URL"), put("HIPPO_OWNERS"), put("GITHUB_OAUTH_CLIENT_ID"), put("GITHUB_OAUTH_CLIENT_SECRET")].join("\n") }],
-    },
-    {
-      title: "Deploy",
-      detail: "From the repository root. Wrangler prints the Worker's URL: paste it above and check it.",
-      snippets: [{ label: "Deploy the Worker", lang: "bash", code: "pnpm --filter @hippocampus/worker run deploy" }],
-    },
-  ];
-}
+// ── Keys ────────────────────────────────────────────────────────────────
 
 export const TOKEN_SCOPES: readonly { id: "read" | "remember" | "quest"; label: Wording; help: Wording }[] = [
   { id: "read", label: ["Read", "Read"], help: ["Search and read the vault. Every token needs it.", "Recall and read the vault. Every token needs it."] },

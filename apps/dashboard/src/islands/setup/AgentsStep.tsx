@@ -44,7 +44,7 @@ export function AgentsStep({ status }: StepProps) {
       <div className="callout">
         <Icon name="cloud" />
         <div className="small">
-          Assistants that can't run a process on this machine (Claude.ai, ChatGPT, a phone) connect to a remote Worker instead: see the <a href="#remote">{v("Remote access step", "remote step")}</a>.
+          Assistants that can't run a process on this machine (Claude.ai, ChatGPT, a phone) connect to a hosted Hippocampus instead: see the <a href="#remote">{v("Remote access step", "remote step")}</a>.
         </div>
       </div>
     </div>

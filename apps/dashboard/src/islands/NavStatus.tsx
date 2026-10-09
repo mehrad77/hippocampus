@@ -20,6 +20,12 @@ export function NavStatus() {
     set("council", o?.counts.disputes);
     set("satchel", o?.counts.inbox);
   }, [overview.data]);
+  // The admin link is static and hidden; only admins of the hosted app see it.
+  const admin = !!session.data?.account?.admin;
+  useEffect(() => {
+    if (!admin) return;
+    for (const el of document.querySelectorAll<HTMLElement>("[data-admin-link]")) el.hidden = false;
+  }, [admin]);
   useEffect(() => {
     const name = session.data?.campaign;
     if (!name) return;

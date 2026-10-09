@@ -79,14 +79,14 @@ describe("MCP source parity", () => {
 
   it("offers only what the agent's scopes allow, and never the human's actions", async () => {
     const caps = async (opts: { agent?: string; scopes?: Scope[] }) => capabilities((await linked(opts)).remote, "none");
-    const none = { rule: false, quest: false, remember: false, party: false, setup: "none" };
+    const none = { rule: false, quest: false, remember: false, party: false, introductions: false, curator: false, setup: "none" };
     expect(await caps({ agent: "residency-agent" })).toEqual({ ...none, quest: true, remember: true });
     expect(await caps({ agent: "residency-agent", scopes: ["read"] })).toEqual(none);
     expect(await caps({ agent: "residency-agent", scopes: ["read", "remember"] })).toEqual({ ...none, remember: true });
     expect(await caps({ agent: "residency-agent", scopes: ["read", "quest"] })).toEqual({ ...none, quest: true });
     // Unbound, every write would need an agent id the dashboard can't choose.
     expect(await caps({})).toEqual(none);
-    expect(capabilities((await linked()).local, "none")).toEqual({ rule: true, quest: true, remember: true, party: true, setup: "none" });
+    expect(capabilities((await linked()).local, "none")).toEqual({ rule: true, quest: true, remember: true, party: true, introductions: true, curator: false, setup: "none" });
   });
 
   it("files writes under the agent", async () => {

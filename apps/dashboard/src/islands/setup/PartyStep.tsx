@@ -8,7 +8,7 @@ import type { Catalog, Overview, PartyMember } from "../../lib/types.ts";
 import { EntityLink } from "../../ui/EntityLink.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Empty, RelTime, SkeletonPanel } from "../../ui/Parts.tsx";
-import { Effects, ErrorCallout, Field, useAction } from "./common.tsx";
+import { DomainChips, Effects, ErrorCallout, Field, useAction } from "./common.tsx";
 import { agentIdProblem, type StepProps } from "./model.ts";
 
 interface NewMember {
@@ -227,16 +227,7 @@ function AddMember({ initialId, domains, taken }: { initialId?: string; domains:
         <div className="field sz-wide">
           <span>Authority (optional)</span>
           {domains.length ? (
-            <div className="row" role="group" aria-label="Authority over domains">
-              {domains.map((d) => {
-                const on = authority.includes(d);
-                return (
-                  <button key={d} type="button" className="chip" aria-pressed={on} onClick={() => setAuthority((xs) => (on ? xs.filter((x) => x !== d) : [...xs, d]))}>
-                    {on && <Icon name="check" size={12} />} {d}
-                  </button>
-                );
-              })}
-            </div>
+            <DomainChips domains={domains} value={authority} onChange={setAuthority} label="Authority over domains" />
           ) : (
             <span className="hint">
               This vault has no domains yet. Add some under <code>domains</code> in <code>_hippo/config.yaml</code>.

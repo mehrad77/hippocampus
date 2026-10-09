@@ -35,7 +35,7 @@ Owns [[apartment-hunt]].
 | `authority` | Domains where its reports are canon at once |
 | `host` | Where it runs, for your reference (a chat app, a bot, a coding agent) |
 
-Agent ids are lowercase letters, digits and dashes, starting with a letter or digit, up to 63 characters. That's the same rule as the Worker's consent page, so an id works everywhere.
+Agent ids are lowercase letters, digits and dashes, starting with a letter or digit, up to 63 characters. That's the same rule everywhere, so an id works on the command line, on the hosted app and in its consent page. Your own id and the reserved ids `human`, `curator`, `unknown` and `hippocampus` can't be agent ids, and an agent must use its exact id: a title or alias doesn't count.
 
 ## Domains and authority
 
@@ -80,10 +80,11 @@ An agent that writes to the inbox without a party sheet is **unknown**:
 
 - Its episodes are accepted and consolidated. Nothing is thrown away.
 - It has no authority anywhere, so everything it reports starts as a rumor.
-- `onboard` tells it so, and asks it to have you add `party/<id>.md`.
+- `onboard` tells it so, and asks it to **introduce** itself: a title, its lane, where it runs, its model and a few lines about what it does. The introduction waits in `inbox/<id>/` for you.
+- On the Party page, **Approve** seats it with the authority domains you choose (you can change its name and lane first), and **Dismiss** tears the introduction up. A dismissed agent can still write, as a rumor, and may introduce itself again.
 - The Tavern lists unknown agents under what needs your attention, and Session Zero offers to add them.
 
-An agent's id comes from the episode's `agent:` property, or else from its folder in `inbox/`. Over MCP it comes from the connection: `--agent`, `?agent=`, or the Worker token's agent. Ids are compared in lowercase.
+An agent's id comes from the episode's `agent:` property, or else from its folder in `inbox/`. Over MCP it comes from the connection: `--agent`, `?agent=`, a single-agent key or connector on the hosted app, or the `agent` argument the agent passes with an agent key. Ids are compared in lowercase.
 
 ## Adding a party member
 

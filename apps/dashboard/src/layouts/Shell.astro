@@ -9,6 +9,7 @@ import Term from "../ui/Term.astro";
 import { TERMS, type TermKey } from "../lib/terms.ts";
 import Global from "../islands/Global.tsx";
 import ThemeToggle from "../islands/ThemeToggle.tsx";
+import UserMenu from "../islands/UserMenu.tsx";
 import { href, type Page } from "../lib/routes.ts";
 import type { IconName } from "../lib/icons.ts";
 
@@ -85,7 +86,9 @@ const current = (p: string) => (p === page || (page === "guide" && p === "guides
           {meta.map(([p, icon]) => (
             <a class="navlink" href={href.page(p)} aria-current={current(p)}><NavIcon name={icon} /><span><Term k={term(p)} /></span></a>
           ))}
+          <a class="navlink" href={href.page("admin")} aria-current={current("admin")} data-admin-link hidden={page !== "admin"}><NavIcon name="party" /><span><Term k="admin" /></span></a>
           <ThemeToggle client:only="react" />
+          <UserMenu client:only="react" />
         </div>
       </nav>
       <div class="scrim" hidden data-close-drawer></div>
@@ -96,6 +99,7 @@ const current = (p: string) => (p === page || (page === "guide" && p === "guides
           </button>
           <span class="topbar__title">{plainTitle === codexTitle ? title : <Term plain={plainTitle} codex={codexTitle} />}</span>
           <button type="button" class="btn btn--ghost btn--icon" aria-label="Search" data-open-palette><NavIcon name="search" /></button>
+          <UserMenu client:only="react" compact />
         </header>
         <main class="main" id="main">
           <div class="main__inner">

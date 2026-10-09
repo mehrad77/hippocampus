@@ -3,8 +3,8 @@ import { postJson } from "../../lib/api.ts";
 import { toast } from "../../lib/events.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { Icon } from "../../ui/Icon.tsx";
-import { Effects, ErrorCallout, Field, JobRunner, refreshSetup, Snippets, StateBadge, useAction } from "./common.tsx";
-import { EMBED_PROVIDERS, normalizeUrl, providerDef, workerDeploySteps, type StepProps } from "./model.ts";
+import { Effects, ErrorCallout, Field, JobRunner, refreshSetup, StateBadge, useAction } from "./common.tsx";
+import { EMBED_PROVIDERS, normalizeUrl, providerDef, type StepProps } from "./model.ts";
 
 interface Reach {
   mcp: boolean;
@@ -21,11 +21,11 @@ export function RemoteStep({ status, hasVault }: StepProps) {
         items={[
           ["writes", <>the Worker's URL and the embedding settings (HIPPO_EMBED_*) to <code>{status.envFile}</code>.</>],
           ["contacts", "your Worker, only when you press Check."],
-          ["shows", "the Cloudflare and GitHub steps to deploy a Worker. Deploying is yours to run; nothing here talks to Cloudflare."],
+          ["never", "signs you in anywhere or talks to Cloudflare: the Worker is set up on its own pages."],
         ]}
       />
       <WorkerUrl saved={savedUrl} />
-      <DeployGuide url={savedUrl} open={!savedUrl} />
+      <WhereToGetOne open={!savedUrl} />
       <Embeddings status={status} savedUrl={savedUrl} hasVault={hasVault} />
     </div>
   );
@@ -113,27 +113,22 @@ function ReachRow({ ok, label, detail }: { ok: boolean; label: string; detail: s
   );
 }
 
-function DeployGuide({ url, open }: { url: string; open: boolean }) {
-  const { v } = useTerms();
-  const steps = workerDeploySteps(url);
+/** Where a Worker comes from now: a hosted Hippocampus (sign in with GitHub), or one you run yourself. */
+function WhereToGetOne({ open }: { open: boolean }) {
   return (
     <details className="sz-more sz-deploy" open={open}>
       <summary>
-        <Icon name="cloud" size={18} /> Deploy a Worker <span className="small muted">· about 15 minutes, on Cloudflare's free plan</span>
+        <Icon name="cloud" size={18} /> Don't have a Worker yet?
       </summary>
-      <p className="small">
-        The Worker reads your private vault repository through GitHub's API, keeps its search index in D1, and writes every memory as one commit.{" "}
-        {v("It doesn't run the nightly update, so keep the one on this machine.", "It doesn't run the nightly sleep, so keep the one on this machine.")}
-      </p>
-      <ol className="sz-deploy__steps">
-        {steps.map((s) => (
-          <li key={s.title} className="sz-deploy__step">
-            <h4>{s.title}</h4>
-            <p className="small">{s.detail}</p>
-            <Snippets snippets={s.snippets} />
-          </li>
-        ))}
-      </ol>
+      <ul className="sz-howto small">
+        <li>
+          <strong>Use a hosted Hippocampus:</strong> sign in with GitHub on its welcome page, then follow its Setup steps. It keeps your vault in a private repository you own, gives you the MCP address and keys, and helps you set up a curator.
+        </li>
+        <li>
+          <strong>Or run your own:</strong> the Worker in <code>apps/worker</code> of the Hippocampus repository deploys to Cloudflare (see docs/USAGE.md in the repository).
+        </li>
+      </ul>
+      <p className="small">Then paste its URL above, and press Check.</p>
     </details>
   );
 }

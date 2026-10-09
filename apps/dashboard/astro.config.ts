@@ -8,7 +8,8 @@ const BASE = "/dashboard";
 
 /**
  * Serve the dashboard API inside `astro dev`: the demo campaign, or a real vault with HIPPO_VAULT
- * (private data: never commit screenshots of it). Production serves the same API from the CLI or Worker.
+ * (private data: never commit screenshots of it). HIPPO_DEMO_HOSTED=1 puts the hosted app's sign-in
+ * and onboarding in front of the demo. Production serves the same API from the CLI or Worker.
  */
 function hippoDevApi(): AstroIntegration {
   return {
@@ -64,6 +65,6 @@ export default defineConfig({
     ssr: { noExternal: [/^@hippocampus\//] },
     // Pre-bundle every client dependency up front: a mid-session re-optimization in `astro dev`
     // otherwise leaves islands holding two copies of React.
-    optimizeDeps: { include: ["react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-dom", "react-dom/client", "react-markdown", "remark-gfm", "d3-force"] },
+    optimizeDeps: { include: ["react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-dom", "react-dom/client", "react-markdown", "remark-gfm", "d3-force", "age-encryption"] },
   },
 });

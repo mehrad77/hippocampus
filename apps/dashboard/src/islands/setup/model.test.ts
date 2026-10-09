@@ -19,7 +19,6 @@ import {
   syncSnippets,
   tally,
   truncateKey,
-  workerDeploySteps,
 } from "./model.ts";
 
 const item = (id: string, state: SetupItem["state"]): SetupItem => ({ id, title: id, state, detail: "", how: "performed" });
@@ -134,16 +133,6 @@ describe("snippets", () => {
     const labels = syncSnippets(git({ remote, upstream: "origin/main", ahead: 2, behind: 1, dirty: 1 }), "~/v").map((s) => s.label);
     expect(labels).toEqual(["Commit 1 changed file", "Pull 1 new commit", "Push"]);
     expect(syncSnippets(git({ remote }), "~/v")[0]?.code).toContain("git push -u origin main");
-  });
-
-  it("fills the Worker URL into the deploy guide", () => {
-    const steps = workerDeploySteps("https://hippocampus.example.workers.dev/");
-    const all = steps.flatMap((s) => s.snippets.map((x) => x.code)).join("\n");
-    expect(all).toContain("https://hippocampus.example.workers.dev/oauth/github/callback");
-    expect(all).toContain("https://hippocampus.example.workers.dev/oauth/github/callback/dashboard");
-    expect(all).toContain("wrangler kv namespace create OAUTH_KV");
-    expect(all).toContain("pnpm --filter @hippocampus/worker run deploy");
-    expect(workerDeploySteps(undefined)[2]?.snippets[0]?.code).toContain("<your-subdomain>");
   });
 });
 

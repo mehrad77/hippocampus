@@ -1,11 +1,11 @@
-import { HippoService, VaultVersionError, parseDoc } from "@hippocampus/core";
+import { AuditError, HippoService, VaultVersionError, parseDoc } from "@hippocampus/core";
 import { afterAll, describe, expect, it } from "vitest";
 import { SECRET_PLAINTEXT, now, richStore } from "./__fixtures__/vault.ts";
-import { createDashboardApi } from "./api.ts";
+import { createDashboardApi, type DashboardApiOptions } from "./api.ts";
 import { LOCAL_COOKIE, MAX_BODY, localGuard, localSignIn, type Guard } from "./http.ts";
 import { serviceSource } from "./service-source.ts";
 import type { SetupPort } from "./setup.ts";
-import type { DashboardSource } from "./source.ts";
+import type { CuratorStatus, DashboardSource } from "./source.ts";
 
 const BASE = "/dashboard/api";
 const ORIGIN = "http://127.0.0.1:4100";
@@ -19,12 +19,14 @@ afterAll(() => {
 
 const letIn: Guard = () => ({ user: { login: "player" } });
 
-function harness(opts: { source?: (full: DashboardSource) => DashboardSource | undefined; setup?: SetupPort; guard?: Guard } = {}) {
+function harness(
+  opts: { source?: (full: DashboardSource) => DashboardSource | undefined; setup?: SetupPort; guard?: Guard } & Pick<DashboardApiOptions, "setupKind" | "report"> = {},
+) {
   const store = richStore();
   const service = new HippoService(store, { now });
   const full = serviceSource(service, { mode: "local", vault: { kind: "dir", dir: "/vaults/lisbon-arc" } });
   const source = opts.source ? opts.source(full) : full;
-  const api = createDashboardApi({ basePath: BASE, source: () => source, setup: opts.setup, guard: opts.guard ?? letIn });
+  const api = createDashboardApi({ basePath: BASE, source: () => source, setup: opts.setup, guard: opts.guard ?? letIn, setupKind: opts.setupKind, report: opts.report });
   const send = async (method: string, path: string, init: { body?: string; json?: unknown; headers?: Record<string, string> } = {}) => {
     const body = init.json !== undefined ? JSON.stringify(init.json) : init.body;
     const headers = { ...(init.json !== undefined ? { "content-type": "application/json" } : {}), ...init.headers };
@@ -56,7 +58,7 @@ describe("dashboard API: reads", () => {
       human: "player",
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
-      capabilities: { rule: true, quest: true, remember: true, party: true, setup: "none" },
+      capabilities: { rule: true, quest: true, remember: true, party: true, introductions: true, curator: false, setup: "none" },
     });
   });
 
@@ -142,6 +144,32 @@ describe("dashboard API: actions", () => {
   });
 });
 
+describe("dashboard API: introductions", () => {
+  it("approve seats the agent with the human's choices", async () => {
+    const { post, get, store } = harness();
+    await new HippoService(store, { now }).introduce("job-scout", { title: "Job Scout", lane: "Part-time work", host: "Claude Desktop", about: "I watch job boards." });
+    expect((await get("overview")).body.attention).toMatchObject({
+      unknownAgents: [],
+      introductions: [{ agent: "job-scout", title: "Job Scout", lane: "Part-time work", host: "Claude Desktop", about: "I watch job boards." }],
+    });
+    const r = await post("actions/introduction", { agent: "job-scout", decision: "approve", lane: "Career", authority: ["career"] });
+    expect(r).toMatchObject({ status: 200, body: { decision: "approve", agent: "job-scout", path: "party/job-scout.md" } });
+    expect(parseDoc((await store.read("party/job-scout.md"))!).data).toMatchObject({ type: "party", title: "Job Scout", lane: "Career", authority: ["career"], host: "Claude Desktop" });
+    expect((await get("overview")).body.attention).toMatchObject({ unknownAgents: [], introductions: [] });
+    expect(await post("actions/introduction", { agent: "job-scout", decision: "approve" })).toMatchObject({ status: 400, body: { code: "VAULT" } });
+  });
+
+  it("dismiss removes the introduction, and the agent is a stranger again", async () => {
+    const { post, get, store } = harness();
+    await new HippoService(store, { now }).introduce("job-scout", { title: "Job Scout" });
+    expect(await post("actions/introduction", { agent: "job-scout", decision: "dismiss" })).toMatchObject({ status: 200, body: { decision: "dismiss", agent: "job-scout" } });
+    expect((await get("overview")).body.attention).toMatchObject({ unknownAgents: ["job-scout"], introductions: [] });
+    expect(await post("actions/introduction", { agent: "job-scout", decision: "dismiss" })).toMatchObject({ status: 400, body: { code: "VAULT" } });
+    expect(await post("actions/introduction", { agent: "job-scout", decision: "maybe" })).toMatchObject({ status: 400, body: { code: "INVALID" } });
+    expect(await post("actions/introduction", { agent: "job-scout", decision: "approve", authority: "career" })).toMatchObject({ status: 400, body: { code: "INVALID" } });
+  });
+});
+
 describe("dashboard API: errors", () => {
   it("refuses bodies that aren't small JSON objects of the right shape", async () => {
     const { send, post } = harness();
@@ -178,7 +206,7 @@ describe("dashboard API: errors", () => {
     expect((await get("session")).body).toEqual({
       mode: "setup",
       user: { login: "player" },
-      capabilities: { rule: false, quest: false, remember: false, party: false, setup: "none" },
+      capabilities: { rule: false, quest: false, remember: false, party: false, introductions: false, curator: false, setup: "none" },
     });
     expect(await get("setup/status")).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
   });
@@ -187,7 +215,8 @@ describe("dashboard API: errors", () => {
     const calls: string[] = [];
     const setup: SetupPort = {
       kind: "local",
-      status: async () => ({ kind: "remote", items: [], oauth: { on: false, owners: 0, missing: [] }, repo: { name: "lisbon-arc", branch: "main" }, index: {}, agents: [], unknownAgents: [] }),
+      // Only routing is under test, so a bare status will do.
+      status: async () => ({ kind: "local", items: [] }) as never,
       handle: async (method, path, body) => {
         calls.push(`${method} ${path} ${JSON.stringify(body ?? null)}`);
         return path === "llm" ? { provider: "lmstudio" } : undefined;
@@ -195,18 +224,21 @@ describe("dashboard API: errors", () => {
     };
     const { get, post } = harness({ source: () => undefined, setup });
     expect((await get("session")).body.capabilities.setup).toBe("local");
-    expect((await get("setup")).body).toMatchObject({ kind: "remote" });
-    expect((await get("setup/status")).body).toMatchObject({ kind: "remote" });
+    expect((await get("setup")).body).toMatchObject({ kind: "local" });
+    expect((await get("setup/status")).body).toMatchObject({ kind: "local" });
     expect((await get("setup/llm")).body).toEqual({ provider: "lmstudio" });
     expect((await post("setup/schedule", { hour: 3 })).body).toEqual({ ok: true });
     expect(calls).toEqual(["GET llm null", 'POST schedule {"hour":3}']);
   });
 
   it("501 when the source lacks a capability", async () => {
-    const { get, post } = harness({ source: (full) => ({ ...full, rule: undefined, addParty: undefined }) });
-    expect((await get("session")).body.capabilities).toEqual({ rule: false, quest: true, remember: true, party: false, setup: "none" });
+    const { get, post } = harness({ source: (full) => ({ ...full, rule: undefined, addParty: undefined, introduction: undefined }) });
+    expect((await get("session")).body.capabilities).toEqual({ rule: false, quest: true, remember: true, party: false, introductions: false, curator: false, setup: "none" });
     expect(await post("actions/rule", { dispute: "dispute-migration-agency-office-address", claim: 0 })).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
     expect(await post("actions/party", { id: "job-scout", title: "Job Scout" })).toMatchObject({ status: 501 });
+    expect(await post("actions/introduction", { agent: "job-scout", decision: "dismiss" })).toMatchObject({ status: 501 });
+    expect(await get("curator")).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
+    expect(await post("actions/curator", { abort: "run-01" })).toMatchObject({ status: 501 });
   });
 
   it("a vault that can't load still gets a session that explains why", async () => {
@@ -217,6 +249,66 @@ describe("dashboard API: errors", () => {
       }),
     });
     expect((await get("session")).body).toMatchObject({ mode: "setup", error: { code: "VERSION", message: "this vault is format 9; update hippo" } });
+  });
+});
+
+describe("dashboard API: hosted", () => {
+  const STATUS: CuratorStatus = {
+    run: { id: "run-01", curator: "archivist", model: "test-model", started: "2026-09-27T21:00:00.000Z", leaseUntil: "2026-09-27T21:15:00.000Z", live: true, progress: { done: 1, total: 3, unit: "ep:ep-in1" } },
+    history: [],
+  };
+  const withCurator = (calls: string[]) => (full: DashboardSource): DashboardSource => ({
+    ...full,
+    curator: {
+      status: async () => STATUS,
+      abort: async (run, via) => {
+        calls.push(`${run} ${via}`);
+        return { history: [{ ...STATUS.run!, ended: "2026-09-27T21:05:00.000Z", outcome: "aborted", consolidated: 1, failed: 0, skipped: 0, summaries: 0, remaining: 2, commits: 1 }] };
+      },
+    },
+  });
+  const owner: Guard = () => ({ user: { login: "player" }, account: { status: "approved", admin: true } });
+
+  it("session reports the hosted setup, the account and the curator", async () => {
+    const { get } = harness({ source: withCurator([]), guard: owner, setupKind: "hosted" });
+    expect((await get("session")).body).toMatchObject({
+      user: { login: "player" },
+      account: { status: "approved", admin: true },
+      capabilities: { curator: true, setup: "hosted" },
+    });
+    const waiting = harness({ source: () => undefined, guard: () => ({ user: { login: "player" }, account: { status: "waitlisted", admin: false } }), setupKind: "hosted" });
+    expect((await waiting.get("session")).body).toMatchObject({ mode: "setup", account: { status: "waitlisted" }, capabilities: { setup: "hosted" } });
+  });
+
+  it("serves the curator's status and aborts a run as the signed-in user", async () => {
+    const calls: string[] = [];
+    const { get, post } = harness({ source: withCurator(calls), guard: owner });
+    expect(await get("curator")).toMatchObject({ status: 200, body: STATUS });
+    const aborted = await post("actions/curator", { abort: "run-01" });
+    expect(aborted).toMatchObject({ status: 200, body: { history: [{ id: "run-01", outcome: "aborted" }] } });
+    expect(calls).toEqual(["run-01 @player"]);
+    expect(await post("actions/curator", { abort: "" })).toMatchObject({ status: 400, body: { code: "INVALID" } });
+    expect(await post("actions/curator", {})).toMatchObject({ status: 400 });
+  });
+
+  it("answers an audit refusal with 409 and its violations, and hands unexpected errors to the reporter", async () => {
+    const reported: unknown[] = [];
+    const { get, post } = harness({
+      source: (full) => ({
+        ...full,
+        remember: () => Promise.reject(new AuditError([{ path: "factions/migration-agency.md", rule: "agents may only edit quest notes" }])),
+        overview: () => Promise.reject(new Error("could not parse: Lisbon Migration office")),
+      }),
+      report: (err) => reported.push(err),
+    });
+    expect(await post("actions/remember", { text: "x" })).toMatchObject({
+      status: 409,
+      body: { code: "AUDIT", violations: [{ path: "factions/migration-agency.md", rule: "agents may only edit quest notes" }] },
+    });
+    const failed = await get("overview");
+    expect(failed).toMatchObject({ status: 500, body: { code: "INTERNAL" } });
+    expect(JSON.stringify(failed.body)).not.toContain("Lisbon");
+    expect(reported).toHaveLength(1);
   });
 });
 
