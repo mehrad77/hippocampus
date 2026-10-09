@@ -32,7 +32,7 @@ This repo is **public**. Users' memories live in **separate private vault repos*
 | `plugins/hippocampus`, `.claude-plugin/` | Claude Code plugin and its marketplace: `.mcp.json` (reads `HIPPO_MCP_URL`, `HIPPO_KEY`), skills `memory` and `sleep` |
 | `vault-template/` | What `hippo init` and the hosted app write: config, guardrails (`AGENTS.md`, `CLAUDE.md`, `_hippo/curator.md`), Obsidian templates, Dataview dashboards, vault CI (validate + daily audit) |
 | `seeds/example-relocation/` | Fictional example campaign |
-| `scripts/` | Privacy guard test, pack check, template bundle generator, plugin and workflow checks (`plugin.test.ts`, `workflows.test.ts`, `lint-workflows.mjs`) |
+| `scripts/` | Privacy guard test, pack check, template bundle generator, release versioning (`release.mjs`), the official instance's deploy config and probe (`deploy.mjs`), plugin and workflow checks (`plugin.test.ts`, `workflows.test.ts`, `lint-workflows.mjs`) |
 
 ## Commands
 
@@ -115,14 +115,17 @@ pnpm lint:workflows
 - TypeScript ESM, Node 24. Relative imports use the `.ts` extension. Workspace packages export `src/*.ts` directly (no build step except the CLI bundle).
 - Prefer composition over inheritance, and small pure functions (see `reconcile.ts`, `ops.ts`).
 - Match the surrounding code's density and naming. Comments explain *why*, not *what*.
-- [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `chore:`, `test:`, `refactor:`. They decide the released version (`feat` minor, `fix`/other patch, `!` breaking). Every merge to `main` publishes to npm.
+- [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `chore:`, `test:`, `refactor:`. They decide the released version (`feat` minor, `fix`/other patch, `!` breaking). Every merge to `main` publishes to npm, then deploys the hosted app to the official instance.
 - `main` is protected: work on a branch and open a PR. Never bump versions by hand. Git tags are the version of record (`scripts/release.mjs`).
 - Each curator LLM step is small and schema-validated (zod). The LLM never writes files directly. Deterministic code applies its structured output.
 - Curator changes get a golden test with `ScriptedLLM` in `packages/curator/src/sleep.test.ts`.
 - Dashboard: read models live in `packages/core/src/views.ts` (secrets are masked there, nowhere else). UI logic that can be pure lives in `apps/dashboard/src/lib` with `*.test.ts` tests. Colors come from the tokens in `tokens.css` only; fact status always pairs glyph, word and color. Screenshots and examples come from `--demo` only.
 - Reconcile rule changes update the precedence table comment in `reconcile.ts` and `reconcile.test.ts` together.
 - Changes to on-disk vault format bump `CURRENT_VAULT_VERSION`, add a migration, and get a CHANGELOG entry.
-- Registry schema changes add a new numbered file to `apps/worker/migrations/`; never edit an applied one.
+- Registry schema changes add a new numbered file to `apps/worker/migrations/`; never edit an applied one. Deploys apply them before the new code, and a rollback restores only the code, so a migration must also work with the previous Worker: add, don't rename or drop.
+- Durable Object class migrations (`migrations` in `wrangler.jsonc`) can't be rolled back. Ship them in a PR of their own and watch its deploy.
+- A new required Worker setting is set on the official instance before the PR that needs it merges. Otherwise the deploy's probe sees the "isn't set up yet" page and rolls back.
+- `wrangler.jsonc` stays generic: no instance's host or resource ids. The official instance's come from the `production` environment at deploy time (`scripts/deploy.mjs`).
 - The Worker logs route names, statuses and hashed vault ids only, never error messages or vault content.
 
 ## Invariants — don't break these

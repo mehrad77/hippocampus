@@ -25,6 +25,8 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 - `GitHubStore`: token refresh after a 401, `initialize()` for empty repos (`EmptyRepositoryError`), a `persist` filter for blobs that mustn't be cached at rest, and `SqliteBlobCache`. `doSql` runs the search index on Durable Object SQLite.
 - `HIPPO_DEMO_HOSTED=1 pnpm dev:dashboard` walks the hosted onboarding against the demo campaign; `pnpm --filter @hippocampus/worker dev:github` is a fake GitHub for running the Worker offline.
 - CI runs the hosted Worker in the real Workers runtime: `pnpm --filter @hippocampus/worker bundle:check` (`wrangler deploy --dry-run`) and `pnpm smoke:worker`, an end-to-end smoke test under `wrangler dev` against the fake GitHub. It also lints every workflow it owns or ships to vaults with actionlint (`pnpm lint:workflows`), and checks the Claude Code plugin's manifests and skills. `release` waits for all of it.
+- After each release, CI deploys the hosted app to the official instance (`deploy` job, `scripts/deploy.mjs`). It applies registry migrations, then deploys, probes the live Worker, and rolls it back if the probe fails. See [docs/DEVELOPING.md](docs/DEVELOPING.md#the-official-instance).
+- `pnpm deploy:worker` deploys a self-hosted instance from the repository root. `pnpm --filter @hippocampus/worker deploy` ran pnpm's own `deploy` command instead.
 - SECURITY.md: the threat model, what a hosted operator can see, keys, and reporting.
 - The dashboard (`hippo dashboard`, and `/dashboard` on the hosted app), a campaign codex for humans:
   - **Pages:** Tavern, Quest board, Council, Satchel, Codex, entity sheets, relation Map, Chronicle, Party and Guides, plus ⌘K search.
@@ -56,6 +58,8 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 - `remember` refuses memories over 8 KB.
 - `hippo sleep` no longer logs the text of secret-bearing episodes, fails an episode that would name a new note after a secret value, and refuses to commit if a secret value would appear in plain text anywhere it writes.
 - OAuth connections made with the single-vault Worker must be connected again.
+- The Worker's `deploy` script applies the registry's migrations before deploying, so upgrades no longer need a separate `wrangler d1 migrations apply`.
+- `wrangler.jsonc` sets `preview_urls: false`, so each uploaded version no longer gets its own workers.dev address. OAuth client registration is limited to 3 a minute per IP (was 10).
 
 ### Removed
 - The single-vault Worker's settings and storage: `GITHUB_REPO`, `GITHUB_TOKEN`, `HIPPO_OWNERS`, `GITHUB_OAUTH_CLIENT_ID`/`_SECRET`, the `INDEX` D1 database, the `TOKENS` KV namespace, and the `Scribe` Durable Object (wrangler migration `v2` deletes it).
@@ -68,6 +72,7 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 - Inbox files, which can hold secrets until sleep, are never cached at rest in the Worker.
 - The age identity for a hosted vault is generated in the browser and never sent.
 - Worker logs record route names, statuses and hashed vault ids, never URLs, error messages or content; invocation logs are off.
+- The hosted app refuses a plain-http `HIPPO_PUBLIC_URL`, which would drop the `Secure` cookie flags, except on this machine. It also refuses `GITHUB_API_URL`/`GITHUB_OAUTH_URL`, which would send the app's client secret elsewhere, except for local development.
 
 ## [0.1.0]
 

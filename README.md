@@ -128,7 +128,7 @@ pnpm typecheck
 | `packages/curator` | LLM adapter (AI SDK), the sleep pipeline, and the relay that lets an agent run sleep |
 | `packages/mcp` | MCP tools and resources |
 | `packages/index`, `packages/embeddings`, `packages/store-github` | Search index, embedding adapters, the GitHub API store |
-| `apps/worker` | The hosted app on Cloudflare (deployed from a clone, not on npm) |
+| `apps/worker` | The hosted app on Cloudflare (not on npm; CI deploys the official instance, and you can run your own from a clone) |
 | `plugins/hippocampus` | The Claude Code plugin: MCP server plus the memory and sleep skills |
 | `packages/dashboard` | The dashboard's JSON API, its data sources (vault, GitHub, MCP), and the demo campaign |
 | `apps/dashboard` | The dashboard UI (Astro + React), including the guides and Session Zero |
