@@ -32,6 +32,48 @@ Run the CLI from source (tsx, no build):
 - Or run `hippo sleep --dry-run` on the real vault. It runs the curator but writes nothing.
 - Never point tests at your real vault. Tests use in-memory fixtures (`packages/core/src/__fixtures__/vault.ts`).
 
+## Demos
+
+Use these for UI work, screenshots and bug reports. Everything in them is fictional.
+
+- `pnpm dev:dashboard` runs the dashboard UI with hot reload against the demo campaign. `HIPPO_VAULT=<dir> pnpm dev:dashboard` uses a local vault instead, which is private data: never commit or share what it shows.
+- `HIPPO_DEMO_HOSTED=1 pnpm dev:dashboard` puts a pretend hosted app in front of the demo: sign-in, waitlist, GitHub App install, vault setup, keys, curator, admin and account pages, with nothing touching GitHub. `GET /dashboard/api/__demo/stage?to=<stage>` jumps to a stage (`signed-out`, `waitlisted`, `requested`, `approved`, `installed`, `ready`).
+- `./apps/cli/bin/hippo dashboard --demo` serves the built dashboard with the demo campaign, as users see it.
+
+## The hosted app
+
+`apps/worker` runs offline under `wrangler dev` against a fake GitHub (`apps/worker/scripts/fake-github.ts`). The fake has a GitHub App and two users with an empty private repo each: `player` (an admin) and `game-master`, for checking that one account never sees another's vault. Nothing is saved: restarting the fake empties the repos.
+
+Write settings for the fake once (a gitignored `.dev.vars` with a fresh key):
+
+```bash
+pnpm --filter @hippocampus/worker dev:github --dev-vars > apps/worker/.dev.vars
+```
+
+Then, in two terminals:
+
+```bash
+pnpm --filter @hippocampus/worker dev:github
+```
+
+```bash
+pnpm --filter @hippocampus/worker dev
+```
+
+Open http://127.0.0.1:8787/. `dev` builds the dashboard and applies the registry migrations to a local D1 first. Pass `--choose` to the fake to pick the user at each sign-in (use two browser profiles), or `--login game-master` to be the other one. Tests use the same pieces in memory (`apps/worker/src/hosted/testing.ts`, `FakeGitHub` in `packages/store-github`).
+
+Never point the dev Worker at a real GitHub App or a real vault repo.
+
+## The template bundle
+
+The Worker has no filesystem, so `vault-template/` and `seeds/` are bundled into `packages/template/src/files.gen.ts` and turned into a vault by `buildVaultFiles` (`packages/core/src/bootstrap.ts`), the same function `hippo init` uses. After changing either folder:
+
+```bash
+pnpm gen:template
+```
+
+`scripts/gen-template.test.ts` fails while the bundle is stale. The bundle takes only what git would commit, so local `seeds/private-*` folders stay out.
+
 ## Turn real bugs into fictional tests
 
 When your vault reveals a bug:
