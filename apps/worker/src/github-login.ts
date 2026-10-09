@@ -1,56 +1,16 @@
-// Signing the owner in with GitHub, shared by the connector OAuth flow and the dashboard. No Workers APIs.
+// Signing people in with GitHub (the hosted app's GitHub App, through its user authorization). No Workers APIs.
 
-export interface OAuthSettings {
-  /** Public origin of this Worker, e.g. `https://hippocampus.you.workers.dev`. */
-  publicUrl: string;
+/** The GitHub App's registered callback: sign-ins and the app's install redirect both come back here. */
+export const CALLBACK_PATH = "/oauth/github/callback";
+
+/** What signing someone in with GitHub needs: the app's OAuth client and where GitHub is. */
+export interface GitHubClient {
   github: { clientId: string; clientSecret: string; oauthUrl: string; apiUrl: string };
-  /** GitHub logins allowed to connect apps: the vault's owners. */
-  owners: Set<string>;
   fetch?: typeof fetch;
 }
 
-export interface OAuthVars {
-  HIPPO_PUBLIC_URL?: string;
-  HIPPO_OWNERS?: string;
-  GITHUB_OAUTH_CLIENT_ID?: string;
-  GITHUB_OAUTH_CLIENT_SECRET?: string;
-  /** Only for local development against a fake GitHub. */
-  GITHUB_OAUTH_URL?: string;
-  GITHUB_API_URL?: string;
-}
-
-/** The GitHub OAuth app's registered callback. GitHub also accepts subdirectories of it (the dashboard's). */
-export const CALLBACK_PATH = "/oauth/github/callback";
-
-const REQUIRED = ["HIPPO_PUBLIC_URL", "HIPPO_OWNERS", "GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_SECRET"] as const;
-
-/** The settings OAuth still needs, for telling the owner what to set. Empty when it's on. */
-export function oauthMissing(env: OAuthVars): string[] {
-  return REQUIRED.filter((k) => !env[k]?.trim());
-}
-
-/** OAuth settings, or undefined when OAuth is off (no HIPPO_PUBLIC_URL): then only agent tokens work. */
-export function oauthSettings(env: OAuthVars): OAuthSettings | undefined {
-  if (!env.HIPPO_PUBLIC_URL) return undefined;
-  const missing = (["HIPPO_OWNERS", "GITHUB_OAUTH_CLIENT_ID", "GITHUB_OAUTH_CLIENT_SECRET"] as const).filter((k) => !env[k]);
-  if (missing.length) throw new Error(`OAuth is on (HIPPO_PUBLIC_URL is set) but ${missing.join(", ")} ${missing.length > 1 ? "are" : "is"} missing`);
-  // Fail closed: no owners would mean nobody can connect, so refuse to start rather than guess.
-  const owners = new Set(env.HIPPO_OWNERS!.split(/[\s,]+/).filter(Boolean).map((l) => l.toLowerCase()));
-  if (!owners.size) throw new Error("HIPPO_OWNERS must list at least one GitHub login");
-  return {
-    publicUrl: new URL(env.HIPPO_PUBLIC_URL).origin,
-    github: {
-      clientId: env.GITHUB_OAUTH_CLIENT_ID!,
-      clientSecret: env.GITHUB_OAUTH_CLIENT_SECRET!,
-      oauthUrl: (env.GITHUB_OAUTH_URL || "https://github.com").replace(/\/$/, ""),
-      apiUrl: (env.GITHUB_API_URL || "https://api.github.com").replace(/\/$/, ""),
-    },
-    owners,
-  };
-}
-
-/** Where to send the owner to sign in. No `scope`: signing in only needs the public profile, to learn who this is. */
-export async function githubAuthorizeUrl(settings: OAuthSettings, opts: { redirectUri: string; state: string; verifier: string }): Promise<string> {
+/** Where to send someone to sign in. No `scope`: signing in only needs the public profile, to learn who this is. */
+export async function githubAuthorizeUrl(settings: GitHubClient, opts: { redirectUri: string; state: string; verifier: string }): Promise<string> {
   const github = new URL(`${settings.github.oauthUrl}/login/oauth/authorize`);
   for (const [k, v] of Object.entries({
     client_id: settings.github.clientId,
@@ -64,8 +24,12 @@ export async function githubAuthorizeUrl(settings: OAuthSettings, opts: { redire
   return github.href;
 }
 
-/** Who signed in. The GitHub token is used for this one lookup and not kept. */
-export async function githubUser(settings: OAuthSettings, code: string, verifier: string, redirectUri: string): Promise<{ login: string; id: number } | undefined> {
+/**
+ * Trade a sign-in code for the user's GitHub token, for callers that need more than who it is
+ * (the hosted app checks the user's installations with it). Don't keep it. A GitHub App's
+ * install redirect carries a code that was never PKCE-bound, so `verifier` is optional.
+ */
+export async function githubToken(settings: GitHubClient, code: string, opts: { verifier?: string; redirectUri?: string } = {}): Promise<string | undefined> {
   const f = settings.fetch ?? fetch;
   const exchange = await f(`${settings.github.oauthUrl}/login/oauth/access_token`, {
     method: "POST",
@@ -74,14 +38,19 @@ export async function githubUser(settings: OAuthSettings, code: string, verifier
       client_id: settings.github.clientId,
       client_secret: settings.github.clientSecret,
       code,
-      redirect_uri: redirectUri,
-      code_verifier: verifier,
+      redirect_uri: opts.redirectUri,
+      code_verifier: opts.verifier,
     }),
   });
   const { access_token } = (await exchange.json().catch(() => ({}))) as { access_token?: string };
-  if (!exchange.ok || !access_token) return undefined;
+  return exchange.ok && access_token ? access_token : undefined;
+}
+
+/** Whose GitHub token this is. */
+export async function githubTokenUser(settings: GitHubClient, token: string): Promise<{ login: string; id: number } | undefined> {
+  const f = settings.fetch ?? fetch;
   const res = await f(`${settings.github.apiUrl}/user`, {
-    headers: { authorization: `Bearer ${access_token}`, accept: "application/vnd.github+json", "user-agent": "hippocampus" },
+    headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": "hippocampus" },
   });
   if (!res.ok) return undefined;
   const user = (await res.json()) as { login?: string; id?: number };
