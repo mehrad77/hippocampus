@@ -22,7 +22,7 @@ export function openStore(opts: { dir?: string; github?: string; token?: string;
   const token = opts.token ?? githubToken(env);
   if (!token) throw new Error("--github needs a token in HIPPO_GITHUB_TOKEN (fine-grained, Contents: read and write on the vault repo)");
   const { repo, branch } = parseRepo(opts.github);
-  return new GitHubStore({ repo, branch, token, apiUrl: env.HIPPO_GITHUB_API_URL });
+  return new GitHubStore({ repo, branch, token, apiUrl: env.HIPPO_GITHUB_API_URL, hint: { auth: "Check HIPPO_GITHUB_TOKEN." } });
 }
 
 /** Semantic recall when `HIPPO_EMBED_MODEL` is set; keyword search otherwise. */

@@ -1,14 +1,14 @@
 import { existsSync } from "node:fs";
-import { chmod, cp, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { CONFIG_PATH, HANDBOOK_PATH, Vault, applyChanges, generateKeyPair, parseDoc, renderDoc, renderHandbook, type VaultStore } from "@hippocampus/core";
-import { FsStore } from "@hippocampus/core/node";
+import { CONFIG_PATH, applyChanges, buildVaultFiles, generateKeyPair, parseConfig, renderConfig, validateVaultSettings, type VaultStore } from "@hippocampus/core";
 import { identityToRecipient } from "age-encryption";
 import { parseDocument } from "yaml";
 import { Git } from "./git.ts";
 import { expandHome } from "./paths.ts";
 
-export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
+// The checks live in core so the hosted setup validates the same way; the local setup imports them from here.
+export { SLUG, validTimezone } from "@hippocampus/core";
 
 export interface InitVaultOptions {
   target: string;
@@ -24,15 +24,6 @@ export interface InitVaultOptions {
 
 /** Entries a fresh `git clone` of an empty repo (or Finder) leaves behind; anything else means the folder is in use. */
 const HARMLESS = new Set([".git", ".DS_Store"]);
-
-export function validTimezone(tz: string): boolean {
-  try {
-    new Intl.DateTimeFormat("en", { timeZone: tz });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 /** A checkout of the Hippocampus tool itself (public), where a vault (private) must never be created. */
 function toolCheckout(dir: string): string | undefined {
@@ -59,9 +50,8 @@ export async function initVault(opts: InitVaultOptions): Promise<{ dir: string; 
     const entries = (await readdir(target)).filter((e) => !HARMLESS.has(e));
     if (entries.length) throw new Error(`${target} is not empty; choose a new or empty folder`);
   }
-  if (opts.human !== undefined && !SLUG.test(opts.human)) throw new Error(`human "${opts.human}" must be an id: lowercase letters, digits and dashes`);
-  if (opts.timezone !== undefined && !validTimezone(opts.timezone)) throw new Error(`unknown timezone "${opts.timezone}" (use an IANA name like Europe/Lisbon)`);
-  for (const d of opts.domains ?? []) if (!SLUG.test(d)) throw new Error(`domain "${d}" must be lowercase letters, digits and dashes`);
+  const settings = { campaign: opts.campaign, human: opts.human, timezone: opts.timezone, domains: opts.domains };
+  validateVaultSettings(settings);
 
   let seed: string | undefined;
   if (opts.seed) {
@@ -70,59 +60,56 @@ export async function initVault(opts: InitVaultOptions): Promise<{ dir: string; 
     if (!existsSync(seed)) throw new Error(`no seed "${opts.seed}" (neither ${bundled} nor a directory path)`);
   }
 
-  await mkdir(target, { recursive: true });
-  await cp(join(opts.assets, "vault-template"), target, { recursive: true });
+  const files = await readTree(join(opts.assets, "vault-template"));
   // Published packages carry the template's .gitignore as `gitignore` (npm strips dotfile ignores).
-  if (existsSync(join(target, "gitignore"))) await rename(join(target, "gitignore"), join(target, ".gitignore"));
-  if (seed) await cp(seed, target, { recursive: true, force: true });
+  const gitignore = files.get("gitignore");
+  if (gitignore) {
+    files.set(".gitignore", gitignore);
+    files.delete("gitignore");
+  }
+  if (seed) for (const [path, content] of await readTree(seed)) files.set(path, content);
+  const { text, binary } = splitText(files);
+  const built = await buildVaultFiles(text, settings);
 
-  const store = new FsStore(target);
-  await patchConfig(store, opts);
-  await placePlayerCharacter(store);
-
-  const vault = await Vault.load(store);
-  for (const e of vault.entities.values()) vault.markDirty(e);
-  vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
-  await vault.flush();
+  await mkdir(target, { recursive: true });
+  for (const [path, content] of [...Object.entries(built), ...binary]) {
+    await mkdir(dirname(join(target, path)), { recursive: true });
+    await writeFile(join(target, path), content);
+  }
   const git = new Git(target);
   if (!git.isRepo()) await git.run("init", "--quiet", "-b", "main");
-  return { dir: target, campaign: vault.config.campaign, human: vault.config.human };
+  const config = parseConfig(built[CONFIG_PATH]);
+  return { dir: target, campaign: config.campaign, human: config.human };
 }
 
-/** Set the given settings in `_hippo/config.yaml`, keeping its comments and layout. */
-async function patchConfig(store: VaultStore, opts: InitVaultOptions): Promise<void> {
-  const raw = await store.read(CONFIG_PATH);
-  if (raw === undefined) throw new Error(`the template has no ${CONFIG_PATH}`);
-  const doc = parseDocument(raw);
-  if (opts.campaign !== undefined) doc.set("campaign", opts.campaign);
-  if (opts.human !== undefined) doc.set("human", opts.human);
-  if (opts.timezone !== undefined) doc.set("timezone", opts.timezone);
-  if (opts.domains !== undefined) doc.set("domains", doc.createNode(opts.domains, { flow: true }));
-  await store.write(CONFIG_PATH, renderConfig(doc));
+/** Every file under `dir` by forward-slash relative path, except a `.git` the folder may carry. */
+async function readTree(dir: string): Promise<Map<string, Buffer>> {
+  const out = new Map<string, Buffer>();
+  const walk = async (rel: string) => {
+    for (const e of await readdir(join(dir, rel), { withFileTypes: true })) {
+      if (e.name === ".git") continue;
+      const path = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) await walk(path);
+      else if (e.isFile()) out.set(path, await readFile(join(dir, path)));
+    }
+  };
+  await walk("");
+  return out;
 }
 
-/** No line folding, so the template's one-line flow maps and lists stay on one line. */
-const renderConfig = (doc: ReturnType<typeof parseDocument>) => doc.toString({ lineWidth: 0, flowCollectionPadding: false });
-
-const titleCase = (id: string) => id.replace(/(^|-)([a-z])/g, (_, dash: string, c: string) => `${dash ? " " : ""}${c.toUpperCase()}`).replace(/-/g, " ");
-
-/**
- * The template's placeholder PC is `characters/player.md`. When the human has another id, it
- * becomes theirs (`characters/<human>.md`), unless a seed already brought the human's own note.
- */
-async function placePlayerCharacter(store: VaultStore): Promise<void> {
-  const PC = "characters/player.md";
-  const vault = await Vault.load(store);
-  const human = vault.config.human;
-  const pc = await store.read(PC);
-  if (human === "player" || pc === undefined) return;
-  if (vault.entities.has(human)) {
-    await store.remove(PC);
-    return;
+/** The vault is built from text; anything else a seed brings (images, PDFs) is copied as is. */
+function splitText(files: Map<string, Buffer>): { text: Record<string, string>; binary: [string, Buffer][] } {
+  const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const text: Record<string, string> = {};
+  const binary: [string, Buffer][] = [];
+  for (const [path, bytes] of files) {
+    try {
+      text[path] = utf8.decode(bytes);
+    } catch {
+      binary.push([path, bytes]);
+    }
   }
-  const { data, body } = parseDoc(pc);
-  await store.write(`characters/${human}.md`, renderDoc({ ...data, title: titleCase(human) }, body));
-  await store.remove(PC);
+  return { text, binary };
 }
 
 export interface KeygenResult {

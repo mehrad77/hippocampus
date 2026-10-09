@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { CONFIG_PATH, Vault, parseConfig } from "@hippocampus/core";
+import { join, sep } from "node:path";
+import { CONFIG_PATH, Vault, buildVaultFiles, parseConfig } from "@hippocampus/core";
 import { FsStore } from "@hippocampus/core/node";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { assetRoot } from "./paths.ts";
@@ -12,6 +12,17 @@ beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "hippo-setup-"));
 });
 afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+/** Every file under `dir` except git's own, as text. */
+function readTree(dir: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const rel of readdirSync(dir, { recursive: true, encoding: "utf8" })) {
+    const path = rel.split(sep).join("/");
+    if (path === ".git" || path.startsWith(".git/") || !statSync(join(dir, rel)).isFile()) continue;
+    out[path] = readFileSync(join(dir, rel), "utf8");
+  }
+  return out;
+}
 
 describe("initVault", () => {
   it("fills in the config (keeping its comments) and gives the template PC to the human", async () => {
@@ -40,6 +51,41 @@ describe("initVault", () => {
     expect(vault.config.campaign).toBe("lisbon-arc");
     expect(vault.entities.has("player")).toBe(true);
     expect(vault.entities.has("residency-agent")).toBe(true);
+  });
+
+  it("writes exactly the files buildVaultFiles builds, the same vault the hosted app creates", async () => {
+    // The repo's own template, not assetRoot(): that can be a stale copy left by a local `pnpm build`.
+    const repo = join(import.meta.dirname, "../../..");
+    const template = readTree(join(repo, "vault-template"));
+    const seed = readTree(join(repo, "seeds", "example-relocation"));
+    // As published: npm strips .gitignore files, so the package ships it as `gitignore`.
+    const packed = join(tmp, "packed");
+    cpSync(join(repo, "vault-template"), join(packed, "vault-template"), { recursive: true });
+    renameSync(join(packed, "vault-template", ".gitignore"), join(packed, "vault-template", "gitignore"));
+    cpSync(join(repo, "seeds"), join(packed, "seeds"), { recursive: true });
+
+    const settings = { campaign: "lisbon-arc", human: "student", timezone: "Europe/Lisbon", domains: ["residency", "housing"] };
+    const cases = [
+      { name: "default", assets: repo, init: {}, build: {} },
+      { name: "configured", assets: repo, init: settings, build: settings },
+      { name: "seeded", assets: repo, init: { seed: "example-relocation" }, build: { seed } },
+      { name: "packed", assets: packed, init: { ...settings, seed: "example-relocation" }, build: { ...settings, seed } },
+    ];
+    for (const c of cases) {
+      const target = join(tmp, "vaults", c.name);
+      await initVault({ target, assets: c.assets, ...c.init });
+      expect(readTree(target), c.name).toEqual(await buildVaultFiles(template, c.build));
+    }
+  });
+
+  it("copies a seed's binary files byte for byte", async () => {
+    const seed = join(tmp, "seed");
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0x00, 0xfe]);
+    mkdirSync(join(seed, "attachments"), { recursive: true });
+    writeFileSync(join(seed, "attachments", "map.png"), png);
+    const target = join(tmp, "vault");
+    await initVault({ target, seed, assets: assetRoot() });
+    expect(readFileSync(join(target, "attachments", "map.png"))).toEqual(png);
   });
 
   it("accepts an empty clone but refuses folders in use, existing vaults and the tool's own checkout", async () => {

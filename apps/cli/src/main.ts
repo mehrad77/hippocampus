@@ -2,10 +2,12 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { createServer } from "node:http";
 import {
+  ACTOR_TRAILER,
   CONFIG_PATH,
   CURRENT_VAULT_VERSION,
   HANDBOOK_PATH,
   HippoService,
+  MODEL_TRAILER,
   Vault,
   applyChanges,
   decryptSecret,
@@ -14,15 +16,17 @@ import {
   renderHandbook,
   secretPath,
   vaultVersionStatus,
+  withTrailers,
   type SearcherFactory,
   type VaultStore,
 } from "@hippocampus/core";
-import { aiSdkLLM, commitMessage, llmConfigFromEnv, sleep, type SleepReport } from "@hippocampus/curator";
+import { MemoryRunStore, SleepRelay, aiSdkLLM, commitMessage, llmConfigFromEnv, sleep, type SleepReport } from "@hippocampus/curator";
 import { createHippoServer } from "@hippocampus/mcp";
 import { GitHubStore } from "@hippocampus/store-github";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Command } from "commander";
+import { auditHistory } from "./audit.ts";
 import { runDashboard } from "./dashboard/command.ts";
 import { loadEnv } from "./env-file.ts";
 import { Git } from "./git.ts";
@@ -50,6 +54,16 @@ const vaultKey = () => indexKey({ dir: vaultDir(), github: github() });
 /** The vault: a GitHub repo with `--github`, else the local directory. */
 const openStore = (): VaultStore => storeFor({ dir: vaultDir(), github: github() });
 const openSearcher = (): Promise<SearcherFactory | undefined> => searcherFor(vaultKey(), { index: useIndex() });
+
+/** Sleep run by a connected agent (`sleep_start`). The run lives in this process; each unit reads the vault at its head. */
+const localRelay = (store: VaultStore) =>
+  new SleepRelay({
+    open: async (now) => {
+      await store.refresh?.();
+      return { vault: await Vault.load(store, { now: () => now }), store };
+    },
+    runs: new MemoryRunStore(),
+  });
 
 function localOnly(command: string): void {
   if (github()) throw new Error(`\`hippo ${command}\` works on a local vault directory; drop --github`);
@@ -80,9 +94,12 @@ program
   .option("-a, --agent <id>", "bind this connection to an agent id", process.env.HIPPO_AGENT)
   .option("--http <port>", "serve streamable HTTP on 127.0.0.1:<port>/mcp instead of stdio (agent via ?agent=)")
   .action(async (opts: { agent?: string; http?: string }) => {
-    const service = new HippoService(openStore(), { searcher: await openSearcher() });
+    const store = openStore();
+    const service = new HippoService(store, { searcher: await openSearcher() });
+    // One relay for the whole server, so every connection sees the same run.
+    const relay = localRelay(store);
     if (!opts.http) {
-      await createHippoServer({ service, agent: opts.agent }).connect(new StdioServerTransport());
+      await createHippoServer({ service, agent: opts.agent, relay }).connect(new StdioServerTransport());
       return;
     }
     const port = Number(opts.http);
@@ -93,7 +110,7 @@ program
         return;
       }
       const agent = url.searchParams.get("agent") ?? opts.agent;
-      const server = createHippoServer({ service, agent: agent ?? undefined });
+      const server = createHippoServer({ service, agent: agent ?? undefined, relay });
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on("close", () => void transport.close().then(() => server.close()));
       await server.connect(transport);
@@ -133,7 +150,7 @@ program
     if (useGit && report.changed.length) {
       await git.stage(report.changed);
       if (await git.hasStaged()) {
-        await git.commit(commitMessage(report));
+        await git.commit(withTrailers(commitMessage(report), { [ACTOR_TRAILER]: "curator", [MODEL_TRAILER]: report.model }));
         err("✓ committed");
         if (opts.push && (await git.hasRemote())) {
           await git.push();
@@ -164,6 +181,23 @@ program
     err(`${vault.entities.size} entities · ${vault.episodes.length} pending episodes · ${vault.openDisputes().length} open disputes`);
     for (const w of vault.warnings) err(`⚠ ${w}`);
     if (vault.warnings.length) process.exitCode = 1;
+  });
+
+program
+  .command("audit")
+  .description("Check recent commits by agents and the curator (their Hippo-Actor trailer) against what each may change. Exits 1 on a violation.")
+  .option("--range <a..b>", "audit these commits (git revision range) instead of the last 26 hours")
+  .option("--since <when>", 'only commits since this date, e.g. "26 hours ago" (the default without --range)')
+  .action(async (opts: { range?: string; since?: string }) => {
+    localOnly("audit");
+    const git = new Git(vaultDir());
+    if (!git.isRepo()) throw new Error(`${vaultDir()} is not a git repository`);
+    const r = await auditHistory(git, { range: opts.range, since: opts.since ?? (opts.range ? undefined : "26 hours ago") });
+    for (const s of r.skipped) err(`· ${s.sha.slice(0, 7)} skipped: ${s.reason}`);
+    // Paths and rules only, never content: this runs in CI logs.
+    for (const v of r.violations) err(`✗ ${v.sha.slice(0, 7)} ${v.path}: ${v.rule}`);
+    if (r.violations.length) process.exitCode = 1;
+    else err(`✓ audited ${r.audited} commit${r.audited === 1 ? "" : "s"}`);
   });
 
 program
@@ -203,7 +237,7 @@ program
   .action(async (words: string[], opts: { agent?: string; kind: "fact"; secret?: boolean }) => {
     const store = openStore();
     const agent = opts.agent ?? (await Vault.load(store)).config.human;
-    const r = await new HippoService(store).remember(agent, { text: words.join(" "), kind: opts.kind, secret: opts.secret });
+    const r = await new HippoService(store).remember(agent, { text: words.join(" "), kind: opts.kind, secret: opts.secret }, { asHuman: !opts.agent });
     err(`✓ ${r.path}`);
   });
 

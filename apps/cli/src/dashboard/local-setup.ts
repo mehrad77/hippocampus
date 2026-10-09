@@ -371,8 +371,8 @@ export function localSetup(opts: LocalSetupOptions): LocalSetupPort {
       out.push({
         label: "Claude Code via the Worker",
         lang: "bash",
-        code: `claude mcp add --transport http hippocampus ${worker}/mcp --header "Authorization: Bearer <token for ${agent}>"`,
-        note: `Mint the token on the Worker: pnpm agent-token create ${agent} --scopes read,remember,quest --remote`,
+        code: `claude mcp add --transport http hippocampus ${worker}/mcp --header "Authorization: Bearer <key for ${agent}>"`,
+        note: `Mint the key on the hosted app's dashboard (Setup → Agent keys): a key bound to ${agent}, or an agent key that lets it name itself.`,
       });
       out.push({ label: "Claude.ai or ChatGPT connector", lang: "text", code: `${worker}/mcp`, note: "Add it as a custom connector; the Worker's consent page asks which agent it acts as." });
     }
