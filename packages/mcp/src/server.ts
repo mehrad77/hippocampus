@@ -1,4 +1,5 @@
 import { HippoService, VaultError, VaultVersionError } from "@hippocampus/core";
+import { RunBusyError, SLEEP_PROCEDURE, type SleepRelay } from "@hippocampus/curator/relay";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
@@ -15,15 +16,23 @@ export interface HippoServerOptions {
   version?: string;
   /** JSON Schema validator for the SDK; Workers need one that doesn't compile code at runtime. */
   jsonSchemaValidator?: jsonSchemaValidator;
+  /** Lets the agent run sleep itself (the `curate` scope). A factory is called per tool call. */
+  relay?: SleepRelay | (() => SleepRelay);
 }
 
-/** `read`: every read tool and resource. `remember`: write episodes. `quest`: update quests. */
-export const SCOPES = ["read", "remember", "quest"] as const;
+/**
+ * `read`: every read tool and resource. `remember`: write episodes. `quest`: update quests.
+ * `curate`: run sleep, which shows the agent every episode in full, secret values included.
+ */
+export const SCOPES = ["read", "remember", "quest", "curate"] as const;
 export type Scope = (typeof SCOPES)[number];
 
 const INSTRUCTIONS = `Hippocampus is the party's shared, curated memory (an Obsidian vault run like a TTRPG campaign wiki).
 Call \`onboard\` at the start of a session. Use \`recall\`, \`get\`, and \`ask_canon\` before acting on facts. Use \`remember\` for anything worth keeping. You never edit canon directly: episodes are consolidated nightly, and conflicts go to the human.
 Fact status: canon = trust it, rumor = verify first, disputed = do not act without checking.`;
+
+const CURATE_INSTRUCTIONS = `
+You may also run the nightly consolidation yourself: the \`sleep\` prompt explains how, starting with \`sleep_start\`.`;
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
@@ -69,8 +78,9 @@ function param(v: string | string[] | undefined, form = false): string {
   }
 }
 
-export function createHippoServer({ service, agent, scopes, version = "0.1.0", jsonSchemaValidator }: HippoServerOptions): McpServer {
-  const server = new McpServer({ name: "hippocampus", version }, { instructions: INSTRUCTIONS, jsonSchemaValidator });
+export function createHippoServer({ service, agent, scopes, version = "0.1.0", jsonSchemaValidator, relay }: HippoServerOptions): McpServer {
+  const curates = !!relay && (!scopes || scopes.includes("curate"));
+  const server = new McpServer({ name: "hippocampus", version }, { instructions: curates ? INSTRUCTIONS + CURATE_INSTRUCTIONS : INSTRUCTIONS, jsonSchemaValidator });
   // Out-of-scope tools are removed outright, so clients never see them.
   const scoped = (scope: Scope, registered: { remove(): void }) => {
     if (scopes && !scopes.includes(scope)) registered.remove();
@@ -124,6 +134,31 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
           const { text: body, kind, about, confidence, secret, at } = args;
           const r = await service.remember(who(args), { text: body, kind, about, confidence, secret, at });
           return yaml({ stored: r, note: "Queued for consolidation. It shows up under `pending` in recall until then." });
+        }),
+    ),
+  );
+
+  scoped(
+    "remember",
+    server.registerTool(
+      "introduce",
+      {
+        title: "Introduce yourself",
+        description: `Ask to join the party, when \`onboard\` says you're unknown. The human approves you and decides your authority; until then your memories count as rumors. Calling it again replaces your earlier introduction.`,
+        inputSchema: {
+          ...agentArg,
+          title: z.string().min(1).max(120).describe('Your display name, e.g. "Job Scout"'),
+          lane: z.string().max(500).optional().describe("What you handle, in one sentence"),
+          host: z.string().max(120).optional().describe("Where you run, e.g. Claude Desktop"),
+          model: z.string().max(120).optional().describe("The model you run on"),
+          about: z.string().max(2000).optional().describe("What you do for the human, in a few lines"),
+        },
+      },
+      (args) =>
+        guard(async () => {
+          const { title, lane, host, model, about } = args;
+          const r = await service.introduce(who(args), { title, lane, host, model, about });
+          return text(r.status === "member" ? `You're ${r.message}. Nothing to do.` : `Introduced as ${r.agent}: ${r.message}`);
         }),
     ),
   );
@@ -303,5 +338,113 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
     throw new VaultError(`no dashboard view "${param(view)}"`);
   });
 
+  if (relay) registerSleep(server, typeof relay === "function" ? relay : () => relay, agent, scoped);
+
   return server;
+}
+
+// Sleep run by the connected agent: the relay turns each curator step into a question for it, and
+// replays the step with its answers. Results are compact JSON, since questions carry JSON Schemas.
+function registerSleep(server: McpServer, relay: () => SleepRelay, agent: string | undefined, scoped: (scope: Scope, registered: { remove(): void }) => void): void {
+  const json = (value: unknown): ToolResult => text(JSON.stringify(value));
+  // One run at a time: a second start gets the open run's status, so the agent can pick it up or wait.
+  const run = (fn: () => Promise<unknown>) =>
+    guard(async () => {
+      try {
+        return json(await fn());
+      } catch (err) {
+        if (!(err instanceof RunBusyError)) throw err;
+        const hint = "Continue it with sleep_answer (an empty answers list shows its open questions), or stop it with sleep_abort.";
+        return { content: [{ type: "text", text: JSON.stringify({ error: err.message, hint, status: err.status }) }], isError: true };
+      }
+    });
+  const runArg = { run: z.string().min(1).describe("The run id from sleep_start") };
+
+  scoped(
+    "curate",
+    server.registerTool(
+      "sleep_start",
+      {
+        title: "Start sleep",
+        description:
+          'Run tonight\'s sleep yourself: consolidate the inbox into canon by answering the curator\'s questions. Returns the procedure and the first questions; answer them with sleep_answer until the state is "done". One run at a time. Questions include each episode in full, secret values too: only use this if you are trusted with the vault\'s secrets.',
+        inputSchema: {
+          model: z.string().min(1).max(120).describe("The model answering the questions, recorded on every commit"),
+          curator: z
+            .string()
+            .optional()
+            .describe(agent ? `Ignored: this connection curates as "${agent}"` : 'Your agent id, recorded on every commit (default "curator-agent")'),
+          limit: z.number().int().min(1).max(100).optional().describe("Most episodes this run (default 10)"),
+        },
+      },
+      (args) => run(() => relay().start({ curator: agent ?? args.curator ?? "curator-agent", model: args.model, limit: args.limit })),
+    ),
+  );
+
+  scoped(
+    "curate",
+    server.registerTool(
+      "sleep_answer",
+      {
+        title: "Answer sleep questions",
+        description:
+          'Answer the open questions, all at once. Each value is JSON matching its question\'s `schema` (an object, or a JSON string). Returns the next questions, or state "done" with the report. Answers under `rejected` were not accepted: fix and resend them.',
+        inputSchema: {
+          ...runArg,
+          answers: z
+            .array(z.object({ question_id: z.string(), value: z.unknown().describe("JSON matching the question's schema") }))
+            .describe("One per question. An empty list shows the open questions again."),
+        },
+      },
+      (args) => run(() => relay().answer({ runId: args.run, answers: args.answers.map((a) => ({ questionId: a.question_id, value: a.value })) })),
+    ),
+  );
+
+  scoped(
+    "curate",
+    server.registerTool(
+      "sleep_skip",
+      {
+        title: "Skip in sleep",
+        description: "Skip the episode being asked about (it stays in the inbox for the human), or during the finish the summary being asked. Returns the next questions.",
+        inputSchema: { ...runArg, reason: z.string().min(1).max(300).describe("Why, in a few words. Never a secret value.") },
+      },
+      (args) => run(() => relay().skip({ runId: args.run, reason: args.reason })),
+    ),
+  );
+
+  scoped(
+    "curate",
+    server.registerTool(
+      "sleep_status",
+      {
+        title: "Sleep status",
+        description: "The open sleep run, if any (who runs it, its progress and lease), and the last runs.",
+        inputSchema: {},
+        annotations: { readOnlyHint: true },
+      },
+      () => run(() => relay().status()),
+    ),
+  );
+
+  scoped(
+    "curate",
+    server.registerTool(
+      "sleep_abort",
+      {
+        title: "Abort sleep",
+        description: "Stop the open run. What it already committed stays; the rest stays in the inbox.",
+        inputSchema: { ...runArg },
+        annotations: { destructiveHint: true },
+      },
+      (args) => run(() => relay().abort(args.run)),
+    ),
+  );
+
+  scoped(
+    "curate",
+    server.registerPrompt("sleep", { title: "Run Hippocampus sleep", description: "Consolidate the inbox into canon yourself, one question at a time." }, () => ({
+      messages: [{ role: "user", content: { type: "text", text: `${SLEEP_PROCEDURE}\n\nStart by calling sleep_start with your model name.` } }],
+    })),
+  );
 }

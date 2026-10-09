@@ -22,7 +22,7 @@ describe("MCP server", () => {
   it("lists the agent tools and the handbook resource", async () => {
     const { client } = await connect("residency-agent");
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(["ask_canon", "briefing", "get", "neighbors", "onboard", "recall", "remember", "update_quest"]);
+    expect(tools).toEqual(["ask_canon", "briefing", "get", "introduce", "neighbors", "onboard", "recall", "remember", "update_quest"]);
     expect((await client.listResources()).resources.map((r) => r.uri)).toEqual(["hippo://handbook"]);
     const res = await client.readResource({ uri: "hippo://handbook" });
     expect((res.contents[0] as { text: string }).text).toContain("Player's Handbook");
@@ -43,6 +43,38 @@ describe("MCP server", () => {
     expect((await call("remember", { text: "x", agent: "campus-agent" })).isError).toBeFalsy();
   });
 
+  it("never files an agent's call as the human", async () => {
+    const { call, store } = await connect();
+    for (const agent of ["human", "Player", "curator", "Residency Agent"]) {
+      const r = await call("remember", { text: "The agency moved to Alfama.", agent });
+      expect(r.isError, agent).toBe(true);
+      expect(r.text).toMatch(/^Error: /);
+    }
+    expect((await call("update_quest", { quest: "residence-permit", complete: ["health insurance"], agent: "player" })).isError).toBe(true);
+    expect(await store.list("inbox")).toEqual([]);
+    expect(await store.read("quests/residence-permit.md")).not.toContain("- [x]");
+
+    const bound = await connect("player");
+    expect((await bound.call("remember", { text: "The agency moved to Alfama." })).text).toContain('"player" is the human');
+    expect(await bound.store.list("inbox")).toEqual([]);
+  });
+
+  it("introduces an outsider, once, and tells a member it's already in", async () => {
+    const { call, store } = await connect("job-scout");
+    expect((await call("onboard")).text).toContain('introduce({ agent: "job-scout"');
+    const r = await call("introduce", { title: "Job Scout", lane: "Part-time work in Lisbon", about: "I watch job boards." });
+    expect(r).toEqual({ text: "Introduced as job-scout: waiting for player's approval. Until then your memories count as rumors." });
+    await call("introduce", { title: "Job Scout", lane: "Part-time work" });
+    expect(await store.list("inbox/job-scout")).toEqual([expect.stringMatching(/^inbox\/job-scout\/_introduction-\w+\.md$/)]);
+    expect((await call("onboard")).text).toContain("waiting for player's approval");
+
+    const unbound = await connect();
+    expect((await unbound.call("introduce", { title: "Me" })).isError).toBe(true);
+    expect((await unbound.call("introduce", { title: "Me", agent: "player" })).text).toContain('"player" is the human');
+    expect((await unbound.call("introduce", { title: "Residency", agent: "residency-agent" })).text).toBe("You're already in the party as Residency Agent (party/residency-agent.md). Nothing to do.");
+    expect(await unbound.store.list("inbox")).toEqual([]);
+  });
+
   it("returns helpful errors for unknown entities", async () => {
     const { call } = await connect("campus-agent");
     const r = await call("get", { entity: "migration agencyy" });
@@ -60,7 +92,7 @@ describe("MCP server", () => {
     expect(await readOnly.store.list("inbox")).toEqual([]);
 
     const writeOnly = await connect("campus-agent", ["remember"]);
-    expect((await writeOnly.client.listTools()).tools.map((t) => t.name)).toEqual(["remember"]);
+    expect((await writeOnly.client.listTools()).tools.map((t) => t.name)).toEqual(["remember", "introduce"]);
     await expect(writeOnly.client.readResource({ uri: "hippo://handbook" })).rejects.toThrow();
     await expect(writeOnly.client.readResource({ uri: "hippo://dashboard/overview" })).rejects.toThrow(/not found/);
     await expect(writeOnly.client.readResource({ uri: "hippo://dashboard/whoami" })).rejects.toThrow(/not found/);
@@ -109,7 +141,7 @@ describe("dashboard resources", () => {
 
   it("reports everything for an unbound local connection, and errors for unknown views and entities", async () => {
     const { client } = await connect();
-    expect(await read(client, "hippo://dashboard/whoami")).toEqual({ agent: null, scopes: ["read", "remember", "quest"], campaign: "lisbon-arc", human: "player" });
+    expect(await read(client, "hippo://dashboard/whoami")).toEqual({ agent: null, scopes: ["read", "remember", "quest", "curate"], campaign: "lisbon-arc", human: "player" });
     await expect(client.readResource({ uri: "hippo://dashboard/secrets" })).rejects.toThrow(/no dashboard view "secrets"/);
     await expect(client.readResource({ uri: "hippo://dashboard/entity/nobody-here" })).rejects.toMatchObject({ code: -32602, data: { code: "VAULT" } });
   });
