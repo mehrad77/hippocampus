@@ -1,0 +1,105 @@
+---
+title: Party and lanes
+summary: Every agent gets a character sheet with a lane and authority domains. How authority is computed, and what happens to strangers.
+order: 5
+section: The table
+sigil: party
+---
+import Aside from "../../components/guides/Aside.astro";
+import Link from "../../components/guides/Link.astro";
+
+The agents that share your vault are the **party**. Each one has a sheet in `party/<id>.md` that says what it's for (its **lane**) and where its word counts as canon (its **authority domains**). The curator uses these sheets to settle conflicts. `onboard` uses them to tell each agent who it is, and `HANDBOOK.md` lists them for everyone.
+
+## A party sheet
+
+```markdown
+---
+type: party
+title: Home Finder
+aliases: []
+tags: []
+lane: "Housing: listing hunt, lease, and address documents."
+authority: [housing]
+host: any MCP client
+---
+
+## Notes
+Owns [[apartment-hunt]].
+```
+
+| Property | Meaning |
+| --- | --- |
+| file name | The agent id, e.g. `home-finder`. Episodes, tokens and MCP connections use it |
+| `title` | The display name |
+| `lane` | One or two sentences: what this agent does, and what it stays out of |
+| `authority` | Domains where its reports are canon at once |
+| `host` | Where it runs, for your reference (a chat app, a bot, a coding agent) |
+
+Agent ids are lowercase letters, digits and dashes, starting with a letter or digit, up to 63 characters. That's the same rule everywhere, so an id works on the command line, on the hosted app and in its consent page. Your own id and the reserved ids `human`, `curator`, `unknown` and `hippocampus` can't be agent ids, and an agent must use its exact id: a title or alias doesn't count.
+
+## Domains and authority
+
+Domains are the tags that define lanes. They're listed in `_hippo/config.yaml`:
+
+```yaml
+domains: [residency, insurance, university, language, housing, career, finance, health, story]
+```
+
+The rule is simple. **An agent has authority over a note when one of its `authority` domains matches one of the note's tags, or the note's type.** Matching ignores case. Authority is computed fresh for every decision. Retag a note or edit a party sheet, and the next report is judged by the new rules.
+
+In the example campaign:
+
+| Agent | Authority | Canon at once on, for example |
+| --- | --- | --- |
+| `residency-agent` | residency, insurance | Migration Agency, the permit portal, the residence-permit quest |
+| `campus-agent` | university, language | Harbor University, the HU Language Center, the student portal |
+| `home-finder` | housing | The apartment-hunt quest |
+| `job-scout` | career | The paid-work quest |
+| `game-master` | story | The Lisbon arc campaign |
+| `archivist` | none | Nothing: all its reports start as rumors |
+
+Notes with no matching tag, like Lisbon itself, belong to no one. Every report there is a rumor until enough agents agree. See <Link guide="facts-and-status">Facts and their status</Link>.
+
+<Aside kind="warn" title="Types count as domains">
+
+A domain is also compared with the note's **type**. An agent with authority over a domain named `lore` would be authoritative on every lore note. Keep domain names distinct from type names unless that's what you want.
+
+</Aside>
+
+### New notes inherit a lane
+
+When the curator creates a new entity from an episode, it tags it with domains from your list, as the model suggests. If the model suggests none, the note gets the **reporting agent's authority domains**. So a flat in Alfama that the home finder mentions first will usually end up tagged `housing`, with the home finder holding authority over it. Retag the note in Obsidian if that's wrong.
+
+## You are not an agent
+
+The human player is set by `human:` in `_hippo/config.yaml` (`player` in the example). Your word outranks every agent everywhere, whatever the tags say. Facts with no `by`, facts written by your id, and memories you scribe all count as yours. You don't need a party sheet. Your character note, `characters/player.md`, is about you as a character, not about permissions.
+
+## Strangers at the table
+
+An agent that writes to the inbox without a party sheet is **unknown**:
+
+- Its episodes are accepted and consolidated. Nothing is thrown away.
+- It has no authority anywhere, so everything it reports starts as a rumor.
+- `onboard` tells it so, and asks it to **introduce** itself: a title, its lane, where it runs, its model and a few lines about what it does. The introduction waits in `inbox/<id>/` for you.
+- On the Party page, **Approve** seats it with the authority domains you choose (you can change its name and lane first), and **Dismiss** tears the introduction up. A dismissed agent can still write, as a rumor, and may introduce itself again.
+- The Tavern lists unknown agents under what needs your attention, and Session Zero offers to add them.
+
+An agent's id comes from the episode's `agent:` property, or else from its folder in `inbox/`. Over MCP it comes from the connection: `--agent`, `?agent=`, a single-agent key or connector on the hosted app, or the `agent` argument the agent passes with an agent key. Ids are compared in lowercase.
+
+## Adding a party member
+
+**From the dashboard.** The Party page, and the Party step of Session Zero, add a member with an id, a name, a lane, authority domains from your list, and a host. The dashboard checks the id, refuses unknown domains, refuses your own id or one that's already taken, then writes `party/<id>.md` and regenerates `HANDBOOK.md` together.
+
+**By hand.** Copy `_hippo/templates/party.md` (Obsidian's template picker offers it) to `party/<id>.md` and fill in `lane`, `authority` and `host`. The next sleep, or `hippo handbook`, puts it in the handbook.
+
+Then connect the agent with that id. See <Link guide="connecting-agents">Connecting agents</Link>.
+
+<Aside kind="tip" title="Write lanes like job descriptions">
+
+A good lane says what the agent owns *and* what it leaves alone: "Quest board and story framing. Stamps beats; never steals other lanes." Agents read their lane in `onboard`, and a clear one keeps them from wandering into each other's work.
+
+</Aside>
+
+## Retiring an agent
+
+The example's `archivist` is a fact-checker whose job Hippocampus took over: canon, `ask_canon` and disputes now do what it used to. Its sheet stays as a record, with no authority. To retire an agent, empty its `authority` and revoke its token if it has one. Its past facts keep their provenance.

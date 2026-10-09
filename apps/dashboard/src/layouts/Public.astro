@@ -1,0 +1,64 @@
+---
+import "../styles/fonts.css";
+import "../styles/tokens.css";
+import "../styles/base.css";
+import "../styles/components.css";
+import "../styles/plain.css";
+import "../styles/public.css";
+import NavIcon from "../ui/NavIcon.astro";
+import Term from "../ui/Term.astro";
+import LookSwitch from "../islands/LookSwitch.tsx";
+import { href } from "../lib/routes.ts";
+
+// Pages anyone can open, signed in or not (the hosted app's welcome and privacy notice): static,
+// no session request, no nav to vault pages.
+
+interface Props {
+  /** Plain and codex titles. */
+  titles: readonly [plain: string, codex: string];
+  description: string;
+}
+const { titles, description } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+<!doctype html>
+<html lang="en" data-title-plain={`${titles[0]} · Hippocampus`} data-title-codex={`${titles[1]} · Hippocampus`}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="description" content={description} />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href={`${base}/favicon.svg`} />
+    <title>{titles[0]} · Hippocampus</title>
+    <script is:inline src={`${base}/theme.js`}></script>
+  </head>
+  <body class="pub">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="pub-bar">
+      <a class="pub-brand" href={href.page("welcome")}>
+        <NavIcon name="d20" size={30} />
+        <span>Hippocampus</span>
+      </a>
+      <nav class="pub-nav" aria-label="Site">
+        <a class="pub-nav__link" href={href.page("guides")}><Term k="guides" /></a>
+        <a class="pub-nav__link" href={href.page("privacy")}><Term k="privacy" /></a>
+        <LookSwitch client:only="react" />
+        <a class="btn btn--primary btn--sm" href={href.login()}><NavIcon name="github" size={16} /> Sign in</a>
+      </nav>
+    </header>
+    <main class="pub-main" id="main">
+      <slot />
+    </main>
+    <footer class="pub-foot small">
+      <a href={href.page("privacy")}><Term plain="Privacy notice" codex="Privacy notice" /></a>
+      <span aria-hidden="true">·</span>
+      <a href={href.page("guides")}><Term k="handbook" /></a>
+      <span aria-hidden="true">·</span>
+      <a href="https://github.com/mehrad77/hippocampus" rel="noopener noreferrer">Source on GitHub</a>
+      <span aria-hidden="true">·</span>
+      <span>AGPL-3.0</span>
+    </footer>
+  </body>
+</html>

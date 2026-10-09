@@ -1,12 +1,22 @@
-# CI for your PRIVATE vault repo (copied here by `hippo init`).
-# Checks that every push (yours, or an agent's inbox commit) leaves the vault loadable.
+# CI for your PRIVATE vault repo (created by `hippo init` or the hosted app).
+# - validate: checks that each push or pull request leaves the vault loadable. Pushes that only add
+#   inbox memories skip it, and so do the app's own commits (they carry [skip ci]).
+# - audit: once a day, reviews the last day's commits, the app's included, and flags any that break
+#   the vault's rules (see AGENTS.md).
+# Curation ("sleep") doesn't run here: your own agent does it through the Hippocampus MCP server.
 name: validate
 on:
   push:
+    paths-ignore: ["inbox/**"]
   pull_request:
+    paths-ignore: ["inbox/**"]
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
 
 jobs:
   validate:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,24 +26,15 @@ jobs:
       # Pin the major version you've tested; bump it deliberately and run `hippo migrate`.
       - run: npx -y @mehrad77/hippocampus@0 validate
 
-  # Optional: nightly sleep in CI with a HOSTED model (a runner can't reach your local LM Studio).
-  # Add HIPPO_LLM_PROVIDER / HIPPO_LLM_MODEL as repo variables and the API key as a repo secret,
-  # then uncomment. The job commits the consolidated vault back to this repo.
-  # sleep:
-  #   if: github.event_name == 'schedule'
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     contents: write
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-node@v4
-  #       with:
-  #         node-version: 24
-  #     - run: npx -y @mehrad77/hippocampus@0 sleep
-  #       env:
-  #         HIPPO_LLM_PROVIDER: ${{ vars.HIPPO_LLM_PROVIDER }}
-  #         HIPPO_LLM_MODEL: ${{ vars.HIPPO_LLM_MODEL }}
-  #         HIPPO_LLM_API_KEY: ${{ secrets.HIPPO_LLM_API_KEY }}
-# on:
-#   schedule:
-#     - cron: "30 1 * * *"   # add this trigger to `on:` above when enabling the sleep job
+  audit:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # A little overlap with the previous run, since scheduled runs can start late.
+      - run: npx -y @mehrad77/hippocampus@0 audit --since "26 hours ago"

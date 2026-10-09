@@ -1,0 +1,111 @@
+---
+title: Precedence and disputes
+summary: Whose word wins when reports disagree, how a dispute opens, and how you rule, from the Council or from Obsidian.
+order: 3
+section: Basics
+sigil: council
+---
+import Ladder from "../../components/guides/Ladder.astro";
+import Seal from "../../components/guides/Seal.astro";
+import Aside from "../../components/guides/Aside.astro";
+import Link from "../../components/guides/Link.astro";
+
+When two reports disagree, Hippocampus doesn't ask a model who is right. A small, pure function, the Archivist's rules in `reconcile.ts`, compares the new report with the current value and decides. The order of precedence is fixed:
+
+<Ladder />
+
+Authority is worked out per note, at the moment of the decision. An agent has authority over a note when one of its `authority` domains matches the note's tags or type. <Link guide="party-and-lanes">Party and lanes</Link> covers how that works. Below, "authority" means an agent with authority over *this* note. "Without authority" means everyone else, including agents with no party sheet.
+
+## The precedence table
+
+Rows are what the field holds now. Columns are who sends the new report.
+
+| Current value ↓ · new report → | You | Agent with authority | Agent without authority |
+| --- | --- | --- | --- |
+| No value yet | canon | canon | rumor |
+| Same value | confirmed; a rumor becomes canon | confirmed; a rumor becomes canon | corroborated: canon once `canon_threshold` agents agree |
+| Differs, current is yours | replaced | dispute | dispute |
+| Differs, current is from an authority | replaced | dispute | kept: the report is not adopted |
+| Differs, current is from an agent without authority | replaced | replaced, now canon | dispute |
+| Differs, same source sends a newer report | replaced | replaced (self-correction) | replaced (self-correction) |
+| Field is disputed | replaced, dispute resolved | claim added to the dispute | claim added to the dispute |
+
+A self-correction becomes canon if the source has authority. Otherwise the fact keeps the status it had. A replaced value is never lost: it moves to the fact's `was` list.
+
+<Aside kind="lore" title="Agents can't overrule you, but they can object">
+
+If an agent reports something that contradicts a value you wrote, it doesn't replace yours. It opens a dispute instead, so a stale personal note can't hide a real change. You decide.
+
+</Aside>
+
+Secret fields are the one exception. Ciphertext can't be compared, so they skip this table and the latest report replaces the stored value. See <Link guide="secrets">Secrets</Link>.
+
+## Worked examples from the Lisbon arc
+
+**Authority holds.** The Migration Agency note is tagged `residency`, and the residency agent has authority over `residency`. Its report of the appointment date is canon at once. When the campus agent later reports a different date, the residency agent's value is **kept** and the campus agent's claim is not adopted. The episode is still chronicled, so nothing is forgotten.
+
+**Peers disagree.** The campus agent says the agency's office is in Alfama. A day later the home finder says its public counter is now in Belém. Neither has authority over the agency, so the fact turns <Seal status="disputed" /> and a dispute note opens.
+
+**A source corrects itself.** The residency agent books an appointment, then reports that it moved. Same source, newer report: the new date replaces the old one, which moves to `was`.
+
+**An agent contradicts you.** You wrote a rent budget of 1,100 EUR on your own character note. If an agent reports 1,200 EUR, it can't overwrite you, so a dispute opens and waits for your ruling.
+
+## How a dispute opens
+
+The dispute is a note in `disputes/`, named after the entity and field:
+
+```yaml
+---
+type: dispute
+entity: "[[migration-agency]]"
+field: office_address
+status: open
+claims:
+  - { value: Alfama office, by: campus-agent, at: 2026-09-23T13:15:00Z, src: [ep-01J9X3K2QD] }
+  - { value: Belém office, by: home-finder, at: 2026-09-24T17:45:00Z, src: [ep-01J9Y8M4TR] }
+opened: 2026-09-25T02:30:00Z
+---
+```
+
+The file is `disputes/dispute-migration-agency-office-address.md`. Its body lists the claims and ends with a "Ruling needed" callout. While the dispute is open:
+
+- the fact keeps the value it had, with status <Seal status="disputed" />;
+- further reports about that field are added as claims to the same note;
+- it shows up in the Council (with a badge), on the Tavern, in the morning review, in `HANDBOOK.md`, and in agents' `get`, `briefing` and `ask_canon` answers.
+
+## Ruling from the Council
+
+Open the dashboard's <Link page="council">Council</Link>. Each dispute shows its claims: who made each one, whether they had authority, and when. You can:
+
+1. **Pick a claim.** Usually the right answer is already on the table.
+2. **Apply the ruling written in the note**, if you already set `ruling:` in Obsidian and don't want to wait for the sleep.
+3. **Type a new value**, when every claim is wrong. This isn't offered for secret fields, because the value would be stored in the note as plain text. Pick a claim there instead.
+
+Your ruling **applies immediately**, as canon by you:
+
+- the fact becomes canon, with `by` set to your human id;
+- its sources are merged from every claim, and the previous value moves to `was`;
+- the dispute is marked `resolved`, with a timestamp;
+- `HANDBOOK.md` is regenerated.
+
+All of it is saved as one change. On a vault in GitHub (`--github`, or the hosted app), that's a single commit such as `rule(player): migration-agency.office_address = Belém office`, and on the hosted app the message also names the GitHub account that ruled. In a local folder the notes are rewritten in place, ready for your usual git sync.
+
+## Ruling from Obsidian
+
+Prefer your editor? Open the dispute note and add one property:
+
+```yaml
+ruling: Belém office
+```
+
+The next sleep applies rulings **first**, before it reads any new episode. The result is exactly what the Council would have done, just later. An empty `ruling:` is ignored.
+
+<Aside kind="tip">
+
+You can also just tell Hippocampus. A memory you scribe yourself is filed under your human id, so it carries your authority. If the curator files it under the same field, it settles the dispute at the next sleep. A ruling is the precise way. A memory is the natural way when you have news anyway.
+
+</Aside>
+
+## After the ruling
+
+The dispute note stays in `disputes/` as a record, with `status: resolved`. If an agent later contradicts your ruling, the same note **reopens**. The new claim is added, your old ruling is cleared from the note, and you're asked again. The fact keeps your value, marked disputed, until you rule.

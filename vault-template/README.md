@@ -2,8 +2,9 @@
 
 This is a **Hippocampus** memory vault: a shared, curated memory for a party of AI agents, organized like a TTRPG campaign wiki. Open it in [Obsidian](https://obsidian.md) as a vault.
 
-- **Agents:** read [HANDBOOK.md](HANDBOOK.md) first. Write new memories only to `inbox/<your-id>/`.
+- **Agents:** read [AGENTS.md](AGENTS.md) and [HANDBOOK.md](HANDBOOK.md) first. Use the Hippocampus MCP tools; don't edit files directly.
 - **Humans:** edit anything. Your edits outrank every agent. The curator only rewrites the `%% hippo:… %%` regions and the `facts`/`relations` properties.
+- **Curator rules:** [_hippo/curator.md](_hippo/curator.md) holds your house rules for consolidation. Edit them in plain words.
 - **Dashboards:** `_hippo/dashboards/` (install the Dataview plugin).
 - **Morning review:** `_hippo/review.md` lists disputes, rumors, stale facts, and failed episodes.
 

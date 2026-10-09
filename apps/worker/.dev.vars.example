@@ -1,10 +1,20 @@
-# Copy to .dev.vars (gitignored) for `wrangler dev`.
-GITHUB_REPO=you/my-campaign
-GITHUB_TOKEN=github_pat_...
-# Point at a fake GitHub for offline development:
-# GITHUB_API_URL=http://127.0.0.1:8786
-# OAuth for connectors (off unless HIPPO_PUBLIC_URL is set):
-# HIPPO_PUBLIC_URL=http://127.0.0.1:8787
-# HIPPO_OWNERS=your-github-login
-# GITHUB_OAUTH_CLIENT_ID=
-# GITHUB_OAUTH_CLIENT_SECRET=
+# Settings for `wrangler dev` against the fake GitHub (scripts/fake-github.ts). They work nowhere else.
+# The fake can write a complete .dev.vars (gitignored), with a fresh key:
+#   pnpm --filter @hippocampus/worker dev:github --dev-vars > apps/worker/.dev.vars
+# Then run the fake and the Worker in two terminals and open http://127.0.0.1:8787/ (you're `player`, an admin):
+#   pnpm --filter @hippocampus/worker dev:github
+#   pnpm --filter @hippocampus/worker dev
+HIPPO_PUBLIC_URL=http://127.0.0.1:8787
+# GitHub user ids: the fake's `player` is 4242 and `game-master` is 7.
+HIPPO_ADMINS=4242
+GITHUB_APP_ID=1
+GITHUB_APP_SLUG=hippocampus-dev
+GITHUB_APP_CLIENT_ID=Iv1.fake-hippocampus
+GITHUB_APP_CLIENT_SECRET=fake-client-secret
+GITHUB_APP_WEBHOOK_SECRET=fake-webhook-secret
+# Any PKCS#8 RSA key: the fake doesn't check the app's signatures. To make one by hand:
+#   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 | awk '{printf "%s\\n", $0}'
+GITHUB_APP_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+GITHUB_API_URL=http://127.0.0.1:8786
+GITHUB_OAUTH_URL=http://127.0.0.1:8786
+# Optional semantic recall, as in the CLI: HIPPO_EMBED_PROVIDER, HIPPO_EMBED_BASE_URL, HIPPO_EMBED_MODEL, HIPPO_EMBED_API_KEY.

@@ -1,0 +1,9 @@
+---
+import Shell from "../layouts/Shell.astro";
+import AdminView from "../islands/AdminView.tsx";
+import "../styles/setup.css";
+import "../styles/hosted.css";
+---
+<Shell title="Admin" page="admin" description="Approve accounts from the waitlist and see which vaults exist.">
+  <AdminView client:only="react" />
+</Shell>

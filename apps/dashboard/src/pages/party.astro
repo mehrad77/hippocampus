@@ -1,0 +1,7 @@
+---
+import Shell from "../layouts/Shell.astro";
+import PartyView from "../islands/PartyView.tsx";
+---
+<Shell title="Party" page="party">
+  <PartyView client:only="react" />
+</Shell>

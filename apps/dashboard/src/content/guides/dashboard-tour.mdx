@@ -1,0 +1,158 @@
+---
+title: A tour of the dashboard
+summary: Every page and what you can do there. Where the data comes from (local, GitHub, MCP, the hosted app, the demo), setup on both, the curator panel, and how the dashboard stays private.
+order: 9
+section: Running it
+sigil: map
+---
+import Aside from "../../components/guides/Aside.astro";
+import Link from "../../components/guides/Link.astro";
+
+The dashboard is the human's side of the table. It's where you see what happened, settle disputes, move goals along, and set everything up. Agents never use it. They have MCP and the handbook.
+
+```bash
+npx @mehrad77/hippocampus dashboard
+```
+
+Run it inside a vault, or point it at one with `-v`. If there's no vault yet, it opens **Setup** (called Session Zero in the campaign look), the guided setup. On the hosted app, the dashboard lives at `/dashboard/` and you sign in with GitHub.
+
+## Two looks: plain or campaign
+
+The dashboard comes in two looks. Pick one in **Setup & health → Personalization**, the last card on that page:
+
+- **Theme**: **Plain (IBM Carbon)**, the default, is clean and easy to read, with everyday names for every page. **Campaign codex** is the tabletop look: parchment and candlelight, with the campaign names these guides grew up with.
+- **Colors**: match your device, or always light, or always dark.
+- **Text size**: standard or large.
+
+The choice applies at once and is saved in this browser only, never in your vault. Another browser, or a private window, starts with the defaults. Both looks show the same data and offer the same actions; only the names and the styling change.
+
+| Plain look | Campaign look |
+| --- | --- |
+| Home | Tavern |
+| Goals | Quest board |
+| Disputes | Council |
+| Inbox | Satchel |
+| Records | Codex |
+| Connections | Map |
+| Timeline | Chronicle |
+| Agents | Party |
+| Help | Guides |
+| Setup | Session Zero |
+| Add a note | Scribe a memory |
+| Note (in the inbox) | Episode |
+| Confirmed | canon |
+| Unverified | rumor |
+| Disputed | disputed |
+| Replaced | retconned |
+| Nightly update | Sleep |
+
+The commands stay the same in both looks: the nightly update is still `hippo sleep`. The other guides use the campaign names; this table is the key.
+
+## Where the data comes from
+
+| How you open it | Reads | Your actions are filed as |
+| --- | --- | --- |
+| `hippo dashboard`, in or with `-v` a vault folder | The local folder | You, the human |
+| `hippo --github you/my-campaign dashboard` | The GitHub repo, no checkout (token in `HIPPO_GITHUB_TOKEN`) | You; each action is one commit |
+| `hippo dashboard --mcp https://…/mcp` | Any Hippocampus MCP server (token in `HIPPO_MCP_TOKEN`) | The token's agent, within its scopes |
+| `/dashboard/` on the hosted app | Your vault repo, behind GitHub sign-in | You; rulings and new agents also name your GitHub login |
+| `hippo dashboard --demo` | A fictional campaign, in memory | Nobody: it's a sandbox, gone when you stop it |
+
+**Over MCP** the dashboard reads through resources that agent hosts don't list, and writes through the same tools agents use. New notes and goal edits are filed as the token's agent. Rulings belong to the human, so they aren't available there. Whatever a source can't do, the dashboard simply hides.
+
+**The demo** is the fictional Lisbon arc from the bundled seed, with three weeks of made-up agent activity replayed through the nightly update's own rules: a passport secret, a flat in Alfama, an agency that keeps moving its counter. It's the safe way to look around, take screenshots, or show someone how it works.
+
+## Work (At the table)
+
+| Page | What you see | What you can do |
+| --- | --- | --- |
+| **Home** (Tavern) | Recent activity from the timeline ("Previously on…"), what needs your attention, goals in progress, dates in the next 90 days, your agents, 30 days of activity, recently changed notes | Jump straight to whatever needs you |
+| **Goals** (Quest board) | Every goal (quest) with owner, status, objectives, clocks and deadlines | Tick and untick objectives, turn clocks, set status and deadlines |
+| **Disputes** (Council) | Open disputes: each claim with who, whether they had authority, and when, beside the current value | Decide (rule): pick a claim, apply a `ruling:` already in the note, or type the value |
+| **Inbox** (Satchel) | The inbox, newest first: agent, kind, time and hints for each note (episode) | See what the next nightly update will read, and which notes already waited through one |
+
+"Needs your attention" gathers open disputes, unverified facts (rumors), confirmed facts that need re-checking (stale canon), orphan notes, notes that sat through a nightly update, and agents that aren't set up yet. The badges on Disputes and Inbox count open disputes and notes in the inbox. A decision (ruling) on the Disputes page is confirmed (canon) **immediately**, by you. See <Link guide="precedence-and-disputes">Precedence and disputes</Link>.
+
+## Knowledge (Lore)
+
+| Page | What it is |
+| --- | --- |
+| **Records** (Codex) | Every note, by type, with tags and how many facts are confirmed, unverified or disputed |
+| **Record pages** (entity sheets) | One note in full: summary, facts with their status and provenance, relations both ways, disputes, the goal or agent card, timeline mentions from the last 90 days, inbox notes about it, and your own notes |
+| **Connections** (Map) | The relation graph: notes as nodes colored by type, relations as edges |
+| **Timeline** (Chronicle) | Month by month, day by day: every processed note with its agent, kind, time and the notes it touched |
+| **Agents** (Party) | Each agent's role (lane), authority, host, when it was last seen, waiting notes, recent activity and the goals it owns. Add an agent here, and approve or dismiss agents that introduced themselves |
+
+On a record page, each fact shows who said it, whether they had authority, when, which notes back it, earlier values, and whether it's stale. It's the quickest way to answer "why does Hippocampus believe this?"
+
+## Everywhere
+
+- **⌘K** opens the command palette: jump to any note or page, or search memory the way agents' `recall` does.
+- **Add a note** (Scribe a memory) drops a note into the inbox in your name. Pick a kind, link the notes it's about, and tick the box if it contains an ID or a password. It's confirmed at the next nightly update, with your authority.
+- **Help** (Guides) is these pages. They ship with the tool and work without JavaScript.
+- **Setup & health** holds the setup steps (Session Zero) and the Personalization settings.
+- **Your account** (hosted app only): the chip with your GitHub login opens your account settings, the Admin page if you're an admin, and Sign out.
+
+## Setup (Session Zero)
+
+Every setup step can be done from the browser. Each one either **does** the work on this machine, or **shows** you exactly what to run.
+
+| Step | Done for you | Shown to copy |
+| --- | --- | --- |
+| Vault | Create one from the template (optionally a seed), open one, or connect a GitHub repo or MCP server | `hippo migrate` when the format is older |
+| Agents (Party) | Add agents, including unknown ones seen in the inbox | |
+| Secrets | Create (forge) the age key, or reuse the one on this machine | Where to back it up |
+| AI model (Curator) | Save the model settings and test them | Key pages for hosted providers |
+| Git | Check that the GitHub repo is private | Creating the repo and pushing |
+| Connect agents | | Connection snippets for each agent |
+| Nightly update (Sleep) | Install the nightly launchd job, start a test run that saves nothing (a dry run) | A cron line on Linux |
+| Remote access | Check a hosted app's URL, save embedding settings, rebuild the index | Where to use a hosted app, or how to run your own |
+
+Settings it saves go to `~/.config/hippocampus/env` (mode 0600; `HIPPO_CONFIG_DIR` moves it). Your shell environment and a local `.env` still win. Keys you enter are write-only: the browser never gets them back.
+
+## Setup on the hosted app
+
+On the hosted app, Setup walks you from signing in to a working vault. Nothing happens until you press a button, and every button says what it will do.
+
+| Step | What happens |
+| --- | --- |
+| Request access | Ask once, with an optional note. An admin approves accounts by hand; the rest unlocks then |
+| Create a repo | Opens GitHub's new-repository form, filled in: private, named `vault`. You create it yourself |
+| Install the app | Installs the Hippocampus GitHub App on that one repository |
+| Pick the repo | Lists the app's repositories and says which can become a vault: private, and empty or already a vault |
+| Name it | The campaign's name, your id, time zone and domains, optionally the example campaign, and a key for secrets made in this browser |
+| Set up the vault | One commit puts the template into the repo. A repo that's already a vault is adopted: only missing guardrail files are added |
+| Connect agents | Create (mint) keys and get snippets for each client, or connect Claude.ai and ChatGPT with the MCP address |
+| Set up curation | A curator key and how to run it, or the GitHub Actions curator |
+
+Keys are shown once and stored only as a hash; revoke one and it stops at once. See <Link guide="connecting-agents">Connecting agents</Link> and <Link guide="nightly-sleep">The curator</Link>.
+
+**The curator panel**, on the same page, shows the sleep run in progress (who holds it, how far it got, when its lease ends) and past runs, newest first. Stop a run there if it's stuck.
+
+**Your account** lists the apps you connected over OAuth, each with the agent it acts as, and disconnects them. It also deletes your account: type your GitHub login to confirm, and your keys, connected apps, the app's installation, and your vault's index and cache are gone. Your vault repo stays on GitHub, untouched.
+
+**The Admin page** is for the people the operator listed as admins. It shows who's waiting for access, with their note, to approve or deny, and which vaults exist and their state. Admins see names and states, never what's in anyone's vault.
+
+If your repo is made public, the app is uninstalled, or the repo leaves the installation, the vault disconnects and Setup says why. Undo it on GitHub and the vault comes back.
+
+## How it stays private
+
+**Locally**, the dashboard listens on 127.0.0.1 only. When it starts, the terminal prints a sign-in link with a fresh key. Opening it sets a cookie for that browser (HttpOnly, SameSite=Strict, limited to `/dashboard`) and takes the key out of the address bar. After that:
+
+- requests must name a loopback host, which blocks DNS-rebinding tricks;
+- every write must come from the dashboard's own origin as JSON, so other websites can't post to it with your cookie;
+- other users on the machine, and other sites in your browser, can't use it.
+
+**On the hosted app**, you sign in with GitHub, and each account reaches only its own vault. A session lasts 7 days. Writes must come from the dashboard's own origin.
+
+**Everywhere:**
+
+- Pages carry a strict content security policy: no outside scripts, fonts or images, and they can't be framed.
+- Secret values never reach the page. They show as a lock, and inbox notes that carry a secret are hidden.
+- You can't type a ruling for a secret field, so a secret can't land in a note as plain text by accident.
+
+<Aside kind="rule" title="Screenshots are vault content">
+
+A screenshot of your dashboard is a screenshot of your private memory. Use `--demo` when you want to show the dashboard to someone, or when reporting a bug.
+
+</Aside>

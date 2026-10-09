@@ -1,0 +1,7 @@
+---
+import Shell from "../layouts/Shell.astro";
+import EntityView from "../islands/EntityView.tsx";
+---
+<Shell title="Record" titles={["Record", "Codex entry"]} page="entity" description="One record: its facts, sources, relationships and history.">
+  <EntityView client:only="react" />
+</Shell>

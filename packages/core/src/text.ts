@@ -84,3 +84,16 @@ export function localParts(iso: string, timeZone: string): { date: string; time:
   );
   return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
 }
+
+/** The ISO instant of a local date (YYYY-MM-DD) and time (HH:MM) in an IANA timezone; the inverse of `localParts`. */
+export function fromLocal(date: string, time: string, timeZone: string): string {
+  const guess = Date.parse(`${date}T${time}:00Z`);
+  if (Number.isNaN(guess)) return `${date}T${time}`;
+  // The zone's offset at that moment; a second pass settles instants near DST changes.
+  let at = guess;
+  for (let i = 0; i < 2; i++) {
+    const p = localParts(new Date(at).toISOString(), timeZone);
+    at -= Date.parse(`${p.date}T${p.time}:00Z`) - guess;
+  }
+  return new Date(at).toISOString();
+}

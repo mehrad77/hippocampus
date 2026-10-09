@@ -4,25 +4,60 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
+  // One Durable Object per vault, named by its id: the vault's single writer, cache, index and sleep runs.
   "durable_objects": {
-    "bindings": [{ "name": "SCRIBE", "class_name": "Scribe" }]
+    "bindings": [{ "name": "VAULT_HOST", "class_name": "VaultHost" }]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Scribe"] }],
-  // Create with `wrangler d1 create hippocampus-index`, `wrangler kv namespace create TOKENS` and
-  // `wrangler kv namespace create OAUTH_KV`, then paste the ids here. `wrangler dev` works with the placeholders.
-  "d1_databases": [{ "binding": "INDEX", "database_name": "hippocampus-index", "database_id": "00000000-0000-0000-0000-000000000000" }],
-  "kv_namespaces": [
-    { "binding": "TOKENS", "id": "00000000000000000000000000000000" },
-    { "binding": "OAUTH_KV", "id": "11111111111111111111111111111111" }
+  // v1 was the single-vault Worker's writer. Deleting it drops its (cache-only) storage.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Scribe"] },
+    { "tag": "v2", "deleted_classes": ["Scribe"], "new_sqlite_classes": ["VaultHost"] }
   ],
-  // GITHUB_REPO (owner/name of the private vault repo) and GITHUB_TOKEN are secrets, so neither ends up in
-  // this public repo: `wrangler secret put GITHUB_REPO` and `wrangler secret put GITHUB_TOKEN`.
-  // OAuth for Claude.ai / ChatGPT connectors is off until these secrets are set: HIPPO_PUBLIC_URL (this
-  // Worker's https origin), HIPPO_OWNERS (GitHub logins allowed to connect apps), and a GitHub OAuth app's
-  // GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET (callback: <HIPPO_PUBLIC_URL>/oauth/github/callback).
-  "vars": { "GITHUB_BRANCH": "main" },
+  // The registry: accounts, which repo is whose vault, hashed keys. Never vault content. Create it with
+  // `wrangler d1 create hippocampus-registry`, paste its id here, then apply the schema with
+  // `wrangler d1 migrations apply REGISTRY --remote` (and again after each upgrade that adds a migration).
+  // `wrangler dev` works with the placeholder; `pnpm dev` applies the migrations locally first.
+  "d1_databases": [
+    { "binding": "REGISTRY", "database_name": "hippocampus-registry", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+  ],
+  // OAuth grants and clients, sign-in state and sessions. Create with `wrangler kv namespace create OAUTH_KV`.
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "11111111111111111111111111111111" }],
+  // Per-key request limits. `namespace_id` is any positive integer, unique within your Cloudflare account.
+  "ratelimits": [
+    { "name": "RL_SIGNIN", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
+    { "name": "RL_API", "namespace_id": "1002", "simple": { "limit": 120, "period": 60 } },
+    { "name": "RL_MCP", "namespace_id": "1003", "simple": { "limit": 240, "period": 60 } },
+    { "name": "RL_REGISTER", "namespace_id": "1004", "simple": { "limit": 10, "period": 60 } }
+  ],
+  // Settings, each with `wrangler secret put NAME`, so none of them end up in this public repo. Until they're
+  // all set, the Worker answers with a page naming the ones still missing.
+  //   HIPPO_PUBLIC_URL            this Worker's https origin, like https://hippocampus.<subdomain>.workers.dev
+  //   HIPPO_ADMINS                GitHub user ids (numbers, comma-separated) who approve accounts
+  //   GITHUB_APP_ID, GITHUB_APP_SLUG, GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET,
+  //   GITHUB_APP_WEBHOOK_SECRET   from the GitHub App's settings page
+  //   GITHUB_APP_PRIVATE_KEY      the app's private key as PKCS#8: GitHub hands out PKCS#1, so convert it with
+  //                               `openssl pkcs8 -topk8 -nocrypt -in app.private-key.pem -out app.pkcs8.pem`
+  //   HIPPO_EMBED_*               optional, for semantic recall (see `ai` below)
+  // The GitHub App (github-app.manifest.json has the same settings, for creating it from a manifest):
+  //   Callback URL                <HIPPO_PUBLIC_URL>/oauth/github/callback, and tick "Request user authorization
+  //                               (OAuth) during installation" (sign-in and the install redirect both come back there)
+  //   Webhook URL                 <HIPPO_PUBLIC_URL>/github/webhook, with GITHUB_APP_WEBHOOK_SECRET as its secret
+  //   Repository permissions      Contents: read and write; Workflows: read and write; Metadata: read
+  //   Events                      Installation repositories, Repository
+  //   Where it can be installed   Any account, if people other than you will sign up
+  // The dashboard UI (`pnpm dev` and `pnpm deploy` build it first). Its pages and the sign-in routes run
+  // through the Worker, which adds security headers and serves the API; hashed `_astro/*` files are served
+  // straight from the asset store. No `not_found_handling`: a path that isn't a file must reach the Worker,
+  // or /mcp, /authorize and the OAuth callbacks would get an asset 404 instead.
+  "assets": {
+    "directory": "../dashboard/dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/dashboard", "/dashboard/*", "!/dashboard/_astro/*"]
+  },
   // Semantic recall (optional): uncomment and set HIPPO_EMBED_PROVIDER=workers-ai, or point
   // HIPPO_EMBED_PROVIDER/BASE_URL/MODEL/API_KEY at any OpenAI-compatible embeddings API.
   // "ai": { "binding": "AI" },
-  "observability": { "enabled": true }
+  // No invocation logs: they'd record every request's URL. The Worker logs one line per request itself,
+  // with route names and hashed vault ids only.
+  "observability": { "enabled": true, "redact_query_string": true, "logs": { "invocation_logs": false } }
 }

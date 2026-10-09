@@ -1,0 +1,1558 @@
+/*
+ * Setup & health (/setup/, Session Zero in the codex): the wizard rail and stepper, step frames,
+ * "what this step does" boxes, copy-paste snippets, job logs and the token reveal. Colors come from
+ * tokens.css only. The plain look (IBM Carbon) overrides sit together at the end of the file.
+ */
+
+.sz {
+  gap: var(--space-5);
+}
+
+.sz > .page-head {
+  margin-bottom: 0;
+}
+
+.sz-where {
+  align-self: flex-start;
+}
+
+.sz-tight {
+  gap: var(--space-2);
+}
+
+.sz-subhead {
+  margin: var(--space-2) 0 0;
+  font-size: 0.92rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.sz-flush {
+  margin: 0;
+}
+
+.sz-break {
+  overflow-wrap: anywhere;
+}
+
+.sz-warn-text {
+  color: var(--rumor);
+}
+
+.sz-danger-text {
+  color: var(--disputed);
+}
+
+.sz-center {
+  justify-content: center;
+}
+
+/* ── State badges: glyph + word + color ───────────────────────────────── */
+
+.sz-state {
+  --c: var(--ink-2);
+  --b: var(--surface-sunk);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 9px 1px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--c) 45%, transparent);
+  background: var(--b);
+  color: var(--c);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.sz-state svg {
+  flex: none;
+}
+
+.sz-state--compact {
+  padding: 0 7px 0 5px;
+  font-size: 0.7rem;
+}
+
+.sz-state--compact svg {
+  width: 11px;
+  height: 11px;
+}
+
+.sz-state--done {
+  --c: var(--canon);
+  --b: var(--canon-bg);
+}
+
+.sz-state--warn {
+  --c: var(--rumor);
+  --b: var(--rumor-bg);
+}
+
+.sz-state--error {
+  --c: var(--disputed);
+  --b: var(--disputed-bg);
+}
+
+.sz-state--optional {
+  --c: var(--gold);
+  --b: color-mix(in oklab, var(--gold-soft) 30%, var(--surface));
+}
+
+.sz-state--na {
+  --c: var(--retconned);
+  --b: var(--retconned-bg);
+}
+
+.sz-state--locked {
+  --c: var(--ink-3);
+  border-style: dashed;
+}
+
+.sz-state--wait {
+  --c: var(--ink-2);
+  --b: var(--surface-sunk);
+  border-style: dotted;
+}
+
+.sz-how {
+  font-size: 0.75rem;
+  color: var(--ink-3);
+}
+
+.sz-how svg {
+  color: var(--gold);
+}
+
+/* ── Setup & health checklist ─────────────────────────────────────────── */
+
+.sz-health > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  cursor: pointer;
+  list-style: none;
+}
+
+.sz-health > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sz-health__count {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.92rem;
+  color: var(--ink-2);
+}
+
+.sz-health__chev {
+  margin-left: auto;
+  color: var(--ink-3);
+  transform: rotate(90deg);
+  transition: transform 160ms ease;
+}
+
+.sz-health:not([open]) .sz-health__chev {
+  transform: none;
+}
+
+.sz-health__list {
+  list-style: none;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+}
+
+.sz-health__item {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr) auto;
+  grid-template-areas: "badge text how";
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--rule);
+}
+
+.sz-health__item > .sz-state {
+  grid-area: badge;
+  justify-self: start;
+}
+
+.sz-health__item > .sz-how {
+  grid-area: how;
+}
+
+.sz-health__text {
+  grid-area: text;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sz-health__text a {
+  color: var(--ink);
+}
+
+.sz-health__text a:hover {
+  color: var(--link);
+}
+
+@media (max-width: 640px) {
+  .sz-health__item {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "badge how"
+      "text text";
+  }
+
+  .sz-health__item > .sz-how {
+    justify-self: end;
+  }
+}
+
+/* ── Layout: rail + step ──────────────────────────────────────────────── */
+
+.sz-layout {
+  display: grid;
+  grid-template-columns: 228px minmax(0, 1fr);
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.sz-rail {
+  position: sticky;
+  top: var(--space-5);
+}
+
+.sz-rail__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sz-rail__item {
+  position: relative;
+}
+
+/* The thread between rune numbers. */
+.sz-rail__item:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 22px;
+  top: 38px;
+  bottom: -6px;
+  width: 1px;
+  background: var(--rule-strong);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.sz-rail__link {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  color: var(--ink-2);
+  text-decoration: none;
+  transition: background 120ms ease;
+}
+
+.sz-rail__link:hover {
+  background: color-mix(in oklab, var(--surface-2) 70%, transparent);
+  color: var(--ink);
+}
+
+.sz-rail__link[aria-current="step"] {
+  background: var(--surface-2);
+  color: var(--ink);
+  box-shadow: var(--shadow-1), inset 3px 0 0 var(--accent);
+}
+
+.sz-rail__num {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  font-family: var(--font-display);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--ink-2);
+}
+
+.sz-rail__num::before {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  z-index: -1;
+  transform: rotate(45deg);
+  border: 1.5px solid var(--gold);
+  border-radius: 3px;
+  background: var(--surface);
+}
+
+.sz-rail__item[data-state="done"] .sz-rail__num::before {
+  border-color: var(--canon);
+  background: var(--canon-bg);
+}
+
+.sz-rail__item[data-state="locked"] .sz-rail__num::before {
+  border-style: dashed;
+  border-color: var(--rule-strong);
+}
+
+.sz-rail__link[aria-current="step"] .sz-rail__num {
+  color: var(--accent-ink);
+}
+
+.sz-rail__link[aria-current="step"] .sz-rail__num::before {
+  border-color: var(--accent-hover);
+  background: var(--accent);
+}
+
+.sz-rail__text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sz-rail__title {
+  font-size: 0.98rem;
+  line-height: 1.25;
+}
+
+.sz-rail__link[aria-current="step"] .sz-rail__title {
+  font-weight: 600;
+}
+
+.sz-rail__item[data-state="locked"] .sz-rail__title {
+  color: var(--ink-3);
+}
+
+.sz-rail__icon {
+  color: var(--gold);
+  opacity: 0.7;
+}
+
+/* The phone stepper replaces the rail where the shell turns into a drawer. */
+.sz-stepper {
+  display: none;
+}
+
+/* ── A step ───────────────────────────────────────────────────────────── */
+
+.sz-step__kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: var(--space-2);
+}
+
+.sz-step__titlerow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.sz-step__titlerow h2 {
+  margin: 0;
+  font-size: clamp(1.35rem, 1.1rem + 0.9vw, 1.75rem);
+}
+
+.sz-step__titlerow h2:focus {
+  outline-offset: 6px;
+}
+
+.sz-step__lede {
+  margin: var(--space-2) 0 0;
+  max-width: 68ch;
+  color: var(--ink-2);
+  font-style: italic;
+}
+
+.sz-step__status {
+  margin: var(--space-2) 0 0;
+}
+
+.sz-step__body {
+  margin-top: var(--space-5);
+}
+
+.sz-step__body > .stack {
+  gap: var(--space-5);
+}
+
+.sz-step__nav {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--rule);
+}
+
+.sz-locked {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-3);
+  color: var(--ink-2);
+}
+
+.sz-locked > svg {
+  color: var(--gold);
+}
+
+.sz-locked p {
+  max-width: 46ch;
+  margin: 0;
+}
+
+/* ── What this step does ──────────────────────────────────────────────── */
+
+.sz-effects {
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--rule-strong);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--surface-sunk) 65%, transparent);
+}
+
+.sz-effects__title {
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-bottom: var(--space-2);
+}
+
+.sz-effects__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 0.95rem;
+}
+
+.sz-effect {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.sz-effect svg {
+  transform: translateY(2px);
+  color: var(--ink-3);
+}
+
+.sz-effect--writes svg {
+  color: var(--accent);
+}
+
+.sz-effect--runs svg,
+.sz-effect--contacts svg {
+  color: var(--gold);
+}
+
+.sz-effect--never svg {
+  color: var(--canon);
+}
+
+.sz-effect code {
+  overflow-wrap: anywhere;
+}
+
+/* ── Snippets and logs ────────────────────────────────────────────────── */
+
+.sz-snippets {
+  gap: var(--space-3);
+}
+
+.sz-snippet {
+  margin: 0;
+  min-width: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-sunk);
+  overflow: hidden;
+}
+
+.sz-snippet__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 6px 8px 6px 12px;
+  background: color-mix(in oklab, var(--surface-2) 70%, var(--surface-sunk));
+  border-bottom: 1px solid var(--rule);
+}
+
+.sz-snippet__label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  min-width: 0;
+}
+
+.sz-snippet__lang {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  margin-right: auto;
+}
+
+.sz-snippet__code {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.sz-snippet__note {
+  margin: 0;
+  padding: 6px 12px 8px;
+  border-top: 1px dashed var(--rule);
+}
+
+.sz-log {
+  margin: 0;
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}
+
+.sz-spin {
+  animation: sz-spin 1.8s linear infinite;
+}
+
+@keyframes sz-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Forms ────────────────────────────────────────────────────────────── */
+
+.sz-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.sz-form--time {
+  grid-template-columns: repeat(2, minmax(0, 8rem));
+}
+
+.sz-wide {
+  grid-column: 1 / -1;
+}
+
+.field > label.check {
+  font-family: var(--font-body);
+  font-size: 1rem;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+}
+
+.sz .input[aria-invalid="true"] {
+  border-color: var(--disputed);
+}
+
+.sz-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.sz-chip {
+  min-height: 28px;
+}
+
+.sz-chips__add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.sz-chips__add .input {
+  min-height: 30px;
+  padding: 2px 6px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.sz-keyrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sz-keyrow .input {
+  flex: 1 1 220px;
+  width: auto;
+}
+
+.sz-limit {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sz-limit .input {
+  width: 6rem;
+}
+
+.sz-fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.sz-scope {
+  align-items: flex-start;
+}
+
+.sz-scope input {
+  margin-top: 4px;
+  flex: none;
+}
+
+.sz-tabpanel:focus-visible {
+  outline-offset: 6px;
+}
+
+/* ── Cards, facts, lists ──────────────────────────────────────────────── */
+
+.sz-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-1);
+  min-width: 0;
+}
+
+.sz-card__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.sz-card__head > svg {
+  color: var(--gold);
+}
+
+.sz-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px var(--space-4);
+  margin: 0;
+}
+
+.sz-facts__row {
+  display: contents;
+}
+
+.sz-facts dt {
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding-top: 0.3em;
+}
+
+.sz-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .sz-facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .sz-facts dd {
+    margin-bottom: var(--space-2);
+  }
+}
+
+.sz-gitbar {
+  justify-content: space-between;
+}
+
+.sz-howto {
+  margin: 0;
+  padding-left: 1.3em;
+}
+
+.sz-howto li + li {
+  margin-top: var(--space-1);
+}
+
+.sz-open,
+.sz-strangers,
+.sz-reach {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sz-strangers li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sz-reach li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.sz-loud {
+  border-width: 2px;
+  border-left-width: 8px;
+  padding: var(--space-4) var(--space-5);
+}
+
+.sz-loud strong:first-child {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  letter-spacing: 0.04em;
+  color: var(--disputed);
+}
+
+.sz-more > summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--ink-2);
+  list-style: none;
+}
+
+.sz-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sz-more > summary::before {
+  content: "▸";
+  color: var(--gold);
+  transition: transform 140ms ease;
+}
+
+.sz-more[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.sz-more[open] > summary {
+  margin-bottom: var(--space-3);
+}
+
+.sz-deploy {
+  padding: var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.sz-deploy > summary svg {
+  color: var(--gold);
+}
+
+.sz-deploy__steps {
+  list-style: none;
+  counter-reset: sz-deploy;
+  margin: var(--space-4) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.sz-deploy__step {
+  counter-increment: sz-deploy;
+  position: relative;
+  padding-left: 40px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sz-deploy__step::before {
+  content: counter(sz-deploy);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--gold);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.8rem;
+  color: var(--ink-2);
+}
+
+.sz-deploy__step h4,
+.sz-deploy__step p {
+  margin: 0;
+}
+
+/* ── Welcome and done ─────────────────────────────────────────────────── */
+
+.sz-pillars {
+  list-style: none;
+  counter-reset: sz-pillar;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: var(--space-3);
+}
+
+.sz-pillar {
+  counter-increment: sz-pillar;
+  position: relative;
+  padding: var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--surface-2) 88%, var(--gold-soft)), var(--surface-2));
+  box-shadow: var(--shadow-1);
+}
+
+.sz-pillar::before {
+  content: counter(sz-pillar, upper-roman);
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-4);
+  font-family: var(--font-display);
+  font-size: 0.9rem;
+  color: var(--gold);
+  opacity: 0.8;
+}
+
+.sz-pillar > svg {
+  color: var(--gold);
+}
+
+.sz-pillar h3 {
+  margin: var(--space-2) 0 var(--space-1);
+}
+
+.sz-pillar p {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.sz-done {
+  align-items: center;
+  text-align: center;
+}
+
+.sz-done__seal {
+  display: grid;
+  place-items: center;
+  width: 104px;
+  height: 104px;
+  border-radius: 50%;
+  color: var(--gold);
+  background: radial-gradient(circle, color-mix(in oklab, var(--gold-soft) 45%, transparent), transparent 70%);
+}
+
+.sz-done__lede {
+  max-width: 56ch;
+  font-style: italic;
+  color: var(--ink-2);
+}
+
+.sz-done .callout {
+  text-align: left;
+  width: 100%;
+}
+
+.sz-doors {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: var(--space-3);
+}
+
+.sz-door {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: inherit;
+  text-decoration: none;
+  box-shadow: var(--shadow-1);
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+
+.sz-door:hover {
+  transform: translateY(-2px);
+  border-color: var(--rule-strong);
+}
+
+.sz-door > svg {
+  color: var(--gold);
+}
+
+.sz-door strong {
+  font-family: var(--font-display);
+  letter-spacing: 0.04em;
+}
+
+/* ── Party and agents ─────────────────────────────────────────────────── */
+
+.sz-member {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.sz-member__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.sz-member__seen {
+  margin-left: auto;
+}
+
+.sz-agents {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 190px), 1fr));
+  gap: var(--space-2);
+}
+
+.sz-agent {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--shadow-1);
+}
+
+.sz-agent:hover {
+  border-color: var(--rule-strong);
+}
+
+.sz-agent[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent-soft) 45%, var(--surface-2));
+  box-shadow: inset 0 0 0 1px var(--accent), var(--shadow-1);
+}
+
+.sz-agent__title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.sz-agent__id {
+  color: var(--ink-3);
+}
+
+.sz-agent__seen {
+  font-size: 0.8rem;
+  color: var(--ink-3);
+}
+
+.sz-agent__seen.is-seen > span:first-child {
+  color: var(--canon);
+}
+
+/* ── Tokens ───────────────────────────────────────────────────────────── */
+
+.sz-tight-row {
+  gap: 4px;
+}
+
+.sz-tokens__act {
+  text-align: right;
+}
+
+@media (max-width: 640px) {
+  :is(.sz-tokens, .hz-rtable) thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+
+  :is(.sz-tokens, .hz-rtable) tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px var(--space-3);
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  :is(.sz-tokens, .hz-rtable) td {
+    display: block;
+    padding: 0;
+    border: 0;
+    grid-column: 1;
+  }
+
+  :is(.sz-tokens, .hz-rtable) td[data-label]::before {
+    content: attr(data-label);
+    display: inline-block;
+    min-width: 5rem;
+    font-family: var(--font-display);
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  :is(.sz-tokens, .hz-rtable) td.sz-tokens__act {
+    grid-column: 2;
+    grid-row: 1 / span 4;
+    align-self: start;
+  }
+}
+
+.sz-token {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.sz-token__value {
+  width: 100%;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border: 2px dashed var(--gold);
+  background: var(--surface-2);
+}
+
+.sz-token__value code {
+  font-size: 0.92rem;
+}
+
+/* ── Phones and tablets ───────────────────────────────────────────────── */
+
+@media (max-width: 960px) {
+  .sz-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+
+  .sz-rail {
+    display: none;
+  }
+
+  .sz-stepper {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-l);
+    background: var(--surface);
+    box-shadow: var(--shadow-1);
+  }
+
+  .sz-stepper__row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .sz-stepper__count {
+    flex: none;
+    font-family: var(--font-display);
+    font-size: 0.8rem;
+    letter-spacing: 0.08em;
+  }
+
+  .sz-stepper__jump {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .sz-stepper__jump .select {
+    width: 100%;
+  }
+
+  .sz-stepper__track {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: 4px;
+    align-items: center;
+  }
+
+  .sz-stepper__track li {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--rule);
+  }
+
+  .sz-stepper__track li[data-state="done"] {
+    background: var(--canon);
+  }
+
+  .sz-stepper__track li[data-state="warn"] {
+    background: var(--rumor);
+  }
+
+  .sz-stepper__track li[data-state="error"] {
+    background: var(--disputed);
+  }
+
+  .sz-stepper__track li[data-state="todo"] {
+    background: var(--rule-strong);
+  }
+
+  .sz-stepper__track li[data-current] {
+    height: 10px;
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+}
+
+@media (max-width: 640px) {
+  .sz-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sz-form--time {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sz-step {
+    padding: var(--space-4);
+  }
+
+  .sz-step__navword {
+    display: none;
+  }
+
+  .sz-step__nav .btn {
+    flex: 1 1 auto;
+  }
+
+  .sz-loud {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .sz-deploy {
+    padding: var(--space-3);
+  }
+
+  .sz-deploy__step {
+    padding-left: 0;
+    padding-top: 36px;
+  }
+}
+
+/* ── Plain look (IBM Carbon) ──────────────────────────────────────────────
+ * Flat and quiet: no glows, gradients, rotated diamonds or roman numerals. The step rail becomes a
+ * Carbon vertical progress indicator: a gray ring per step, a blue ring with a dot for the current
+ * one, a blue check for done, and a line that turns blue below finished steps. Words stay beside every
+ * glyph (the state tags), so color is never the only signal. */
+
+:root:not([data-style="codex"]) .sz-subhead {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* State tags: Carbon's pill-shaped tags, borderless, at a readable size. */
+:root:not([data-style="codex"]) .sz-state {
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-color: transparent;
+  font-size: var(--label-size);
+  font-weight: 400;
+  line-height: 1.43;
+}
+
+:root:not([data-style="codex"]) .sz-state--compact {
+  padding: 0 var(--space-2);
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .sz-state--compact svg {
+  width: 12px;
+  height: 12px;
+}
+
+:root:not([data-style="codex"]) .sz-state--optional {
+  --c: var(--ink);
+  --b: var(--accent-soft);
+}
+
+:root:not([data-style="codex"]) .sz-state--locked {
+  --b: transparent;
+  border-color: var(--rule-strong);
+}
+
+:root:not([data-style="codex"]) .sz-how {
+  font-size: var(--label-size);
+}
+
+/* The rail as a vertical progress indicator. */
+:root:not([data-style="codex"]) .sz-rail__list {
+  gap: 0;
+}
+
+:root:not([data-style="codex"]) .sz-rail__item:not(:last-child)::after {
+  left: 16px;
+  top: 30px;
+  bottom: -6px;
+  width: 1px;
+  background: var(--rule-strong);
+  opacity: 1;
+}
+
+:root:not([data-style="codex"]) .sz-rail__item[data-state="done"]:not(:last-child)::after {
+  background: var(--accent);
+}
+
+:root:not([data-style="codex"]) .sz-rail__link {
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border-radius: 0;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .sz-rail__link:hover {
+  background: var(--surface-hover, var(--surface-sunk));
+  color: var(--ink);
+}
+
+:root:not([data-style="codex"]) .sz-rail__link[aria-current="step"] {
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+}
+
+:root:not([data-style="codex"]) .sz-rail__link[aria-current="step"]:hover {
+  background: var(--surface-hover, var(--surface-sunk));
+}
+
+/* Step icons are decoration here; the progress ring carries the position. */
+:root:not([data-style="codex"]) .sz-rail__icon {
+  display: none;
+}
+
+/* The number stays in the markup (it's aria-hidden); the ring replaces it on screen. */
+:root:not([data-style="codex"]) .sz-rail__num {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  font-size: 0;
+  color: transparent;
+}
+
+:root:not([data-style="codex"]) .sz-rail__num::before {
+  inset: 0;
+  transform: none;
+  border: 1px solid var(--ink-3);
+  border-radius: 50%;
+  background: transparent;
+}
+
+:root:not([data-style="codex"]) .sz-rail__item[data-state="done"] .sz-rail__num::before {
+  border-color: var(--accent);
+  background: transparent;
+}
+
+:root:not([data-style="codex"]) .sz-rail__item[data-state="done"] .sz-rail__num::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 3px;
+  width: 4px;
+  height: 7px;
+  border: solid var(--accent);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+:root:not([data-style="codex"]) .sz-rail__item:is([data-state="warn"], [data-state="error"]) .sz-rail__num::before {
+  border-color: var(--warn);
+}
+
+:root:not([data-style="codex"]) .sz-rail__item[data-state="error"] .sz-rail__num::before {
+  border-color: var(--danger);
+}
+
+:root:not([data-style="codex"]) .sz-rail__item:is([data-state="warn"], [data-state="error"]) .sz-rail__num::after {
+  content: "!";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--warn);
+}
+
+:root:not([data-style="codex"]) .sz-rail__item[data-state="error"] .sz-rail__num::after {
+  color: var(--danger);
+}
+
+:root:not([data-style="codex"]) .sz-rail__item[data-state="locked"] .sz-rail__num::before {
+  border-style: dashed;
+  border-color: var(--rule-strong);
+}
+
+/* Current step: a blue ring with a blue dot, whatever its state. */
+:root:not([data-style="codex"]) .sz-rail__link[aria-current="step"] .sz-rail__num::before {
+  border: 2px solid var(--accent);
+  background: transparent;
+}
+
+:root:not([data-style="codex"]) .sz-rail__link[aria-current="step"] .sz-rail__num::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 50%;
+  transform: none;
+  background: var(--accent);
+}
+
+:root:not([data-style="codex"]) .sz-stepper {
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .sz-stepper__count {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .sz-stepper__track li {
+  height: 4px;
+  border-radius: var(--radius-s);
+}
+
+:root:not([data-style="codex"]) .sz-stepper__track li[data-current] {
+  height: 8px;
+  outline: 0;
+  background: var(--accent);
+}
+
+/* A step. */
+:root:not([data-style="codex"]) .sz-step__kicker {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .sz-step__lede,
+:root:not([data-style="codex"]) .sz-done__lede {
+  font-style: normal;
+}
+
+/* "What this step does": a Carbon inline notification (info). */
+:root:not([data-style="codex"]) .sz-effects {
+  padding: var(--space-4);
+  border: 0;
+  border-left: 3px solid var(--accent);
+  border-radius: 0;
+  background: var(--surface-sunk);
+}
+
+:root:not([data-style="codex"]) .sz-effects__title {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Snippets and logs. */
+:root:not([data-style="codex"]) .sz-snippet__head {
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  background: transparent;
+}
+
+:root:not([data-style="codex"]) .sz-snippet__lang {
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .sz-snippet__note {
+  padding: var(--space-2) var(--space-4);
+  border-top-style: solid;
+}
+
+:root:not([data-style="codex"]) .sz-log {
+  font-size: 0.875rem;
+}
+
+/* Forms: the chips field dressed like a Carbon field. */
+:root:not([data-style="codex"]) .sz-chips {
+  border: 0;
+  border-bottom: 1px solid var(--rule-strong);
+  border-radius: 0;
+  background: var(--surface-sunk);
+}
+
+/* Cards, facts, lists. */
+:root:not([data-style="codex"]) .sz-facts dt {
+  padding-top: 0.15em;
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .sz-deploy__step::before {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--ink-3);
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .sz-pillar {
+  border-color: transparent;
+  background: var(--surface-sunk);
+}
+
+:root:not([data-style="codex"]) .sz-pillar::before {
+  content: none;
+}
+
+:root:not([data-style="codex"]) .sz-pillar > svg,
+:root:not([data-style="codex"]) .sz-door > svg {
+  color: var(--link);
+}
+
+:root:not([data-style="codex"]) .sz-done__seal {
+  width: auto;
+  height: auto;
+  background: none;
+  color: var(--canon);
+}
+
+/* Doors: Carbon clickable tiles. */
+:root:not([data-style="codex"]) .sz-door {
+  align-items: flex-start;
+  text-align: left;
+}
+
+:root:not([data-style="codex"]) .sz-door:hover {
+  transform: none;
+  border-color: var(--rule);
+  background: var(--surface-hover, var(--surface-sunk));
+}
+
+:root:not([data-style="codex"]) .sz-door strong,
+:root:not([data-style="codex"]) .sz-agent__title {
+  font-weight: 600;
+}
+
+/* Agents: Carbon selectable tiles. */
+:root:not([data-style="codex"]) .sz-agent:hover {
+  background: var(--surface-hover, var(--surface-sunk));
+}
+
+:root:not([data-style="codex"]) .sz-agent[aria-pressed="true"] {
+  background: var(--surface-selected, var(--accent-soft));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+:root:not([data-style="codex"]) .sz-agent__seen {
+  font-size: var(--label-size);
+}
+
+/* Tokens. */
+:root:not([data-style="codex"]) :is(.sz-tokens, .hz-rtable) td[data-label]::before {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .sz-token__value {
+  border: 1px solid var(--rule-strong);
+  background: var(--surface-sunk);
+}

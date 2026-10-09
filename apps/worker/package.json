@@ -4,19 +4,24 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "agent-token": "tsx scripts/token.ts",
+    "dev": "pnpm --filter @hippocampus/dashboard-ui build && wrangler d1 migrations apply REGISTRY --local && wrangler dev",
+    "dev:github": "tsx scripts/fake-github.ts",
+    "smoke": "tsx scripts/smoke.ts",
+    "bundle:check": "node scripts/bundle-check.mjs",
+    "deploy": "pnpm --filter @hippocampus/dashboard-ui build && wrangler deploy",
     "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.worker.json"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
     "@cloudflare/workers-oauth-provider": "^1.2.3",
     "@hippocampus/core": "workspace:*",
+    "@hippocampus/curator": "workspace:*",
+    "@hippocampus/dashboard": "workspace:*",
     "@hippocampus/embeddings": "workspace:*",
     "@hippocampus/index": "workspace:*",
     "@hippocampus/mcp": "workspace:*",
     "@hippocampus/store-github": "workspace:*",
+    "@hippocampus/template": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.1"
   },
   "license": "AGPL-3.0-only",

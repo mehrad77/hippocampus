@@ -1,0 +1,190 @@
+/*
+ * The hosted app's own parts (`hz-`): the repo picker, the in-browser secrets key, the curator's
+ * progress and inbox line, and the admin tables. Colors come from tokens.css only; states pair
+ * glyph, word and color through the shared `.sz-state` tags.
+ */
+
+/* ── Repo picker ──────────────────────────────────────────────────────── */
+
+.hz-repos {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.hz-repo {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.hz-repo:hover {
+  border-color: var(--rule-strong);
+}
+
+.hz-repo[data-checked] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.hz-repo[data-disabled] {
+  cursor: not-allowed;
+  background: var(--surface-sunk);
+}
+
+.hz-repo[data-disabled] .hz-repo__name {
+  color: var(--ink-3);
+}
+
+.hz-repo input {
+  margin-top: 5px;
+}
+
+.hz-repo:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.hz-repo__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hz-repo__name {
+  font-weight: 600;
+}
+
+@media (max-width: 520px) {
+  .hz-repo {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .hz-repo > .sz-state {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+/* ── Secrets key ──────────────────────────────────────────────────────── */
+
+.hz-key {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.hz-key > .sz-subhead {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.hz-key p {
+  margin: 0;
+}
+
+.hz-key .segmented {
+  align-self: flex-start;
+}
+
+/* ── Copy lines (URLs, keys) ──────────────────────────────────────────── */
+
+.sz-copyline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sz-copyline code {
+  flex: 1 1 16rem;
+  min-width: 0;
+  padding: 6px 10px;
+}
+
+/* ── Curator ──────────────────────────────────────────────────────────── */
+
+.hz-progress {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.hz-progress progress {
+  width: min(14rem, 100%);
+  height: 8px;
+  accent-color: var(--accent);
+}
+
+.hz-curline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.hz-curline > svg {
+  flex: none;
+  color: var(--gold);
+}
+
+.hz-curline > span {
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+/* ── Admin ────────────────────────────────────────────────────────────── */
+
+.hz-chip {
+  margin-left: var(--space-2);
+  font-size: 0.75rem;
+}
+
+.hz-note {
+  display: block;
+  max-width: 40ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.hz-actions {
+  justify-content: flex-end;
+}
+
+/* ── Plain look (IBM Carbon) ──────────────────────────────────────────── */
+
+:root:not([data-style="codex"]) :is(.hz-repo, .hz-key, .hz-curline) {
+  background: var(--surface);
+}
+
+:root:not([data-style="codex"]) .hz-repo:hover {
+  background: var(--surface-hover, var(--surface-sunk));
+}
+
+:root:not([data-style="codex"]) .hz-repo[data-checked] {
+  background: var(--surface-selected, var(--accent-soft));
+}
+
+:root:not([data-style="codex"]) .hz-curline > svg {
+  color: var(--link);
+}

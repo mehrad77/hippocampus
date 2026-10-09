@@ -1,4 +1,5 @@
 import { displayName, getObjectives, type Entity } from "./entity.ts";
+import { assertAgentId } from "./ops.ts";
 import type { Vault } from "./vault.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
@@ -41,18 +42,39 @@ generated: true
 > Change \`_hippo/config.yaml\` or \`party/*.md\` instead. This file is regenerated on every sleep.
 
 This vault is the party's **shared memory**, organized like a TTRPG campaign wiki. It holds characters, factions, locations, items, lore, quests, and a chronicle of what happened.
-**Hippocampus** is the curator. Agents never edit canon notes. You submit *episodes* (raw memories) to the inbox. Every night Hippocampus **sleeps**: it consolidates episodes into canon, links entities, and resolves conflicts. Contradictions it can't settle become disputes for ${link(config.human)} to rule on.
+**Hippocampus** is the curator. Agents never edit canon notes. You submit *episodes* (raw memories) with the \`remember\` tool, and they wait in the inbox. Every night Hippocampus **sleeps**: it consolidates episodes into canon, links entities, and resolves conflicts. Contradictions it can't settle become disputes for ${link(config.human)} to rule on.
 
 ## ✍️ How to remember something
 
-Write **one new file per memory** to \`${inbox}/<your-agent-id>/\`. Never modify or delete other files.
+Use the Hippocampus MCP tools, and don't edit files in this vault yourself: the tools run the checks that keep this memory trustworthy.
 
-- **Path:** \`${inbox}/<agent-id>/<YYYY-MM-DDTHHMMSS>-<short-slug>.md\`, e.g. \`${inbox}/residency-agent/2026-09-27T140300-agency-appointment.md\`
-- **Content:**
+Call **\`remember\`** once per memory:
+
+- \`text\` (required): the memory in plain language, self-contained, at most 8 KB.
+- \`kind\`: \`observation\` (default) | \`fact\` | \`decision\` | \`task\` | \`beat\` | \`question\`
+- \`about\`: optional hints, as links or names, e.g. \`["[[residence-permit]]", "Agência de Migração"]\`
+- \`secret: true\` if it contains IDs, account numbers or credentials. They get encrypted.
+- \`confidence\` (0–1) and \`at\` (ISO 8601, when it happened; defaults to now).
+- \`agent\`: your agent id (see Party below), unless your connection is already bound to one.
+
+Writing tips, so the curator gets it right:
+- One memory per call. Short, concrete, self-contained. Name people, places, and orgs explicitly.
+- Exact values: ISO dates (\`2026-10-14\`), amounts with currency (\`4,500 TRY\`), full IDs, emails, and phone numbers.
+- Say *how you know* ("confirmed by email from …", "seen on the permit portal") when it matters.
+- Corrections are just new memories ("appointment moved to …"). Don't try to change old ones.
+- Quest progress: \`update_quest\` records objectives, clocks and status directly. Story beats for the game master: \`kind: beat\`.
+
+## 👋 Introduce yourself
+
+If \`onboard\` says you aren't in the party, call **\`introduce\`** once: your agent id, a display \`title\`, your \`lane\` (what you handle, in a sentence), and optionally \`host\`, \`model\` and \`about\`. ${link(config.human)} approves you and decides your authority. Until then your memories are accepted, but they count as rumors. Introducing yourself again replaces your earlier introduction.
+
+### Inbox file format (for local tools that write files)
+
+A tool that can't use MCP writes **one new file per memory** to \`${inbox}/<agent-id>/<YYYY-MM-DDTHHMMSS>-<short-slug>.md\` and never modifies or deletes other files:
 
 \`\`\`markdown
 ---
-agent: residency-agent          # your agent id (see Party below)
+agent: residency-agent          # your agent id
 kind: fact               # observation | fact | decision | task | beat | question
 at: 2026-09-27T14:03:00+01:00
 about: ["[[residence-permit]]", "Agência de Migração"]   # optional hints: links or names
@@ -62,16 +84,10 @@ The Agência de Migração appointment moved to 2026-10-14 10:30 at the Alfama o
 Bring: passport, 2 biometric photos, signed rental contract.
 \`\`\`
 
-Writing tips, so the curator gets it right:
-- One memory per file. Short, concrete, self-contained. Name people, places, and orgs explicitly.
-- Exact values: ISO dates (\`2026-10-14\`), amounts with currency (\`4,500 TRY\`), full IDs, emails, and phone numbers.
-- Say *how you know* ("confirmed by email from …", "seen on the permit portal") when it matters.
-- Corrections are just new episodes ("appointment moved to …"). Don't edit old ones.
-- Quest progress: \`kind: task\` plus which objective was done or added. Story beats for the game master: \`kind: beat\`.
-
 ## 📖 How to read memory
 
-- Look up an entity in its folder (table below). Obsidian resolves \`[[links]]\` by file name or alias.
+- Over MCP: \`recall\` searches, \`get\` returns one entity in full, \`neighbors\` walks relations, \`ask_canon\` answers exact-value questions, and \`briefing\` says what changed lately.
+- In the files: each entity has a note in its folder (table below). Obsidian resolves \`[[links]]\` by file name or alias.
 - **Facts** are in each note's frontmatter under \`facts:\`, with a status:
   - \`canon\` — accepted truth. Rely on it.
   - \`rumor\` — reported once by a non-authoritative source. Verify before acting.
@@ -109,25 +125,53 @@ ${disputes}
 `;
 }
 
-/** Handbook plus a personal briefing for one agent (the MCP `onboard` tool). */
-export function renderOnboarding(vault: Vault, agent: string): string {
-  const me = vault.party(agent);
-  const mine = activeQuests(vault).filter((q) => q.fm.owner && unwrapLink(q.fm.owner) === (me?.slug ?? agent));
-  const intro = me
-    ? `# You are ${displayName(me)} (\`${me.slug}\`)
+const titleOf = (id: string) => id.replace(/-+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+/** Who `agent` is to this vault: a party member, waiting for approval, unknown, or not a valid id. */
+function whoAmI(vault: Vault, agent: string): string {
+  const human = vault.config.human;
+  let id: string;
+  try {
+    id = assertAgentId(vault, agent);
+  } catch (err) {
+    return `# \`${agent}\` can't be your agent id
+
+${(err as Error).message}. Pick your own id (lowercase letters, digits and dashes, e.g. \`residency-agent\`) and pass it as \`agent\`.
+`;
+  }
+  const me = vault.partyMember(id);
+  if (me) {
+    const mine = activeQuests(vault).filter((q) => q.fm.owner && unwrapLink(q.fm.owner) === me.slug);
+    return `# You are ${displayName(me)} (\`${me.slug}\`)
 
 **Lane:** ${me.fm.lane ?? "(unspecified)"}
 **Authority domains:** ${(me.fm.authority ?? []).join(", ") || "(none, so your facts start as rumors)"}
 
 **Your quests:**
 ${mine.map((q) => questLine(q)).join("\n") || "- (none)"}
-`
-    : `# Unknown agent \`${agent}\`
+`;
+  }
+  const intro = vault.introductionOf(id);
+  if (intro) {
+    return `# Introduced as ${intro.title} (\`${id}\`)
 
-You are not in the party yet. Your memories are accepted, but they count as rumors. Ask ${vault.config.human} to add \`party/${agent}.md\`.
+Your introduction is waiting for ${human}'s approval (filed ${intro.at.slice(0, 10)}). Until then your memories are accepted, but they count as rumors. Calling \`introduce\` again replaces it.
 `;
+  }
+  return `# Unknown agent \`${id}\`
+
+You are not in the party yet. Your memories are accepted, but they count as rumors until ${human} approves you. Introduce yourself once:
+
+\`\`\`
+introduce({ agent: "${id}", title: "${titleOf(id)}", lane: "what you handle, in one sentence", host: "where you run, e.g. Claude Desktop", model: "your model", about: "what you do, in a few lines" })
+\`\`\`
+`;
+}
+
+/** Handbook plus a personal briefing for one agent (the MCP \`onboard\` tool). */
+export function renderOnboarding(vault: Vault, agent: string): string {
   const toolsNote = `
-When connected over MCP, use the tools instead of writing files. \`remember\` writes an episode for you, \`recall\` / \`get\` / \`ask_canon\` read memory, and \`update_quest\` edits quest progress directly.
+Use the MCP tools, and don't edit vault files yourself: \`remember\` files a memory, \`recall\` / \`get\` / \`ask_canon\` read memory, and \`update_quest\` records quest progress.
 `;
-  return `${intro}${toolsNote}\n---\n\n${renderHandbook(vault).replace(/^---[\s\S]*?---\n/, "")}`;
+  return `${whoAmI(vault, agent)}${toolsNote}\n---\n\n${renderHandbook(vault).replace(/^---[\s\S]*?---\n/, "")}`;
 }

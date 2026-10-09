@@ -1,0 +1,41 @@
+---
+import Shell from "../layouts/Shell.astro";
+import "../styles/guides.css";
+import NavIcon from "../ui/NavIcon.astro";
+import Term from "../ui/Term.astro";
+import { href } from "../lib/routes.ts";
+---
+<Shell title="Page not found" titles={["Page not found", "Off the map"]} page="entity" description="There is no page at this address.">
+  <div class="lost">
+    <svg class="lost__map" viewBox="0 0 360 220" role="img" aria-labelledby="lost-title">
+      <title id="lost-title">A torn map whose trail runs off the edge, marked “here be dragons”</title>
+      <path class="lost__paper" d="M18 22 L300 14 L306 40 L296 62 L310 88 L298 112 L312 140 L300 166 L306 200 L22 206 L14 150 L24 110 L12 70 Z" />
+      <path class="lost__fold" d="M110 18 L106 204 M206 16 L210 203" />
+      <path class="lost__coast" d="M40 60 C70 40 96 72 120 58 S170 40 190 70 S240 96 230 130 S180 170 140 160 S70 176 56 140 S20 90 40 60 Z" />
+      <circle class="lost__town" cx="92" cy="110" r="5" />
+      <text class="lost__name" x="104" y="114">the Tavern</text>
+      <path class="lost__trail" d="M92 110 C130 120 150 150 196 140 S260 96 300 104 S336 120 350 112" />
+      <path class="lost__x" d="M338 100 L352 114 M352 100 L338 114" />
+      <g class="lost__rose" transform="translate(262 52)">
+        <circle r="18" />
+        <path d="M0 -24 L5 0 L0 24 L-5 0 Z" />
+        <path d="M-24 0 L0 5 L24 0 L0 -5 Z" />
+      </g>
+      <text class="lost__dragons" x="208" y="190">here be dragons</text>
+    </svg>
+
+    <p class="page-head__kicker"><Term plain="404" codex="404 · Uncharted" /></p>
+    <h1><Term plain="Page not found" codex="You've wandered off the map" /></h1>
+    <p class="lost__lede">
+      <Term plain="There's no page at this address." codex="There's no page at this address. The trail ends here, but the Tavern is always open." />
+    </p>
+    <div class="row lost__actions">
+      <a class="btn btn--primary" href={href.page("tavern")}><NavIcon name="tavern" /> <Term plain="Back to Home" codex="Back to the Tavern" /></a>
+      <a class="btn" href={href.page("codex")}><NavIcon name="codex" /> <Term plain="Browse records" codex="Browse the Codex" /></a>
+      <a class="btn btn--ghost" href={href.page("guides")}><NavIcon name="guides" /> <Term plain="Open help" codex="Read the guides" /></a>
+    </div>
+    <p class="muted small">
+      Followed a link to a note? It may have been renamed or merged since. Search for it with <kbd>⌘K</kbd>.
+    </p>
+  </div>
+</Shell>

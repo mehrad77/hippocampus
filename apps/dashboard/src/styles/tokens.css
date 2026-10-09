@@ -1,0 +1,450 @@
+/*
+ * Design tokens for the two looks, each with light and dark modes. Set on <html> by public/theme.js
+ * from the reader's choices (Setup & health → Personalization), before the first paint:
+ *   data-style="codex"  the tabletop look (parchment / candlelit); without it, the plain look (the default)
+ *   data-theme          "light" or "dark"; absent follows the OS
+ *   data-text="large"   larger text everywhere
+ * Entity-type hues are a categorical palette validated for colorblind separation and 3:1 contrast on
+ * every surface below; status colors are reserved and always paired with a glyph and a word.
+ * Every look block sets the full set of themed tokens, so the cascade order below decides:
+ * plain light < plain dark < codex light < codex dark.
+ */
+:root {
+  /* Rhythm */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --rail: 232px;
+  --content-max: 1240px;
+  --text-scale: 1;
+}
+
+:root[data-text="large"] {
+  --text-scale: 1.125;
+}
+
+/* ── Plain (default): IBM Carbon design system, built for reading ────────── */
+
+:root {
+  color-scheme: light;
+
+  /* IBM Plex, the type family of IBM's Carbon design system. */
+  --font-display: "IBM Plex Sans Variable", "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-body: "IBM Plex Sans Variable", "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Carbon g10: a gray-10 page with white layers. */
+  --bg: #f4f4f4;
+  --bg-deep: #e8e8e8;
+  --surface: #ffffff;
+  --surface-2: #ffffff;
+  --surface-sunk: #f4f4f4;
+  --surface-hover: #e8e8e8;
+  --surface-selected: #e0e0e0;
+  --overlay: rgb(22 22 22 / 0.5);
+
+  --ink: #161616;
+  --ink-2: #525252;
+  --ink-3: #6f6f6f;
+  --ink-inverse: #ffffff;
+
+  --rule: #e0e0e0;
+  --rule-strong: #8d8d8d;
+  --gold: #525252;
+  --gold-soft: #e0e0e0;
+
+  --accent: #0f62fe;
+  --accent-hover: #0050e6;
+  --accent-active: #002d9c;
+  --accent-ink: #ffffff;
+  --accent-soft: #d0e2ff;
+  --focus: #0f62fe;
+  --link: #0f62fe;
+  --link-hover: #0043ce;
+
+  /* Carbon tag pairs: green, yellow, red, gray. */
+  --canon: #0e6027;
+  --canon-bg: #a7f0ba;
+  --rumor: #684e00;
+  --rumor-bg: #fcf4d6;
+  --disputed: #a2191f;
+  --disputed-bg: #ffd7d9;
+  --retconned: #525252;
+  --retconned-bg: #e0e0e0;
+  --ok: var(--canon);
+  --warn: var(--rumor);
+  --danger: var(--disputed);
+  --support-error: #da1e28;
+  --support-success: #24a148;
+  --support-warning: #f1c21b;
+  --support-info: #0043ce;
+
+  /* Entity types: Carbon palette steps (purple 70, cyan 50, orange 50, magenta 70, teal 50, yellow 60,
+   * blue 50, green 50), re-stepped from Carbon's chart order so every adjacent pair clears the
+   * colorblind (ΔE 15.8) and normal-vision (19.6) floors with 3:1 contrast on white. */
+  --t-faction: #6929c4;
+  --t-quest: #1192e8;
+  --t-location: #eb6200;
+  --t-item: #9f1853;
+  --t-character: #009d9a;
+  --t-party: #8e6a00;
+  --t-lore: #4589ff;
+  --t-campaign: #24a148;
+  --t-other: #8d8d8d;
+
+  --chart-surface: var(--surface);
+  --grid: #e0e0e0;
+  --series-1: #6929c4;
+  --series-2: #1192e8;
+  --series-3: #eb6200;
+
+  /* Carbon: square corners, flat tiles; shadows only on floating layers. */
+  --radius-s: 0px;
+  --radius: 0px;
+  --radius-l: 0px;
+  --shadow-1: none;
+  --shadow-2: none;
+  --shadow-pop: 0 2px 6px rgb(0 0 0 / 0.3);
+
+  /* Carbon long-form type: 16/24 body; large headings at regular weight. */
+  --text-body: 1rem;
+  --leading: 1.5;
+  --heading-weight: 400;
+  --heading-tracking: 0;
+
+  --texture: none;
+  --grain-opacity: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    /* Carbon g100. */
+    --bg: #161616;
+    --bg-deep: #0b0b0b;
+    --surface: #262626;
+    --surface-2: #262626;
+    --surface-sunk: #1c1c1c;
+    --surface-hover: #333333;
+    --surface-selected: #393939;
+    --overlay: rgb(0 0 0 / 0.6);
+    --ink: #f4f4f4;
+    --ink-2: #c6c6c6;
+    --ink-3: #a8a8a8;
+    --ink-inverse: #161616;
+    --rule: #393939;
+    --rule-strong: #6f6f6f;
+    --gold: #c6c6c6;
+    --gold-soft: #393939;
+    --accent: #0f62fe;
+    --accent-hover: #0050e6;
+    --accent-active: #002d9c;
+    --accent-ink: #ffffff;
+    --accent-soft: #001d6c;
+    --focus: #ffffff;
+    --link: #78a9ff;
+    --link-hover: #a6c8ff;
+    --canon: #6fdc8c;
+    --canon-bg: #044317;
+    --rumor: #f1c21b;
+    --rumor-bg: #302400;
+    --disputed: #ff8389;
+    --disputed-bg: #750e13;
+    --retconned: #c6c6c6;
+    --retconned-bg: #393939;
+    --support-error: #fa4d56;
+    --support-success: #42be65;
+    --support-warning: #f1c21b;
+    --support-info: #4589ff;
+    /* Same hues, Carbon steps for the dark band (purple 60, cyan 50, orange 50, magenta 60, teal 50,
+     * yellow 50, blue 50, green 50). Worst adjacent colorblind ΔE is 6.9, the floor band: allowed because
+     * an entity's type is always also named (chips, legends, map labels), never shown by color alone. */
+    --t-faction: #8a3ffc;
+    --t-quest: #1192e8;
+    --t-location: #eb6200;
+    --t-item: #d02670;
+    --t-character: #009d9a;
+    --t-party: #b28600;
+    --t-lore: #4589ff;
+    --t-campaign: #24a148;
+    --t-other: #8d8d8d;
+    --grid: #393939;
+    --series-1: #8a3ffc;
+    --series-2: #1192e8;
+    --series-3: #eb6200;
+    --shadow-1: none;
+    --shadow-2: none;
+    --shadow-pop: 0 2px 6px rgb(0 0 0 / 0.8);
+    --texture: none;
+    --grain-opacity: 0;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  /* Carbon g100. */
+  --bg: #161616;
+  --bg-deep: #0b0b0b;
+  --surface: #262626;
+  --surface-2: #262626;
+  --surface-sunk: #1c1c1c;
+  --surface-hover: #333333;
+  --surface-selected: #393939;
+  --overlay: rgb(0 0 0 / 0.6);
+  --ink: #f4f4f4;
+  --ink-2: #c6c6c6;
+  --ink-3: #a8a8a8;
+  --ink-inverse: #161616;
+  --rule: #393939;
+  --rule-strong: #6f6f6f;
+  --gold: #c6c6c6;
+  --gold-soft: #393939;
+  --accent: #0f62fe;
+  --accent-hover: #0050e6;
+  --accent-active: #002d9c;
+  --accent-ink: #ffffff;
+  --accent-soft: #001d6c;
+  --focus: #ffffff;
+  --link: #78a9ff;
+  --link-hover: #a6c8ff;
+  --canon: #6fdc8c;
+  --canon-bg: #044317;
+  --rumor: #f1c21b;
+  --rumor-bg: #302400;
+  --disputed: #ff8389;
+  --disputed-bg: #750e13;
+  --retconned: #c6c6c6;
+  --retconned-bg: #393939;
+  --support-error: #fa4d56;
+  --support-success: #42be65;
+  --support-warning: #f1c21b;
+  --support-info: #4589ff;
+  /* Same hues, Carbon steps for the dark band (purple 60, cyan 50, orange 50, magenta 60, teal 50,
+   * yellow 50, blue 50, green 50). Worst adjacent colorblind ΔE is 6.9, the floor band: allowed because
+   * an entity's type is always also named (chips, legends, map labels), never shown by color alone. */
+  --t-faction: #8a3ffc;
+  --t-quest: #1192e8;
+  --t-location: #eb6200;
+  --t-item: #d02670;
+  --t-character: #009d9a;
+  --t-party: #b28600;
+  --t-lore: #4589ff;
+  --t-campaign: #24a148;
+  --t-other: #8d8d8d;
+  --grid: #393939;
+  --series-1: #8a3ffc;
+  --series-2: #1192e8;
+  --series-3: #eb6200;
+  --shadow-1: none;
+  --shadow-2: none;
+  --shadow-pop: 0 2px 6px rgb(0 0 0 / 0.8);
+  --texture: none;
+  --grain-opacity: 0;
+}
+
+/* ── Campaign codex: parchment by day, candlelit by night ─────────────────── */
+
+:root[data-style="codex"] {
+  color-scheme: light;
+
+  --font-display: "Cinzel Variable", "Cinzel", "Trajan Pro", Georgia, serif;
+  --font-body: "EB Garamond Variable", "EB Garamond", Garamond, Georgia, serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Surfaces: the page is parchment, cards are fresher vellum. */
+  --bg: #eee3c8;
+  --bg-deep: #e2d3ae;
+  --surface: #f6efdf;
+  --surface-2: #fbf7ec;
+  --surface-sunk: #ebe0c4;
+  --surface-hover: #f1e8d4;
+  --surface-selected: #fbf7ec;
+  --overlay: rgb(42 33 24 / 0.45);
+
+  /* Ink */
+  --ink: #2a2118;
+  --ink-2: #57472f;
+  --ink-3: #6f5e46;
+  --ink-inverse: #fbf6ea;
+
+  /* Rules and ornament */
+  --rule: #d6c49c;
+  --rule-strong: #a98d5a;
+  --gold: #9a7428;
+  --gold-soft: #d9bf7f;
+
+  /* Action */
+  --accent: #8b2a1d;
+  --accent-hover: #6f1f14;
+  --accent-active: #5a170f;
+  --accent-ink: #fff8ec;
+  --accent-soft: #f2d9cf;
+  --focus: #1f5fa8;
+  --link: #7a2618;
+  --link-hover: #5a170f;
+
+  /* Status: reserved. Never reuse for a series. */
+  --canon: #2d6a39;
+  --canon-bg: #dcebcf;
+  --rumor: #8a5a08;
+  --rumor-bg: #f5e2b5;
+  --disputed: #a1212a;
+  --disputed-bg: #f5d4ce;
+  --retconned: #5b5f66;
+  --retconned-bg: #e2e0da;
+  --ok: var(--canon);
+  --warn: var(--rumor);
+  --danger: var(--disputed);
+  --support-error: var(--disputed);
+  --support-success: var(--canon);
+  --support-warning: var(--rumor);
+  --support-info: var(--focus);
+
+  /* Entity types (categorical, fixed order). */
+  --t-faction: #2f6fb0;
+  --t-quest: #c4541f;
+  --t-location: #24976b;
+  --t-item: #b07d00;
+  --t-character: #c2577f;
+  --t-party: #3f7d1a;
+  --t-lore: #5b46b0;
+  --t-campaign: #d0453f;
+  --t-other: #8a7d6a;
+
+  /* Charts */
+  --chart-surface: var(--surface);
+  --grid: #e3d6b6;
+  --series-1: var(--t-faction);
+  --series-2: var(--t-quest);
+  --series-3: var(--t-location);
+
+  /* Shape */
+  --radius-s: 4px;
+  --radius: 8px;
+  --radius-l: 14px;
+  --shadow-1: 0 1px 0 rgb(255 255 255 / 0.55) inset, 0 1px 2px rgb(70 50 20 / 0.12);
+  --shadow-2: 0 1px 0 rgb(255 255 255 / 0.5) inset, 0 10px 28px -14px rgb(70 45 10 / 0.45), 0 2px 6px -2px rgb(70 45 10 / 0.18);
+  --shadow-pop: 0 24px 60px -20px rgb(40 25 5 / 0.55);
+
+  --text-body: 1.125rem;
+  --leading: 1.5;
+  --heading-weight: 600;
+  --heading-tracking: 0.02em;
+
+  --texture: radial-gradient(1200px 700px at 12% -10%, rgb(255 250 235 / 0.75), transparent 60%),
+    radial-gradient(900px 600px at 110% 10%, rgb(214 186 128 / 0.35), transparent 60%),
+    radial-gradient(800px 900px at 50% 120%, rgb(190 160 100 / 0.3), transparent 60%);
+  --grain-opacity: 0.18;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-style="codex"]:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #14100c;
+    --bg-deep: #0d0a07;
+    --surface: #1f1a15;
+    --surface-2: #29221b;
+    --surface-sunk: #17130f;
+    --surface-hover: #2f271f;
+    --surface-selected: #29221b;
+    --overlay: rgb(0 0 0 / 0.6);
+    --ink: #f2e7cf;
+    --ink-2: #d3c19c;
+    --ink-3: #b09c7d;
+    --ink-inverse: #1b140d;
+    --rule: #3b3024;
+    --rule-strong: #6c5737;
+    --gold: #d4a64c;
+    --gold-soft: #7b6131;
+    --accent: #e08a4f;
+    --accent-hover: #f0a066;
+    --accent-active: #c96f36;
+    --accent-ink: #1b120a;
+    --accent-soft: #3a2416;
+    --focus: #8ab8ff;
+    --link: #efa36d;
+    --link-hover: #f5b98a;
+    --canon: #82c690;
+    --canon-bg: #1d3122;
+    --rumor: #e6b45a;
+    --rumor-bg: #3a2b10;
+    --disputed: #f28383;
+    --disputed-bg: #3e1a1c;
+    --retconned: #aeb2b8;
+    --retconned-bg: #2a2a2b;
+    --t-faction: #4f8fd6;
+    --t-quest: #d9692e;
+    --t-location: #2aa57a;
+    --t-item: #b3820d;
+    --t-character: #d26a93;
+    --t-party: #5f9b2f;
+    --t-lore: #8f7ee6;
+    --t-campaign: #e06a62;
+    --t-other: #8b806f;
+    --grid: #2e271f;
+    --shadow-1: 0 1px 0 rgb(255 220 160 / 0.04) inset, 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-2: 0 1px 0 rgb(255 220 160 / 0.05) inset, 0 14px 32px -16px rgb(0 0 0 / 0.8), 0 2px 6px -2px rgb(0 0 0 / 0.5);
+    --shadow-pop: 0 30px 70px -20px rgb(0 0 0 / 0.85);
+    --texture: radial-gradient(900px 600px at 15% -5%, rgb(224 138 79 / 0.13), transparent 60%),
+      radial-gradient(700px 500px at 100% 0%, rgb(212 166 76 / 0.08), transparent 60%),
+      radial-gradient(1000px 800px at 50% 120%, rgb(120 60 20 / 0.18), transparent 60%);
+    --grain-opacity: 0.1;
+  }
+}
+
+:root[data-style="codex"][data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #14100c;
+  --bg-deep: #0d0a07;
+  --surface: #1f1a15;
+  --surface-2: #29221b;
+  --surface-sunk: #17130f;
+  --surface-hover: #2f271f;
+  --surface-selected: #29221b;
+  --overlay: rgb(0 0 0 / 0.6);
+  --ink: #f2e7cf;
+  --ink-2: #d3c19c;
+  --ink-3: #b09c7d;
+  --ink-inverse: #1b140d;
+  --rule: #3b3024;
+  --rule-strong: #6c5737;
+  --gold: #d4a64c;
+  --gold-soft: #7b6131;
+  --accent: #e08a4f;
+  --accent-hover: #f0a066;
+  --accent-active: #c96f36;
+  --accent-ink: #1b120a;
+  --accent-soft: #3a2416;
+  --focus: #8ab8ff;
+  --link: #efa36d;
+  --link-hover: #f5b98a;
+  --canon: #82c690;
+  --canon-bg: #1d3122;
+  --rumor: #e6b45a;
+  --rumor-bg: #3a2b10;
+  --disputed: #f28383;
+  --disputed-bg: #3e1a1c;
+  --retconned: #aeb2b8;
+  --retconned-bg: #2a2a2b;
+  --t-faction: #4f8fd6;
+  --t-quest: #d9692e;
+  --t-location: #2aa57a;
+  --t-item: #b3820d;
+  --t-character: #d26a93;
+  --t-party: #5f9b2f;
+  --t-lore: #8f7ee6;
+  --t-campaign: #e06a62;
+  --t-other: #8b806f;
+  --grid: #2e271f;
+  --shadow-1: 0 1px 0 rgb(255 220 160 / 0.04) inset, 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-2: 0 1px 0 rgb(255 220 160 / 0.05) inset, 0 14px 32px -16px rgb(0 0 0 / 0.8), 0 2px 6px -2px rgb(0 0 0 / 0.5);
+  --shadow-pop: 0 30px 70px -20px rgb(0 0 0 / 0.85);
+  --texture: radial-gradient(900px 600px at 15% -5%, rgb(224 138 79 / 0.13), transparent 60%),
+    radial-gradient(700px 500px at 100% 0%, rgb(212 166 76 / 0.08), transparent 60%),
+    radial-gradient(1000px 800px at 50% 120%, rgb(120 60 20 / 0.18), transparent 60%);
+  --grain-opacity: 0.1;
+}

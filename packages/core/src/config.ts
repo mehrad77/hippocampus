@@ -2,6 +2,8 @@ import { parse as parseYaml } from "yaml";
 import { HippoConfig } from "./schema.ts";
 
 export const CONFIG_PATH = "_hippo/config.yaml";
+/** The human's house rules for the curator, in plain words; appended to every curator prompt. */
+export const CURATOR_RULES_PATH = "_hippo/curator.md";
 
 export const DEFAULT_CONFIG: HippoConfig = HippoConfig.parse({
   campaign: "campaign",

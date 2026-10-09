@@ -50,6 +50,16 @@ export const summarySchema = z.object({
   summary: z.string().describe("2–4 sentences, present tense, with [[slug]] links to related entities"),
 });
 
+/** The human's house rules go last, so they read as the final word on judgment calls; the schema still binds. */
+function withHouseRules(system: string, houseRules?: string): string {
+  const rules = houseRules?.trim();
+  if (!rules) return system;
+  return `${system}
+
+House rules from the vault's human (they override general guidance where they conflict, but never the JSON schema):
+${rules}`;
+}
+
 function episodeBlock(ep: Episode): string {
   return `Episode ${ep.id}
 Reported by: ${ep.agent}
@@ -60,7 +70,7 @@ ${ep.text}
 ---`;
 }
 
-export function mentionsPrompt(vault: Vault, ep: Episode) {
+export function mentionsPrompt(vault: Vault, ep: Episode, houseRules?: string) {
   const { config } = vault;
   const types = Object.entries(config.types)
     .filter(([t]) => t !== "party")
@@ -71,7 +81,8 @@ export function mentionsPrompt(vault: Vault, ep: Episode) {
     .map((q) => `- ${displayName(q)}`)
     .join("\n");
   return {
-    system: `You are the curator of a campaign wiki that tracks a real person's life ("${config.campaign}") as if it were a tabletop RPG.
+    system: withHouseRules(
+      `You are the curator of a campaign wiki that tracks a real person's life ("${config.campaign}") as if it were a tabletop RPG.
 Your job in this step: list the entities an episode says something about.
 
 Entity types:
@@ -85,6 +96,8 @@ Rules:
 - name: the most specific proper name as written (keep the original-language spelling). Put translations/abbreviations in aliases.
 - domains: choose from [${config.domains.join(", ")}]; empty if none apply.
 - Return an empty list if there is nothing durable to remember.`,
+      houseRules,
+    ),
     prompt: `Existing quests:
 ${quests || "- (none)"}
 
@@ -92,9 +105,12 @@ ${episodeBlock(ep)}`,
   };
 }
 
-export function matchPrompt(name: string, type: string, ep: Episode, candidates: Entity[]) {
+export function matchPrompt(name: string, type: string, ep: Episode, candidates: Entity[], houseRules?: string) {
   return {
-    system: `You decide whether a name mentioned in an episode refers to an existing wiki entity. Answer with the slug of the matching entity, or "new" if none of them is the same real-world thing. Different branches/offices/people with similar names are NOT the same.`,
+    system: withHouseRules(
+      `You decide whether a name mentioned in an episode refers to an existing wiki entity. Answer with the slug of the matching entity, or "new" if none of them is the same real-world thing. Different branches/offices/people with similar names are NOT the same.`,
+      houseRules,
+    ),
     prompt: `Mention: "${name}" (type: ${type})
 Context: ${ep.text.slice(0, 600)}
 
@@ -103,7 +119,7 @@ ${candidates.map((c) => `- ${c.slug}: ${displayName(c)} (${c.fm.type}${c.fm.alia
   };
 }
 
-export function claimsPrompt(vault: Vault, ep: Episode, entities: Entity[], quests: Entity[]) {
+export function claimsPrompt(vault: Vault, ep: Episode, entities: Entity[], quests: Entity[], houseRules?: string) {
   const describe = (e: Entity) => {
     const facts = Object.entries(e.fm.facts)
       .map(([k, f]) => `${k}=${formatValue(f.value)}`)
@@ -111,7 +127,8 @@ export function claimsPrompt(vault: Vault, ep: Episode, entities: Entity[], ques
     return `- ${e.slug} (${e.fm.type}: ${displayName(e)})${facts ? `\n    existing facts: ${facts}` : ""}`;
   };
   return {
-    system: `You are the curator of a campaign wiki tracking a real person's life. Turn one episode into atomic, durable facts.
+    system: withHouseRules(
+      `You are the curator of a campaign wiki tracking a real person's life. Turn one episode into atomic, durable facts.
 
 Rules:
 - facts: one attribute per fact, about one of the listed entity slugs only.
@@ -122,6 +139,8 @@ Rules:
 - relations: only when the episode states a relationship, using the given vocabulary.
 - quests: only for listed quests the episode reports progress on. status="unchanged" unless the episode says otherwise.
 Return empty lists when nothing applies.`,
+      houseRules,
+    ),
     prompt: `Report time: ${ep.at}
 
 Entities:
@@ -136,7 +155,7 @@ ${episodeBlock(ep)}`,
   };
 }
 
-export function summaryPrompt(vault: Vault, e: Entity, newEvidence: string[]) {
+export function summaryPrompt(vault: Vault, e: Entity, newEvidence: string[], houseRules?: string) {
   const facts = Object.entries(e.fm.facts)
     .map(([k, f]) => `- ${k}: ${formatValue(f.value)} (${f.status})`)
     .join("\n");
@@ -145,7 +164,10 @@ export function summaryPrompt(vault: Vault, e: Entity, newEvidence: string[]) {
     .map((n) => `- ${n.dir === "out" ? `${n.rel} → [[${n.entity.slug}]]` : `[[${n.entity.slug}]] ${n.rel} → this`}`)
     .join("\n");
   return {
-    system: `You maintain the summary paragraph of a campaign-wiki note. Write 2–4 plain sentences describing what this entity is and its current state, as of now. Use [[slug]] links for related entities (only slugs given below). Mention disputed or rumored facts as uncertain. Never include values shown as "🔒 secret". No headings, no lists.`,
+    system: withHouseRules(
+      `You maintain the summary paragraph of a campaign-wiki note. Write 2–4 plain sentences describing what this entity is and its current state, as of now. Use [[slug]] links for related entities (only slugs given below). Mention disputed or rumored facts as uncertain. Never include values shown as "🔒 secret". No headings, no lists.`,
+      houseRules,
+    ),
     prompt: `Entity: ${e.slug} — ${displayName(e)} (${e.fm.type})
 Previous summary: ${getSummary(e) || "(none)"}
 

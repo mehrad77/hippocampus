@@ -1,0 +1,280 @@
+/*
+ * The public pages (welcome, privacy): a top bar instead of the rail, one readable column, both looks.
+ * Colors come from tokens.css only.
+ */
+
+.pub {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.pub-bar {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) clamp(var(--space-4), 4vw, var(--space-7));
+  border-bottom: 1px solid var(--rule);
+  background: color-mix(in oklab, var(--surface) 80%, transparent);
+}
+
+.pub-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ink);
+  text-decoration: none;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.1rem;
+  letter-spacing: 0.08em;
+}
+
+.pub-brand svg {
+  color: var(--gold);
+}
+
+.pub-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+
+.pub-nav__link {
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.pub-nav__link:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
+.pub-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.pub-switch .btn[aria-pressed="true"] {
+  background: var(--surface-selected, var(--surface-sunk));
+  color: var(--ink);
+}
+
+.pub-main {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  width: 100%;
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: var(--space-6) clamp(var(--space-4), 4vw, var(--space-7)) var(--space-7);
+}
+
+.pub-foot {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-top: 1px solid var(--rule);
+  color: var(--ink-3);
+}
+
+.pub-foot a {
+  color: var(--ink-2);
+}
+
+/* ── Welcome ──────────────────────────────────────────────────────────── */
+
+.pub-hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5) 0 var(--space-6);
+}
+
+.pub-hero h1 {
+  margin: 0;
+  max-width: 22ch;
+  font-size: clamp(2rem, 1.4rem + 2.6vw, 3.25rem);
+  line-height: 1.12;
+}
+
+.pub-hero__lede {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 1.15rem;
+  color: var(--ink-2);
+}
+
+.pub-hero__actions {
+  margin-top: var(--space-2);
+}
+
+.pub-section {
+  padding: var(--space-6) 0;
+  border-top: 1px solid var(--rule);
+}
+
+.pub-section > h2 {
+  margin: 0 0 var(--space-4);
+}
+
+.pub-steps {
+  list-style: none;
+  counter-reset: pub-step;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: var(--space-3);
+}
+
+.pub-step {
+  counter-increment: pub-step;
+  position: relative;
+  padding: var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-1);
+}
+
+.pub-step::before {
+  content: counter(pub-step);
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-4);
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--ink-3);
+}
+
+.pub-step > svg {
+  color: var(--gold);
+}
+
+.pub-step h3 {
+  margin: var(--space-2) 0 var(--space-1);
+  font-size: 1.05rem;
+}
+
+.pub-step p,
+.pub-card p {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.pub-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.pub-card {
+  padding: var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.pub-card h3 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  font-size: 1.05rem;
+}
+
+.pub-card h3 svg {
+  flex: none;
+  color: var(--gold);
+}
+
+.pub-cta p {
+  max-width: 60ch;
+  color: var(--ink-2);
+}
+
+/* ── Privacy notice ───────────────────────────────────────────────────── */
+
+.pub-doc {
+  max-width: 72ch;
+}
+
+.pub-draft {
+  margin-bottom: var(--space-5);
+}
+
+.pub-doc h1 {
+  margin: 0 0 var(--space-3);
+}
+
+.pub-doc h2 {
+  margin-top: var(--space-6);
+}
+
+.pub-doc__lede {
+  font-size: 1.1rem;
+  color: var(--ink-2);
+}
+
+/* ── Plain look (IBM Carbon): flat tiles, link-blue glyphs ────────────── */
+
+:root:not([data-style="codex"]) .pub-bar {
+  background: var(--surface);
+}
+
+:root:not([data-style="codex"]) .pub-brand {
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .pub-hero h1 {
+  font-weight: 300;
+}
+
+:root:not([data-style="codex"]) :is(.pub-step, .pub-card) {
+  border-color: transparent;
+  background: var(--surface);
+}
+
+:root:not([data-style="codex"]) :is(.pub-step > svg, .pub-card h3 svg, .pub-brand svg) {
+  color: var(--link);
+}
+
+:root:not([data-style="codex"]) .pub-step::before {
+  font-family: var(--font-body);
+}
+
+@media (max-width: 640px) {
+  .pub-bar {
+    padding: var(--space-2) var(--space-4);
+  }
+
+  /* The footer links Help and Privacy too; the bar keeps the look switch and sign-in. */
+  .pub-nav__link {
+    display: none;
+  }
+
+  .pub-switch .btn:first-child {
+    padding-inline: var(--space-2);
+  }
+
+  .pub-main {
+    padding: var(--space-4) var(--space-4) var(--space-6);
+  }
+
+  .pub-hero {
+    padding-top: var(--space-3);
+  }
+}

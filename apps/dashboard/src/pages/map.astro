@@ -1,0 +1,7 @@
+---
+import Shell from "../layouts/Shell.astro";
+import MapView from "../islands/MapView.tsx";
+---
+<Shell title="Map" page="map" description="How every entity in the codex ties to the rest.">
+  <MapView client:only="react" />
+</Shell>

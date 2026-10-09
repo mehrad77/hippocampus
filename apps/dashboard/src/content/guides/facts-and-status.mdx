@@ -1,0 +1,106 @@
+---
+title: Facts and their status
+summary: Canon, rumor, disputed and retconned. Where each fact came from, how rumors earn canon, and when canon goes stale.
+order: 2
+section: Basics
+sigil: scroll
+---
+import StatusFlow from "../../components/guides/StatusFlow.astro";
+import Seal from "../../components/guides/Seal.astro";
+import Aside from "../../components/guides/Aside.astro";
+import Link from "../../components/guides/Link.astro";
+
+Every note in the vault can carry **facts**: small named values such as `appointment_date`, `office_address` or `monthly_rent`. Facts live in the note's frontmatter under `facts:`, and each one carries a **status** and its **provenance**. The curator also renders them as a table in the note's `facts` region, so they read well in Obsidian.
+
+## The four seals
+
+| Status | Meaning | What agents should do |
+| --- | --- | --- |
+| <Seal status="canon" /> | Accepted truth | Rely on it |
+| <Seal status="rumor" /> | Reported by a source without authority here, not yet corroborated | Verify before acting |
+| <Seal status="disputed" /> | Sources disagree; a dispute note waits for your ruling | Don't act on it without checking |
+| <Seal status="retconned" /> | Superseded by hand | Ignore it; the next report starts over |
+
+<StatusFlow />
+
+How a new report lands depends on **who** made it, relative to the note it's about:
+
+- **You, the human**: canon at once.
+- **An agent with lane authority** over the note (its authority domains match the note's tags or type): canon at once. See <Link guide="party-and-lanes">Party and lanes</Link>.
+- **Any other agent**, including agents with no party sheet: a rumor.
+
+## Provenance: where a fact came from
+
+A fact as the curator writes it:
+
+```yaml
+facts:
+  appointment_date:
+    value: 2026-10-14T10:30
+    status: canon
+    by: residency-agent
+    at: 2026-09-26T11:00:00Z
+    src: [ep-01J9ZC4T7K]
+    was:
+      - { value: 2026-10-07T09:00, by: residency-agent, at: 2026-09-20T08:12:00Z }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `value` | A string, number or boolean. Secrets appear only as `secret://…` references |
+| `status` | `canon`, `rumor`, `disputed` or `retconned` |
+| `by` | The party id that asserted the current value. Missing means you wrote it |
+| `at` | When it was last observed or confirmed |
+| `src` | The episode ids behind it. Each one is a block in the chronicle, so you can read the original words |
+| `was` | Earlier values with who and when, most recent last. Replacements keep the last five |
+| `seen_by` | While it's a rumor: the distinct agents who reported this same value |
+
+You can write facts by hand too. The shorthand `facts: { rent_budget: "1,100 EUR" }` is read as canon, by you.
+
+## Corroboration: how a rumor becomes canon
+
+Nobody in the example party has authority over `locations/lisbon.md`: the note has no tags, and "location" is not anyone's domain. So when the job scout says a typical one-bedroom costs 1,100 EUR, it's a rumor:
+
+```yaml
+avg_rent_t1: { value: "1,100 EUR", status: rumor, by: job-scout, seen_by: [job-scout] }
+```
+
+A few days later the home finder reports the same value. Values are compared loosely: case, accents, extra spaces and a trailing full stop don't matter. Now two distinct agents agree, which meets `canon_threshold`, so the fact is promoted to <Seal status="canon" /> and `seen_by` is dropped.
+
+```yaml
+# _hippo/config.yaml
+curator:
+  canon_threshold: 2      # distinct agents needed to promote a rumor to canon
+  stale_after_days: 60    # canon not re-confirmed for this long shows up in the morning review
+```
+
+A rumor is also promoted at once if an authoritative agent, or you, confirms the same value. The same agent repeating itself never counts twice.
+
+<Aside kind="tip">
+
+Corroboration counts **agents**, not episodes. If one agent says the same thing five times, it's still a rumor. That's deliberate: one confused source repeating itself should never become canon.
+
+</Aside>
+
+## When values disagree
+
+If a new report differs from the current value, the precedence rules decide. The new value may replace the old one (the old one moves to `was`), be kept out, or open a dispute. The full table is in <Link guide="precedence-and-disputes">Precedence and disputes</Link>. Two cases are worth knowing by heart:
+
+- A source **may correct itself**. If the residency agent reports a newer appointment date, it replaces its own earlier report.
+- Peers who disagree **open a dispute**. The fact turns <Seal status="disputed" />, and it keeps showing the value it had until you rule.
+
+## Retconned facts
+
+Hippocampus never retcons anything by itself. You mark a fact `status: retconned` in Obsidian when it no longer holds, for instance an old address after a move. The next report about that field starts fresh as if the field were empty, and the retconned value moves into `was`.
+
+## Stale canon
+
+Canon can age. A canon fact whose `at` is older than `stale_after_days` (60 by default) is flagged as **stale**. It shows up in the morning review (`_hippo/review.md`), on the Tavern, and on the entity sheet. Stale facts are still canon. The flag only asks someone to re-confirm them.
+
+Re-confirming is just another report. When any agent reports the same value again, `at` moves forward and the fact is fresh again. Opening hours, prices and contact details are typical candidates.
+
+## Where you'll see status
+
+- **Entity sheets** in the dashboard show each fact with its seal, who said it, whether they had authority, when, its sources, earlier values, and an open dispute if there is one.
+- **Agents** see the status with every fact they read through `get`, `recall` and `ask_canon`, and the handbook tells them what each status means.
+- **The morning review** lists every rumor and every stale canon fact, so nothing unverified hides for long.

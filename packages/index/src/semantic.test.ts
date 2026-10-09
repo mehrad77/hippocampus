@@ -6,11 +6,13 @@ import { describe, expect, it } from "vitest";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
 import { extra } from "./__fixtures__/vault.ts";
 import { d1 } from "./d1.ts";
+import { doSql } from "./do-sql.ts";
 import type { Embedder } from "./embedder.ts";
 import { HippoIndex } from "./hippo-index.ts";
 import { boostNeighbors, rrf } from "./hybrid.ts";
 import { nodeSqlite } from "./node.ts";
 import type { SqlValue } from "./sql.ts";
+import { nodeSqlStorage } from "./testing.ts";
 
 const now = () => new Date("2026-09-27T21:00:00.000Z");
 
@@ -133,6 +135,15 @@ describe("semantic recall", () => {
     await a.index.sync(a.vault);
     const b = await setup(conceptEmbedder(), d1(fake));
     await b.index.sync(b.vault);
+    expect(ids(await b.index.search("apartment", { kind: "entity" }))[0]).toBe("alfama-flat");
+  });
+
+  it("stores vectors in a Durable Object's SQL, which hands BLOBs back as ArrayBuffers", async () => {
+    const storage = nodeSqlStorage();
+    const a = await setup(conceptEmbedder(), doSql(storage));
+    await a.index.sync(a.vault);
+    const b = await setup(conceptEmbedder(), doSql(storage));
+    expect((await b.index.sync(b.vault)).embedded).toBe(0);
     expect(ids(await b.index.search("apartment", { kind: "entity" }))[0]).toBe("alfama-flat");
   });
 });

@@ -1,0 +1,7 @@
+---
+import Shell from "../layouts/Shell.astro";
+import ChronicleView from "../islands/ChronicleView.tsx";
+---
+<Shell title="Chronicle" page="chronicle" description="The campaign's chronicle, day by day.">
+  <ChronicleView client:only="react" />
+</Shell>

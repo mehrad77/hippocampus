@@ -1,0 +1,11 @@
+{
+  "name": "hippocampus",
+  "owner": { "name": "Hippocampus", "url": "https://github.com/mehrad77/hippocampus" },
+  "plugins": [
+    {
+      "name": "hippocampus",
+      "source": "./plugins/hippocampus",
+      "description": "Shared, curated memory for your AI agents: connect to your Hippocampus vault, remember and recall, and run the nightly sleep as its curator."
+    }
+  ]
+}

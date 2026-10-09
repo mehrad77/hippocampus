@@ -38,7 +38,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "build": "tsup && node scripts/copy-assets.mjs",
+    "build": "pnpm --filter @hippocampus/dashboard-ui run build && tsup && node scripts/copy-assets.mjs",
     "prepack": "pnpm run build"
   },
   "dependencies": {
@@ -56,6 +56,8 @@
   "devDependencies": {
     "@hippocampus/core": "workspace:*",
     "@hippocampus/curator": "workspace:*",
+    "@hippocampus/dashboard": "workspace:*",
+    "@hippocampus/dashboard-ui": "workspace:*",
     "@hippocampus/embeddings": "workspace:*",
     "@hippocampus/index": "workspace:*",
     "@hippocampus/mcp": "workspace:*",

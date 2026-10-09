@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["@cloudflare/workers-types"]
   },
-  "include": ["src/worker.ts", "src/oauth.ts", "src/oauth.test.ts"]
+  "include": ["src/worker.ts", "src/hosted/env.ts", "src/hosted/vault-host.ts"]
 }

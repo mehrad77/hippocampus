@@ -1,0 +1,7 @@
+---
+import Shell from "../layouts/Shell.astro";
+import TavernView from "../islands/TavernView.tsx";
+---
+<Shell title="Tavern" page="tavern">
+  <TavernView client:only="react" />
+</Shell>

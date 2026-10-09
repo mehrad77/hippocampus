@@ -6,9 +6,21 @@ export interface GitHubStoreOptions {
   /** `owner/name` of the (private) vault repo. */
   repo: string;
   branch?: string;
-  /** A token, or a function that mints one (e.g. a GitHub App installation token). */
-  token: string | (() => Promise<string>);
+  /**
+   * A token, or a function that mints one (e.g. a GitHub App installation token). After a 401 the
+   * function is asked once more with `refresh: true` and the request retried, since tokens expire.
+   */
+  token: string | ((opts?: { refresh?: boolean }) => Promise<string>);
   cache?: BlobCache;
+  /**
+   * Whether a path's content may go into `cache`. When `cache` is durable, keep plaintext that
+   * mustn't be stored at rest (e.g. `inbox/**`) out of it; those blobs go to `transientCache`.
+   */
+  persist?: (path: string) => boolean;
+  /** Where blobs `persist` turns away are cached (default: an in-memory LRU per store). Share it like `cache`. */
+  transientCache?: BlobCache;
+  /** Added to auth errors, e.g. where the token is configured. */
+  hint?: { auth?: string };
   /** Tree listings by commit. Share one (with `cache`) across short-lived stores, e.g. one store per request. */
   snapshots?: SnapshotCache;
   fetch?: typeof fetch;
@@ -20,6 +32,29 @@ export interface GitHubStoreOptions {
    * instead of one request per file (default 20). Keeps cold loads within Workers' subrequest limits.
    */
   preloadThreshold?: number;
+}
+
+export interface RepoInfo {
+  /** GitHub's id for the repo: survives renames and transfers. */
+  id: number;
+  /** `owner/name` as GitHub spells it. */
+  fullName: string;
+  private: boolean;
+  defaultBranch: string;
+  /** The branch this store reads and writes. */
+  branch: string;
+  /** No commits yet: `initialize()` makes the first. */
+  empty: boolean;
+  /** The commit reads are pinned to; none while the repo is empty. */
+  head?: string;
+}
+
+/** The repo has no commits, so GitHub's Git Data API refuses it (409). `GitHubStore.initialize()` makes the first one. */
+export class EmptyRepositoryError extends VaultError {
+  constructor(readonly repo: string) {
+    super(`${repo} is empty: it has no commits yet`);
+    this.name = "EmptyRepositoryError";
+  }
 }
 
 export interface TreeFile {
@@ -66,6 +101,16 @@ interface TreeEntry {
 const IGNORED = new Set([".git", ".obsidian", ".trash", "node_modules"]);
 const ignored = (path: string) => path.split("/").some((seg) => IGNORED.has(seg));
 
+const encodePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
+
+/** Base64 of the UTF-8 bytes, without Node's Buffer (this runs in Workers too). */
+function base64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
 class HttpError extends Error {
   constructor(
     readonly status: number,
@@ -87,6 +132,7 @@ export class GitHubStore implements VaultStore {
   readonly repo: string;
   readonly branch: string;
   private readonly cache: BlobCache;
+  private readonly transient: BlobCache;
   private readonly snapshots: SnapshotCache;
   private readonly fetch: typeof fetch;
   private readonly api: string;
@@ -100,6 +146,7 @@ export class GitHubStore implements VaultStore {
     this.repo = opts.repo;
     this.branch = opts.branch ?? "main";
     this.cache = opts.cache ?? new MemoryBlobCache();
+    this.transient = opts.transientCache ?? new MemoryBlobCache();
     this.snapshots = opts.snapshots ?? new SnapshotCache();
     this.fetch = opts.fetch ?? globalThis.fetch.bind(globalThis);
     this.api = (opts.apiUrl ?? "https://api.github.com").replace(/\/$/, "");
@@ -108,6 +155,43 @@ export class GitHubStore implements VaultStore {
   /** The commit reads are pinned to. */
   async head(): Promise<string> {
     return (await this.snapshot()).commit;
+  }
+
+  /** Whether the repo is private (a vault should be), its default branch, whether it's empty, and the commit reads are pinned to. */
+  async info(): Promise<RepoInfo> {
+    const [repo, head] = await Promise.all([
+      this.json<{ id: number; full_name: string; private: boolean; default_branch: string }>("GET", ""),
+      this.head().catch((err: unknown) => {
+        if (err instanceof EmptyRepositoryError) return undefined;
+        throw err;
+      }),
+    ]);
+    return { id: repo.id, fullName: repo.full_name, private: repo.private, defaultBranch: repo.default_branch, branch: this.branch, empty: head === undefined, head };
+  }
+
+  /**
+   * Write a whole vault (e.g. the template) in as few commits as GitHub allows. An empty repo
+   * refuses the Git Data API, so its first file goes in through the Contents API (README.md when
+   * there is one) and the rest follow as one commit. A repo with commits gets a single commit.
+   */
+  async initialize(files: Record<string, string>, meta: CommitMeta): Promise<void> {
+    let changes: Change[] = Object.entries(files).map(([path, content]) => ({ path, content }));
+    if (!changes.length) return;
+    const { empty, defaultBranch } = await this.info();
+    if (empty) {
+      const first = files["README.md"] !== undefined ? "README.md" : changes[0]!.path;
+      await this.json("PUT", `contents/${encodePath(first)}`, {
+        message: meta.message,
+        content: base64(files[first]!),
+        // The first commit creates the branch; naming the default one would be redundant.
+        ...(this.branch === defaultBranch ? {} : { branch: this.branch }),
+        ...(meta.author ? { author: meta.author } : {}),
+      });
+      changes = changes.filter((c) => c.path !== first);
+    }
+    // Commit onto the branch as it is now, not a snapshot pinned earlier.
+    this.snap = undefined;
+    await this.apply(changes, meta);
   }
 
   /** Re-pin reads to the branch's current head (one request when it hasn't moved). */
@@ -134,13 +218,14 @@ export class GitHubStore implements VaultStore {
     const snap = await this.snapshot();
     const file = snap.files.get(path);
     if (!file) return undefined;
-    const cached = await this.cache.get(file.sha);
+    const cache = this.cacheFor(path);
+    const cached = await cache.get(file.sha);
     if (cached !== undefined) return cached;
     await this.preload(snap);
-    const preloaded = await this.cache.get(file.sha);
+    const preloaded = await cache.get(file.sha);
     if (preloaded !== undefined) return preloaded;
     const content = await (await this.request("GET", `git/blobs/${file.sha}`, undefined, "application/vnd.github.raw+json")).text();
-    await this.cache.put(file.sha, content);
+    await cache.put(file.sha, content);
     return content;
   }
 
@@ -191,6 +276,10 @@ export class GitHubStore implements VaultStore {
     for (const c of changes) this.pending.delete(c.path);
   }
 
+  private cacheFor(path: string): BlobCache {
+    return this.opts.persist?.(path) === false ? this.transient : this.cache;
+  }
+
   private snapshot(sha?: string): Promise<Snapshot> {
     this.snap ??= this.fetchSnapshot(sha).catch((err: unknown) => {
       this.snap = undefined;
@@ -213,15 +302,16 @@ export class GitHubStore implements VaultStore {
   private async preloadNow(snap: Snapshot): Promise<void> {
     const threshold = this.opts.preloadThreshold ?? 20;
     let missing = 0;
-    for (const f of snap.files.values()) if ((await this.cache.get(f.sha)) === undefined && ++missing > threshold) break;
+    for (const [path, f] of snap.files) if ((await this.cacheFor(path).get(f.sha)) === undefined && ++missing > threshold) break;
     if (missing <= threshold) return;
     const res = await this.request("GET", `tarball/${snap.commit}`);
     const archive = new Uint8Array(await new Response(res.body!.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
     const decoder = new TextDecoder();
     for (const [name, bytes] of untar(archive)) {
       // Entries sit under one top-level `<owner>-<repo>-<sha>/` directory.
-      const file = snap.files.get(name.slice(name.indexOf("/") + 1));
-      if (file) await this.cache.put(file.sha, decoder.decode(bytes));
+      const path = name.slice(name.indexOf("/") + 1);
+      const file = snap.files.get(path);
+      if (file) await this.cacheFor(path).put(file.sha, decoder.decode(bytes));
     }
   }
 
@@ -281,7 +371,7 @@ export class GitHubStore implements VaultStore {
       }
       const sha = await gitBlobSha(c.content);
       files.set(c.path, { sha, mode: base.files.get(c.path)?.mode ?? "100644" });
-      await this.cache.put(sha, c.content);
+      await this.cacheFor(c.path).put(sha, c.content);
     }
     return { commit, tree, files };
   }
@@ -291,18 +381,26 @@ export class GitHubStore implements VaultStore {
   }
 
   private async request(method: string, path: string, body?: unknown, accept = "application/vnd.github+json"): Promise<Response> {
-    const token = typeof this.opts.token === "string" ? this.opts.token : await this.opts.token();
-    const res = await this.fetch(`${this.api}/repos/${this.repo}/${path}`, {
-      method,
-      headers: {
-        accept,
-        authorization: `Bearer ${token}`,
-        "x-github-api-version": "2022-11-28",
-        "user-agent": "hippocampus",
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    const { token } = this.opts;
+    const send = async (refresh: boolean) =>
+      // An empty path is the repo itself (`GET /repos/{owner}/{repo}`).
+      this.fetch(`${this.api}/repos/${this.repo}${path ? `/${path}` : ""}`, {
+        method,
+        headers: {
+          accept,
+          authorization: `Bearer ${typeof token === "string" ? token : await (refresh ? token({ refresh }) : token())}`,
+          "x-github-api-version": "2022-11-28",
+          "user-agent": "hippocampus",
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    let res = await send(false);
+    // A minted token may have expired (installation tokens last an hour): mint a fresh one, once.
+    if (res.status === 401 && typeof token !== "string") {
+      await res.body?.cancel();
+      res = await send(true);
+    }
     if (res.ok) return res;
     const detail = await res.text().catch(() => "");
     const message = (() => {
@@ -312,10 +410,13 @@ export class GitHubStore implements VaultStore {
         return detail;
       }
     })();
-    if (res.status === 401) throw new VaultError(`GitHub rejected the token for ${this.repo} (401). Check HIPPO_GITHUB_TOKEN.`);
+    const hint = this.opts.hint?.auth ? ` ${this.opts.hint.auth}` : "";
+    if (res.status === 401) throw new VaultError(`GitHub rejected the token for ${this.repo} (401).${hint}`);
     if (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0")
       throw new VaultError(`GitHub rate limit reached for ${this.repo}; resets at ${new Date(Number(res.headers.get("x-ratelimit-reset")) * 1000).toISOString()}`);
-    if (res.status === 403) throw new VaultError(`GitHub denied ${method} ${path} on ${this.repo} (403): the token needs Contents read and write access. ${message}`);
+    if (res.status === 403) throw new VaultError(`GitHub denied ${method} ${path} on ${this.repo} (403): the token needs Contents read and write on ${this.repo}.${hint} ${message}`);
+    if (res.status === 409 && path.startsWith("git/") && /repository is empty/i.test(message)) throw new EmptyRepositoryError(this.repo);
+    if (res.status === 404 && method === "GET" && path === "") throw new VaultError(`GitHub can't find ${this.repo} (404): check the name, and that the token can see this repo`);
     if (res.status === 404 && method === "GET" && path.startsWith("git/ref/"))
       throw new VaultError(`GitHub can't find branch "${this.branch}" of ${this.repo} (404): check the name, and that the token can see this repo`);
     throw new HttpError(res.status, `GitHub ${method} ${path} on ${this.repo} failed (${res.status}): ${message}`);

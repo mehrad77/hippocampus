@@ -1,0 +1,1583 @@
+/*
+ * Lore pages: the Codex, entity sheets, the Chronicle and the Map.
+ * Only tokens from tokens.css; entity-type hues arrive as --c through `.typed--<type>`.
+ */
+
+/* ── Shared bits ──────────────────────────────────────────────────────── */
+
+.lore-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.searchbox {
+  position: relative;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.searchbox > svg {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ink-3);
+  pointer-events: none;
+}
+
+.searchbox .input {
+  padding-left: 36px;
+}
+
+.lore-select {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip__count {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+  font-size: 0.92em;
+}
+
+.chip[aria-pressed="true"] .dot {
+  box-shadow: 0 0 0 2px var(--ink-inverse);
+}
+
+.chip[aria-pressed="false"].chip--toggle {
+  opacity: 0.62;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, currentColor 50%, transparent);
+}
+
+.chip--toggle[aria-pressed="true"] {
+  background: var(--surface-2);
+  border-color: var(--c, var(--rule-strong));
+  color: var(--ink);
+}
+
+.result-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  color: var(--ink-3);
+  font-size: 0.9rem;
+}
+
+.linkish {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+}
+
+.tally {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tally .seal {
+  padding: 0 7px 0 3px;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tally .seal__glyph {
+  width: 14px;
+  height: 14px;
+  font-size: 0.62rem;
+}
+
+.sigil {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  /* Solid type color; --ink-inverse is light on parchment and dark by candlelight, so the letter reads in both. */
+  background: var(--c);
+  border: 2px solid color-mix(in oklab, var(--c) 60%, var(--gold));
+  box-shadow:
+    inset 0 3px 6px rgb(255 255 255 / 0.22),
+    inset 0 -5px 10px rgb(0 0 0 / 0.2),
+    0 0 0 4px var(--surface),
+    0 0 0 5px color-mix(in oklab, var(--c) 40%, var(--rule)),
+    var(--shadow-2);
+  color: var(--ink-inverse);
+  font-family: var(--font-display);
+  font-size: 1.7rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* ── Codex ────────────────────────────────────────────────────────────── */
+
+.codex-filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.codex-filters::after {
+  display: none;
+}
+
+.codex-typenote {
+  margin: 0;
+  font-style: italic;
+  color: var(--ink-2);
+}
+
+.codex-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr));
+  gap: var(--space-4);
+}
+
+.codex-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--c);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--c) 7%, var(--surface-2)), var(--surface-2) 60%);
+  box-shadow: var(--shadow-1);
+  color: inherit;
+  text-decoration: none;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+
+.codex-card:hover,
+.codex-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: var(--rule-strong);
+  border-top-color: var(--c);
+  box-shadow: var(--shadow-2);
+}
+
+.codex-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.codex-card__type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.codex-card__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.12rem;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.codex-card:hover .codex-card__title {
+  color: var(--link);
+}
+
+.codex-card__aka {
+  margin-top: -4px;
+  font-size: 0.88rem;
+  font-style: italic;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.codex-card__summary {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 0.95rem;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.codex-card__summary--empty {
+  font-style: italic;
+  color: var(--ink-3);
+}
+
+.codex-card__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin-top: auto;
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--rule);
+  font-size: 0.82rem;
+  color: var(--ink-3);
+}
+
+.codex-card__links {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.codex-card__links svg {
+  width: 15px;
+  height: 15px;
+}
+
+.status-chip {
+  font-size: 0.74rem;
+  text-transform: lowercase;
+}
+
+.status-chip--done,
+.status-chip--completed {
+  color: var(--canon);
+  border-color: color-mix(in oklab, var(--canon) 40%, var(--rule));
+}
+
+.status-chip--blocked {
+  color: var(--disputed);
+  border-color: color-mix(in oklab, var(--disputed) 40%, var(--rule));
+  border-style: dashed;
+}
+
+.status-chip--active {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 40%, var(--rule));
+}
+
+/* ── Entity sheet ─────────────────────────────────────────────────────── */
+
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: var(--space-3);
+  font-size: 0.9rem;
+  color: var(--ink-3);
+}
+
+.crumbs a {
+  color: var(--ink-2);
+}
+
+.sheet-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-4) var(--space-5);
+  align-items: start;
+  border-top: 4px solid var(--c);
+  background: linear-gradient(180deg, color-mix(in oklab, var(--c) 9%, var(--surface)), var(--surface) 70%);
+}
+
+.sheet-head__kicker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: var(--space-2);
+}
+
+.sheet-head h1 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.sheet-head__aka {
+  margin: var(--space-1) 0 0;
+  font-style: italic;
+  color: var(--ink-2);
+}
+
+.sheet-head__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-2);
+  font-size: 0.9rem;
+  color: var(--ink-3);
+}
+
+.sheet-head__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--rule);
+}
+
+.sheet-tag {
+  color: var(--ink-3);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 600px) {
+  .sheet-head {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sigil {
+    width: 48px;
+    height: 48px;
+    font-size: 1.3rem;
+  }
+
+  .sheet-head__actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
+.ledger {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ledger__row {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.32fr) minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--rule);
+}
+
+.ledger__row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.ledger__row--retconned .ledger__value {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--ink-3) 60%, transparent);
+  color: var(--ink-3);
+}
+
+.ledger__row--disputed {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--disputed) 8%, transparent), transparent 60%);
+}
+
+.ledger__field {
+  padding-top: 3px;
+  font-family: var(--font-display);
+  font-size: 0.74rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+
+.ledger__main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.ledger__value {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.ledger__who {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  font-size: 0.86rem;
+  color: var(--ink-3);
+}
+
+.ledger__who .elink {
+  font-weight: 500;
+}
+
+.authority {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  font-style: italic;
+}
+
+.authority--human {
+  color: var(--gold);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.authority--authority {
+  color: var(--ink-2);
+}
+
+.flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+}
+
+.flag svg {
+  width: 14px;
+  height: 14px;
+}
+
+.flag--stale {
+  color: var(--rumor);
+}
+
+.flag--dispute {
+  color: var(--disputed);
+  font-weight: 600;
+}
+
+.prov {
+  grid-column: 2;
+  font-size: 0.88rem;
+}
+
+.prov > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--ink-3);
+  list-style: none;
+  user-select: none;
+}
+
+.prov > summary::-webkit-details-marker {
+  display: none;
+}
+
+.prov > summary svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 120ms ease;
+}
+
+.prov[open] > summary svg {
+  transform: rotate(90deg);
+}
+
+.prov > summary:hover {
+  color: var(--ink);
+}
+
+.prov__body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--surface-sunk);
+  border: 1px solid var(--rule);
+}
+
+.prov__body dt {
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding-top: 3px;
+}
+
+.prov__body dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.was {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.was li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-2);
+  align-items: baseline;
+}
+
+.was .mono {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--ink-3) 60%, transparent);
+}
+
+@media (max-width: 600px) {
+  .ledger__row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ledger__who,
+  .prov {
+    grid-column: 1;
+  }
+
+  .prov__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prov__body dd {
+    margin-bottom: var(--space-2);
+  }
+}
+
+.ties {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.ties__group {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.3fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: baseline;
+}
+
+.ties__group dt {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.ties__group dd {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+.ties__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.ties__arrow {
+  color: var(--gold);
+  font-weight: 700;
+}
+
+@media (max-width: 600px) {
+  .ties__group {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-1);
+  }
+}
+
+.objectives {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.objectives li {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.objectives__box {
+  width: 12px;
+  height: 12px;
+  transform: rotate(45deg) translateY(1px);
+  border: 1.5px solid var(--gold);
+  border-radius: 2px;
+}
+
+.objectives li[data-done] .objectives__box {
+  background: var(--gold);
+}
+
+.objectives li[data-done] span:last-child {
+  color: var(--ink-3);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, var(--ink-3) 60%, transparent);
+}
+
+.clocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.clocks__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.clocks__item > div {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.kv dt {
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding-top: 4px;
+}
+
+.kv dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.mention {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mention__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.85rem;
+  color: var(--ink-3);
+}
+
+.mention__text {
+  font-size: 0.95rem;
+}
+
+.episode--sealed {
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.notfound {
+  max-width: 620px;
+  margin: var(--space-6) auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.notfound > svg {
+  color: var(--gold);
+}
+
+/* ── Chronicle ────────────────────────────────────────────────────────── */
+
+.month-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.month-nav .select {
+  width: auto;
+}
+
+.month-strip {
+  display: grid;
+  grid-template-columns: repeat(var(--days, 31), minmax(0, 1fr));
+  gap: 3px;
+}
+
+.month-strip__cell {
+  display: block;
+  min-width: 0;
+}
+
+.month-strip__day {
+  position: relative;
+  display: block;
+  aspect-ratio: 1 / 1.6;
+  min-height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--rule);
+  background: var(--surface-sunk);
+}
+
+a.month-strip__day {
+  background: color-mix(in oklab, var(--gold) calc(var(--heat, 0) * 100%), var(--surface-2));
+  border-color: color-mix(in oklab, var(--gold) 60%, var(--rule));
+}
+
+a.month-strip__day:hover,
+a.month-strip__day:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.month-strip__day[data-today] {
+  box-shadow: inset 0 -3px 0 var(--accent);
+}
+
+.month-strip__axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 0.75rem;
+  color: var(--ink-3);
+}
+
+.chron-filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.chron-filters__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.chron-filters__label {
+  min-width: 56px;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.chron-day {
+  scroll-margin-top: 72px;
+}
+
+.chron-day__head {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin: 0 calc(-1 * var(--space-2)) var(--space-3);
+  padding: var(--space-2);
+  background: color-mix(in oklab, var(--bg) 90%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--rule);
+}
+
+.chron-day__head h2 {
+  margin: 0;
+  font-size: 1.12rem;
+}
+
+.chron-day__head .muted {
+  font-size: 0.85rem;
+}
+
+@media (max-width: 960px) {
+  .chron-day__head {
+    top: 53px;
+  }
+
+  .chron-day {
+    scroll-margin-top: 110px;
+  }
+}
+
+.chron-days {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.chron-entry {
+  scroll-margin-top: 120px;
+  border-radius: var(--radius);
+  padding: 2px var(--space-2) var(--space-2);
+  margin-left: calc(-1 * var(--space-2));
+  transition: background 600ms ease;
+}
+
+/* The padding above shifts the box; keep the timeline bead on the rule. */
+.chron-entry.timeline__item::before {
+  left: -17px;
+  top: 8px;
+}
+
+.chron-entry__time {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--ink-3);
+}
+
+.chron-entry__perma {
+  margin-left: auto;
+  color: var(--ink-3);
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.chron-entry:hover .chron-entry__perma,
+.chron-entry__perma:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .chron-entry__perma {
+    opacity: 0.6;
+  }
+}
+
+.chron-entry.is-target {
+  background: color-mix(in oklab, var(--gold-soft) 45%, transparent);
+  box-shadow: 0 0 0 1px var(--gold);
+  animation: chron-glow 2.4s ease-out 1;
+}
+
+@keyframes chron-glow {
+  0% {
+    box-shadow: 0 0 0 6px color-mix(in oklab, var(--gold) 45%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 1px var(--gold);
+  }
+}
+
+.touched {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-3);
+  margin-top: 4px;
+  font-size: 0.86rem;
+}
+
+.touched .elink {
+  font-weight: 500;
+  color: var(--ink-2);
+}
+
+/* ── Map ──────────────────────────────────────────────────────────────── */
+
+.map-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.map-find {
+  position: relative;
+  flex: 1 1 220px;
+  max-width: 340px;
+}
+
+.map-find__list {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-strong);
+  background: var(--surface-2);
+  box-shadow: var(--shadow-pop);
+}
+
+.map-find__list button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.map-find__list button:hover,
+.map-find__list button[data-active] {
+  background: var(--surface-sunk);
+}
+
+.seg {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule-strong);
+  background: var(--surface-sunk);
+}
+
+.seg button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 2px 12px;
+  border: 0;
+  border-radius: calc(var(--radius) - 3px);
+  background: none;
+  color: var(--ink-3);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.seg button svg {
+  width: 17px;
+  height: 17px;
+}
+
+.seg button[aria-pressed="true"] {
+  background: var(--surface-2);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+
+.map-wrap {
+  position: relative;
+}
+
+.map-stage {
+  position: relative;
+  height: clamp(440px, calc(100dvh - 300px), 900px);
+  border-radius: var(--radius-l);
+  border: 1px solid var(--rule);
+  background:
+    radial-gradient(circle at 50% 45%, color-mix(in oklab, var(--surface-2) 85%, transparent), transparent 70%),
+    var(--surface-sunk);
+  box-shadow: inset 0 1px 6px rgb(60 40 10 / 0.12), var(--shadow-1);
+  overflow: hidden;
+}
+
+.map-stage::before {
+  /* A faint compass-paper grid under everything. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(color-mix(in oklab, var(--rule) 45%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--rule) 45%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.5;
+}
+
+@media (max-width: 960px) {
+  .map-stage {
+    height: min(64dvh, 560px);
+    min-height: 340px;
+  }
+}
+
+.map-svg {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+
+.map-svg.is-panning {
+  cursor: grabbing;
+}
+
+.map-svg:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -3px;
+  border-radius: var(--radius-l);
+}
+
+.map-edge {
+  stroke: color-mix(in oklab, var(--ink-3) 55%, transparent);
+  stroke-width: 1.3;
+  fill: none;
+  transition: opacity 160ms ease;
+}
+
+.map-edge-hit {
+  stroke: transparent;
+  stroke-width: 12;
+  fill: none;
+  cursor: help;
+}
+
+.map-edge.is-hot {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.map-edge.is-dim {
+  opacity: 0.12;
+}
+
+.map-arrow {
+  fill: color-mix(in oklab, var(--ink-3) 70%, transparent);
+}
+
+.map-arrow--hot {
+  fill: var(--accent);
+}
+
+.map-node {
+  cursor: pointer;
+  transition: opacity 160ms ease;
+}
+
+.map-node:focus {
+  outline: none;
+}
+
+.map-node__dot {
+  fill: var(--c);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.map-node__ring {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 2.5;
+}
+
+.map-node:hover .map-node__ring,
+.map-node:focus-visible .map-node__ring {
+  stroke: color-mix(in oklab, var(--c) 60%, var(--ink));
+}
+
+.map-node.is-focus .map-node__ring {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.map-node:focus-visible .map-node__ring {
+  stroke: var(--focus);
+  stroke-width: 3;
+}
+
+.map-node.is-dim {
+  opacity: 0.18;
+}
+
+.map-node[data-status="done"] .map-node__dot,
+.map-node[data-status="completed"] .map-node__dot,
+.map-node[data-status="abandoned"] .map-node__dot {
+  fill: color-mix(in oklab, var(--c) 35%, var(--surface));
+  stroke: var(--c);
+  stroke-dasharray: 3 2;
+}
+
+.map-labels {
+  pointer-events: none;
+}
+
+.map-label {
+  fill: var(--ink);
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--surface-sunk);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  transition: opacity 160ms ease;
+}
+
+.map-label.is-dim {
+  opacity: 0.2;
+}
+
+.map-label--focus {
+  font-size: 15px;
+  font-family: var(--font-display);
+}
+
+.map-label--rel {
+  fill: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.map-controls {
+  position: absolute;
+  left: var(--space-3);
+  top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius);
+  border: 1px solid var(--rule);
+  background: color-mix(in oklab, var(--surface-2) 92%, transparent);
+  box-shadow: var(--shadow-2);
+}
+
+.map-controls .btn {
+  min-height: 34px;
+  width: 34px;
+}
+
+.map-hint {
+  position: absolute;
+  left: var(--space-3);
+  bottom: var(--space-3);
+  max-width: calc(100% - 24px);
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--surface-2) 85%, transparent);
+  font-size: 0.8rem;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+
+.map-card {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 10;
+  width: min(330px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+  padding: var(--space-4);
+  border-top: 3px solid var(--c);
+  animation: dialog-in 160ms ease-out;
+}
+
+.map-card::after {
+  display: none;
+}
+
+.map-card h2 {
+  margin: var(--space-2) 0 var(--space-1);
+  font-size: 1.2rem;
+  overflow-wrap: anywhere;
+}
+
+.map-card__rels {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3) 0 0;
+  border-top: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.92rem;
+}
+
+.map-card__rels li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.map-card__rel {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--ink-3);
+}
+
+.nodebtn {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  border-bottom: 1px dotted color-mix(in oklab, var(--ink-3) 60%, transparent);
+}
+
+.nodebtn:hover {
+  color: var(--link);
+}
+
+@media (max-width: 720px) {
+  .map-card {
+    position: relative;
+    top: auto;
+    right: auto;
+    width: 100%;
+    max-height: none;
+    margin-top: var(--space-3);
+    animation: none;
+  }
+}
+
+.edge-table td:nth-child(2) {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+  .edge-table thead {
+    display: none;
+  }
+
+  .edge-table tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px var(--space-2);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .edge-table td {
+    padding: 0;
+    border: 0;
+  }
+}
+
+/* ── Plain look ───────────────────────────────────────────────────────────
+ * The default look, after Carbon: flat layers, square corners (the radius tokens are 0 there),
+ * no gradients, shadows or ornaments, labels in sentence case at 14px or more, and long text kept
+ * to a comfortable measure. Tokens only; the codex rules above stay untouched.
+ */
+
+:root:not([data-style="codex"]) .tally .seal,
+:root:not([data-style="codex"]) .status-chip,
+:root:not([data-style="codex"]) .sheet-tag,
+:root:not([data-style="codex"]) .flag,
+:root:not([data-style="codex"]) .authority,
+:root:not([data-style="codex"]) .ledger__who,
+:root:not([data-style="codex"]) .mention__meta,
+:root:not([data-style="codex"]) .chron-entry__time,
+:root:not([data-style="codex"]) .chron-day__head .muted,
+:root:not([data-style="codex"]) .month-strip__axis,
+:root:not([data-style="codex"]) .touched,
+:root:not([data-style="codex"]) .map-hint,
+:root:not([data-style="codex"]) .map-card__rel,
+:root:not([data-style="codex"]) .codex-card__foot {
+  font-size: 0.875rem;
+}
+
+/* Small labels: the body face, semibold, sentence case. */
+:root:not([data-style="codex"]) :is(.codex-card__type, .ledger__field, .prov__body dt, .kv dt, .chron-filters__label, .ties__group dt) {
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* Italics are for emphasis, not decoration. */
+:root:not([data-style="codex"]) :is(.codex-typenote, .codex-card__aka, .codex-card__summary--empty, .sheet-head__aka, .authority, .episode--sealed) {
+  font-style: normal;
+}
+
+/* A comfortable measure for prose. */
+:root:not([data-style="codex"]) :is(.codex-typenote, .sheet-brief, .sheet-notes .prose, .mention__text, .notfound p) {
+  max-width: 70ch;
+}
+
+:root:not([data-style="codex"]) .chron-entry {
+  max-width: 80ch;
+}
+
+/* The type avatar: a plain circle in the type's color. */
+:root:not([data-style="codex"]) .sigil {
+  width: 48px;
+  height: 48px;
+  border: 0;
+  box-shadow: none;
+  font-family: var(--font-body);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+/* Codex: flat clickable tiles. */
+:root:not([data-style="codex"]) .codex-filters {
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .codex-grid {
+  gap: var(--space-4);
+}
+
+:root:not([data-style="codex"]) .codex-card {
+  padding: var(--space-4);
+  border: 1px solid var(--rule);
+  background: var(--surface-2);
+  box-shadow: none;
+  transition: background-color 110ms ease, border-color 110ms ease;
+}
+
+:root:not([data-style="codex"]) .codex-card:hover,
+:root:not([data-style="codex"]) .codex-card:focus-visible {
+  transform: none;
+  border-color: var(--accent);
+  background: var(--surface-sunk);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .codex-card__title {
+  font-family: var(--font-body);
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+:root:not([data-style="codex"]) .codex-card__foot {
+  border-top-style: solid;
+}
+
+/* Record page */
+:root:not([data-style="codex"]) .sheet-head {
+  border-top: 1px solid var(--rule);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .ledger__row--disputed {
+  padding-left: var(--space-3);
+  background: none;
+  box-shadow: inset 3px 0 0 var(--disputed);
+}
+
+:root:not([data-style="codex"]) .ledger__value {
+  font-family: var(--font-body);
+  font-size: 1rem;
+}
+
+:root:not([data-style="codex"]) .authority--human {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .prov__body {
+  border: 0;
+  background: var(--surface-sunk);
+}
+
+:root:not([data-style="codex"]) .ties__arrow {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+/* Steps: an upright checkbox, not a tilted diamond. */
+:root:not([data-style="codex"]) .objectives__box {
+  width: 14px;
+  height: 14px;
+  transform: translateY(2px);
+  border: 1px solid var(--ink-2);
+  border-radius: 0;
+}
+
+:root:not([data-style="codex"]) .objectives li[data-done] .objectives__box {
+  border-color: var(--ink);
+  background: var(--ink);
+}
+
+:root:not([data-style="codex"]) .notfound > svg {
+  color: var(--ink-3);
+}
+
+/* Timeline */
+:root:not([data-style="codex"]) a.month-strip__day {
+  background: color-mix(in oklab, var(--accent) calc(var(--heat, 0) * 100%), var(--surface-2));
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--rule));
+}
+
+:root:not([data-style="codex"]) .month-strip__day {
+  border-radius: 0;
+}
+
+:root:not([data-style="codex"]) .chron-filters__label {
+  min-width: 64px;
+}
+
+:root:not([data-style="codex"]) .chron-day__head {
+  background: var(--bg);
+  backdrop-filter: none;
+}
+
+:root:not([data-style="codex"]) .chron-day__head h2 {
+  font-family: var(--font-body);
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .chron-entry.is-target {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+  animation: none;
+}
+
+/* Connections: a plain canvas, labels in the body face. */
+:root:not([data-style="codex"]) .map-stage {
+  background: var(--surface);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .map-stage::before {
+  display: none;
+}
+
+:root:not([data-style="codex"]) .map-label {
+  font-family: var(--font-body);
+  font-weight: 400;
+  stroke: var(--surface);
+}
+
+:root:not([data-style="codex"]) .map-label--focus {
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .map-label--rel {
+  font-family: var(--font-body);
+  font-size: 12px;
+}
+
+:root:not([data-style="codex"]) .map-controls {
+  padding: 0;
+  gap: 0;
+  background: var(--surface-2);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .map-hint {
+  border-radius: 0;
+  background: var(--surface-2);
+}
+
+:root:not([data-style="codex"]) .map-card {
+  border-top: 1px solid var(--rule);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .map-card h2 {
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .map-card__rel,
+:root:not([data-style="codex"]) .edge-table td:nth-child(2) {
+  font-family: var(--font-body);
+}
+
+:root:not([data-style="codex"]) .map-find__list {
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .nodebtn {
+  color: var(--link);
+  font-weight: 400;
+  border-bottom: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* View switch: a content switcher, the selected side filled. */
+:root:not([data-style="codex"]) .seg {
+  padding: 0;
+  background: none;
+}
+
+:root:not([data-style="codex"]) .seg button {
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  border-radius: 0;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .seg button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--ink-inverse);
+  box-shadow: none;
+}
+
+/* Connection list: a data table with a shaded header and clear rows. */
+:root:not([data-style="codex"]) .edge-table th {
+  background: var(--surface-sunk);
+  color: var(--ink);
+  font-weight: 600;
+  padding: var(--space-3) var(--space-4);
+}
+
+@media (min-width: 601px) {
+  :root:not([data-style="codex"]) .edge-table td {
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--rule);
+  }
+}
+
+:root:not([data-style="codex"]) .edge-table td:nth-child(2) {
+  font-size: 0.875rem;
+}
+
+:root:not([data-style="codex"]) .edge-table tbody tr:hover {
+  background: var(--surface-sunk);
+}

@@ -1,0 +1,9 @@
+---
+import Shell from "../layouts/Shell.astro";
+import SatchelView from "../islands/SatchelView.tsx";
+import "../styles/setup.css";
+import "../styles/hosted.css";
+---
+<Shell title="Satchel" page="satchel">
+  <SatchelView client:only="react" />
+</Shell>

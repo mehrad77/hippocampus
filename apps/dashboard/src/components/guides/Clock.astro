@@ -1,0 +1,28 @@
+---
+import { clockSegments } from "../../lib/clock.ts";
+
+/** A static Blades-style clock with its caption, drawn like the Quest board's dials. */
+interface Props {
+  name: string;
+  segments: number;
+  filled: number;
+  deadline?: string;
+  size?: number;
+}
+const { name, segments, filled, deadline, size = 76 } = Astro.props;
+const r = size / 2 - 3;
+const paths = clockSegments(segments, r, size / 2);
+const shown = Math.max(0, Math.min(filled, segments));
+const label = `${name}: ${shown} of ${segments}${deadline ? `, due ${deadline}` : ""}`;
+---
+<figure class="guide-clock">
+  <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} class="clock" role="img" aria-label={label}>
+    <circle cx={size / 2} cy={size / 2} r={r + 1.5} class="clock__rim" />
+    {paths.map((d, i) => <path d={d} class:list={["clock__seg", { "clock__seg--on": i < shown }]} />)}
+  </svg>
+  <figcaption>
+    <strong>{name}</strong>
+    <span class="mono">{"■".repeat(shown)}{"□".repeat(segments - shown)} {shown}/{segments}</span>
+    {deadline && <span class="muted small">due {deadline}</span>}
+  </figcaption>
+</figure>

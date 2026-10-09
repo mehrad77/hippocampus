@@ -1,0 +1,99 @@
+---
+title: How Hippocampus works
+summary: The loop at the heart of it all. Agents remember, the party sleeps, canon is written, and you rule on what's contested.
+order: 1
+section: Basics
+sigil: brain
+---
+import LoopDiagram from "../../components/guides/LoopDiagram.astro";
+import Aside from "../../components/guides/Aside.astro";
+import Link from "../../components/guides/Link.astro";
+
+Hippocampus is **one shared, curated memory for a party of AI agents**. Picture a residency agent, a campus agent, a home finder and a job scout, all working on the same move to Lisbon. Without shared memory, each keeps its own notes and the facts drift apart: two appointment dates, three spellings of one email address. Hippocampus gives them one memory. It's an Obsidian vault laid out like a tabletop campaign wiki, and a curator keeps it honest.
+
+The name describes the mechanism. Agents write fast, raw *episodic* memories. Every night Hippocampus **sleeps** and consolidates them into *semantic* memory: canonical notes about characters, factions, places, items, lore and quests.
+
+<LoopDiagram />
+
+## The loop in five beats
+
+1. **Agents remember.** An agent calls `remember` over MCP (a local tool without MCP can write one new file to `inbox/<agent-id>/` instead). It returns at once, without waiting for any model.
+2. **The inbox holds it.** New episodes are unverified but not invisible. `recall` returns matching ones under `pending`, and the dashboard's Satchel lists them all.
+3. **The party sleeps.** On a schedule, the curator takes a batch of episodes, oldest first: `hippo sleep` with a model of your choice, or an agent you trust answering the server's questions. It works out what each one is about, extracts the claims, and reconciles them with what's already known. See <Link guide="nightly-sleep">The curator</Link>.
+4. **Canon, chronicle, disputes.** Accepted facts land in entity notes with a status and their provenance. Each episode is appended to the day's chronicle, then removed from the inbox. Contradictions the rules can't settle become dispute notes.
+5. **You rule.** You are the player. In the Council, or by writing `ruling:` in a dispute note, you decide what's true, and your word outranks every agent.
+
+Agents read canon back whenever they like, with `recall`, `get`, `ask_canon` and `briefing`. Quest progress has a fast lane too: `update_quest` edits a quest note directly instead of waiting for the next sleep.
+
+## Small steps, strict schemas
+
+The curator doesn't hand the vault to a language model. Each model call is small, and its answer must match a strict schema (zod). Invalid answers are retried with the errors fed back. Then deterministic code applies the result. **The model never writes a file.**
+
+| Step | Who | What happens |
+| --- | --- | --- |
+| Rulings | code | Applies `ruling:` values you wrote into dispute notes |
+| Mentions | model | Lists the entities an episode says something about |
+| Resolve | code, then model | Matches by name and alias first; otherwise the model picks from search candidates or says "new" |
+| Claims | model | Extracts facts, relations and quest progress about the resolved entities |
+| Reconcile | code | Decides rumor, canon, keep or dispute, by fixed precedence rules |
+| Chronicle | code | Appends the episode to the day's log (secrets redacted) and clears it from the inbox |
+| Summaries | model | Refreshes the summary paragraph of each touched note |
+
+Small steps are what let a local model, for example in LM Studio or Ollama, do the job overnight. Status decisions never depend on the model's mood: they come from <Link guide="precedence-and-disputes">the precedence table</Link>.
+
+<Aside kind="lore" title="Why a TTRPG wiki?">
+
+A campaign wiki already has the right ideas. Canon versus rumor, quests with objectives, progress clocks, a party with roles, a chronicle of sessions, and a game master who narrates. Hippocampus borrows them because they do real work, not for decoration.
+
+</Aside>
+
+## What lives in the vault
+
+The vault is a plain folder of markdown, usually a **private** git repo you open in Obsidian.
+
+| Folder | Holds |
+| --- | --- |
+| `characters/` `factions/` `locations/` `items/` `lore/` | Canon entities, e.g. `factions/migration-agency.md` |
+| `quests/` `campaigns/` | Goals and arcs: `quests/residence-permit.md`, `campaigns/lisbon-arc.md` |
+| `party/` | The agents, one sheet each: `party/home-finder.md` |
+| `chronicle/` | The day-by-day log of consolidated episodes |
+| `inbox/` | Episodes waiting for the next sleep |
+| `disputes/` | Contradictions waiting for your ruling |
+| `secrets/` | Encrypted secret values, one `.age` file per field |
+| `_hippo/` | `config.yaml`, Obsidian templates, Dataview dashboards, the morning review |
+| `HANDBOOK.md` | The agents' handbook, regenerated on every sleep |
+
+An episode is a small markdown file:
+
+```markdown
+---
+agent: residency-agent
+kind: fact
+at: 2026-09-27T14:03:00+01:00
+about: ["[[residence-permit]]", "Agência de Migração"]
+---
+The Agência de Migração appointment moved to 2026-10-14 10:30 at the Alfama office.
+```
+
+## Who writes what
+
+- **Agents** only add new files to `inbox/`, through MCP or GitHub. They never edit canon directly. The one exception is `update_quest`, a structured edit to a quest's objectives, status and clocks.
+- **The curator** writes canon notes, the chronicle, disputes, `HANDBOOK.md` and `_hippo/review.md`. Its git commits are signed *Hippocampus*.
+- **You** can edit anything. The curator rewrites only the managed regions of a note, the parts between `%% hippo:begin … %%` and `%% hippo:end … %%`, plus the `facts` and `relations` properties. Everything else, such as your `## Notes`, is never touched.
+
+Because agents only ever add new files, their writes never collide, and git stays the source of truth. Any search index can be rebuilt from the vault.
+
+## A short glossary
+
+| Term | Meaning |
+| --- | --- |
+| Episode | One raw memory from one agent, waiting in the inbox |
+| Canon | Accepted truth; agents may rely on it |
+| Rumor | Reported, not yet verified; check before acting |
+| Dispute | Sources disagree; the human must rule |
+| Lane | An agent's job, and the domains it has authority over |
+| Chronicle | The append-only log of what happened, day by day |
+| Sleep | The nightly consolidation pass |
+| Clock | A segmented progress meter on a quest |
+
+Next, see how a single fact earns its status in <Link guide="facts-and-status">Facts and their status</Link>.

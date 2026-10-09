@@ -16,4 +16,9 @@ if (bad.length) {
   console.error(`✗ unexpected files in package:\n${bad.join("\n")}`);
   process.exit(1);
 }
+// `hippo dashboard` serves the UI from the package; without it the command only shows a "not built" page.
+if (!files.includes("package/dist/dashboard/index.html")) {
+  console.error("✗ package/dist/dashboard/index.html is missing: the dashboard UI wasn't built into the package");
+  process.exit(1);
+}
 console.log(`✓ ${files.length} files, no vault data (${tarball})`);
