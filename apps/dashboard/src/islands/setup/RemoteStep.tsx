@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { postJson } from "../../lib/api.ts";
 import { toast } from "../../lib/events.ts";
+import { useTerms } from "../../lib/prefs.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Effects, ErrorCallout, Field, JobRunner, refreshSetup, Snippets, StateBadge, useAction } from "./common.tsx";
 import { EMBED_PROVIDERS, normalizeUrl, providerDef, workerDeploySteps, type StepProps } from "./model.ts";
@@ -113,6 +114,7 @@ function ReachRow({ ok, label, detail }: { ok: boolean; label: string; detail: s
 }
 
 function DeployGuide({ url, open }: { url: string; open: boolean }) {
+  const { v } = useTerms();
   const steps = workerDeploySteps(url);
   return (
     <details className="sz-more sz-deploy" open={open}>
@@ -120,7 +122,8 @@ function DeployGuide({ url, open }: { url: string; open: boolean }) {
         <Icon name="cloud" size={18} /> Deploy a Worker <span className="small muted">· about 15 minutes, on Cloudflare's free plan</span>
       </summary>
       <p className="small">
-        The Worker reads your private vault repository through GitHub's API, keeps its search index in D1, and writes every memory as one commit. It doesn't run the nightly sleep, so keep the one on this machine.
+        The Worker reads your private vault repository through GitHub's API, keeps its search index in D1, and writes every memory as one commit.{" "}
+        {v("It doesn't run the nightly update, so keep the one on this machine.", "It doesn't run the nightly sleep, so keep the one on this machine.")}
       </p>
       <ol className="sz-deploy__steps">
         {steps.map((s) => (
@@ -136,6 +139,7 @@ function DeployGuide({ url, open }: { url: string; open: boolean }) {
 }
 
 function Embeddings({ status, savedUrl, hasVault }: { status: StepProps["status"]; savedUrl: string; hasVault: boolean }) {
+  const { v } = useTerms();
   const saved = status.remote.embed;
   const [provider, setProvider] = useState(saved?.provider ?? (saved?.model ? "lmstudio" : "off"));
   const [model, setModel] = useState(saved?.model ?? "");
@@ -159,17 +163,17 @@ function Embeddings({ status, savedUrl, hasVault }: { status: StepProps["status"
     const res = await save.run(() => postJson<{ ok: boolean }>("/setup/remote", savedUrl ? { workerUrl: savedUrl, embed } : { embed }));
     if (!res) return;
     setApiKey("");
-    toast(off ? "Semantic recall is off: search uses keywords." : "Embedding settings saved. Rebuild the index to use them.", "ok");
+    toast(off ? v("Search by meaning is off: search uses keywords.", "Semantic recall is off: search uses keywords.") : "Embedding settings saved. Rebuild the index to use them.", "ok");
     void refreshSetup();
   };
 
   return (
     <section className="stack" aria-labelledby="sz-embed-h">
       <h3 className="sz-subhead" id="sz-embed-h">
-        Semantic recall
+        {v("Search by meaning", "Semantic recall")}
       </h3>
       <p className="small">
-        With an embedding model, recall also finds notes by meaning (“accommodation” finds the apartment hunt), not just by keyword. Notes are embedded once, and again only when they change. A multilingual model such as bge-m3 suits vaults that mix languages.
+        With an embedding model, {v("search", "recall")} also finds notes by meaning (“accommodation” finds the apartment hunt), not just by keyword. Notes are embedded once, and again only when they change. A multilingual model such as bge-m3 suits vaults that mix languages.
       </p>
       <form
         className="stack"
@@ -221,7 +225,7 @@ function Embeddings({ status, savedUrl, hasVault }: { status: StepProps["status"
         </div>
       </form>
       <p className="small">
-        On the Worker, semantic recall is set with <code>wrangler secret put HIPPO_EMBED_PROVIDER</code> (<code>workers-ai</code> uses Cloudflare's bge-m3) or the same HIPPO_EMBED_* settings pointed at a hosted embeddings API.
+        On the Worker, {v("search by meaning", "semantic recall")} is set with <code>wrangler secret put HIPPO_EMBED_PROVIDER</code> (<code>workers-ai</code> uses Cloudflare's bge-m3) or the same HIPPO_EMBED_* settings pointed at a hosted embeddings API.
       </p>
       <h4 className="sz-subhead">Rebuild the index</h4>
       <JobRunner

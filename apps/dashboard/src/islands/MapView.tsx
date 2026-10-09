@@ -26,10 +26,12 @@ import {
   type SimNode,
   type View,
 } from "../lib/graph.ts";
+import { useTerms, type Voice } from "../lib/prefs.ts";
 import { href, param } from "../lib/routes.ts";
 import type { Graph } from "../lib/types.ts";
-import { EntityLink, TypeBadge, TypeDot } from "../ui/EntityLink.tsx";
+import { EntityLink, TypeDot } from "../ui/EntityLink.tsx";
 import { Icon } from "../ui/Icon.tsx";
+import { TypeTag, useTypeLabel } from "../ui/lore/bits.tsx";
 import { PageGate } from "../ui/PageGate.tsx";
 import { Empty, Skeleton } from "../ui/Parts.tsx";
 
@@ -42,8 +44,13 @@ export default function MapView() {
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const coarsePointer = () => window.matchMedia("(pointer: coarse)").matches;
 const short = (s: string, n = 28) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+/** Relation names read as words in the plain voice ("member of"); the codex shows them as written. */
+const relName = (rel: string, { plain }: Voice) => (plain ? rel.replace(/_/g, " ") : rel);
 
 function MapPage() {
+  const voice = useTerms();
+  const { t, v } = voice;
+  const typeLabel = useTypeLabel();
   const { data, error } = useResource<Graph>("/graph");
   const [mode, setMode] = useState<Mode>(() => (param("view") === "list" ? "list" : "map"));
   const [hidden, setHidden] = useState<Set<string>>(() => new Set((param("hide") ?? "").split(",").filter(Boolean)));
@@ -100,15 +107,18 @@ function MapPage() {
     <div className="stack" style={{ ["--gap" as string]: "18px" }}>
       <header className="page-head">
         <div>
-          <div className="page-head__kicker">Lore</div>
-          <h1>The Map</h1>
+          <div className="page-head__kicker">{t("navLore")}</div>
+          <h1>{v("Connections", "The Map")}</h1>
           <p className="page-head__lede">
-            {plural(data.nodes.length, "entity", "entities")} bound by {plural(data.edges.length, "tie")}. {mode === "map" ? "Drag to pan, scroll or pinch to zoom, and pick a node to light up its neighbors." : "Every tie, as a table."}
+            {v(
+              `${plural(data.nodes.length, "record")} and ${plural(data.edges.length, "connection")} between them. ${mode === "map" ? "Drag to move around, scroll or pinch to zoom, and select a record to highlight what it's connected to." : "Every connection, as a table."}`,
+              `${plural(data.nodes.length, "entity", "entities")} bound by ${plural(data.edges.length, "tie")}. ${mode === "map" ? "Drag to pan, scroll or pinch to zoom, and pick a node to light up its neighbors." : "Every tie, as a table."}`,
+            )}
           </p>
         </div>
         <div className="seg" role="group" aria-label="View">
           <button type="button" aria-pressed={mode === "map"} onClick={() => setMode("map")}>
-            <Icon name="map" /> Map
+            <Icon name="map" /> {v("Diagram", "Map")}
           </button>
           <button type="button" aria-pressed={mode === "list"} onClick={() => setMode("list")}>
             <Icon name="codex" /> List
@@ -118,14 +128,14 @@ function MapPage() {
 
       {data.nodes.length === 0 ? (
         <div className="panel">
-          <Empty icon="map" title="The map is blank">
-            Entities and their ties appear here once the codex has entries.
+          <Empty icon="map" title={v("No connections yet", "The map is blank")}>
+            {v("Records and how they're connected appear here once you have records.", "Entities and their ties appear here once the codex has entries.")}
           </Empty>
         </div>
       ) : (
         <>
           <div className="map-tools">
-            <FindNode nodes={data.nodes} query={query} setQuery={setQuery} onPick={select} listMode={mode === "list"} />
+            <FindNode nodes={data.nodes} query={query} setQuery={setQuery} onPick={select} listMode={mode === "list"} voice={voice} typeLabel={typeLabel} />
             <div className="chips" role="group" aria-label="Show or hide kinds">
               {types.map(([t, n]) => (
                 <button
@@ -133,7 +143,7 @@ function MapPage() {
                   type="button"
                   className={`chip chip--toggle typed typed--${t}`}
                   aria-pressed={!hidden.has(t)}
-                  title={hidden.has(t) ? `Show ${t}` : `Hide ${t}`}
+                  title={hidden.has(t) ? `Show ${typeLabel(t)}` : `Hide ${typeLabel(t)}`}
                   onClick={() =>
                     setHidden((h) => {
                       const next = new Set(h);
@@ -144,7 +154,7 @@ function MapPage() {
                   }
                 >
                   <TypeDot type={t} />
-                  {t} <span className="chip__count">{n}</span>
+                  {typeLabel(t)} <span className="chip__count">{n}</span>
                 </button>
               ))}
               {hidden.size > 0 && (
@@ -157,11 +167,11 @@ function MapPage() {
 
           {mode === "map" ? (
             <div className="map-wrap">
-              <MapCanvas graph={visible} merged={merged} focus={live?.slug ?? null} onFocus={setFocus} flyTo={flyTo} />
-              {live && <FocusCard node={live} graph={data} byslug={byslug} hidden={hidden} onPick={select} onClose={() => setFocus(null)} onCenter={() => setFlyTo((f) => ({ slug: live.slug, seq: (f?.seq ?? 0) + 1 }))} />}
+              <MapCanvas graph={visible} merged={merged} focus={live?.slug ?? null} onFocus={setFocus} flyTo={flyTo} voice={voice} typeLabel={typeLabel} />
+              {live && <FocusCard node={live} graph={data} byslug={byslug} hidden={hidden} onPick={select} onClose={() => setFocus(null)} onCenter={() => setFlyTo((f) => ({ slug: live.slug, seq: (f?.seq ?? 0) + 1 }))} voice={voice} typeLabel={typeLabel} />}
             </div>
           ) : (
-            <EdgeTable graph={visible} byslug={byslug} query={query} />
+            <EdgeTable graph={visible} byslug={byslug} query={query} voice={voice} />
           )}
         </>
       )}
@@ -170,7 +180,7 @@ function MapPage() {
 }
 
 /** The search box: a small combobox that flies the map to a node (or filters the list). */
-function FindNode({ nodes, query, setQuery, onPick, listMode }: { nodes: GraphNode[]; query: string; setQuery: (q: string) => void; onPick: (slug: string) => void; listMode: boolean }) {
+function FindNode({ nodes, query, setQuery, onPick, listMode, voice: { v }, typeLabel }: { nodes: GraphNode[]; query: string; setQuery: (q: string) => void; onPick: (slug: string) => void; listMode: boolean; voice: Voice; typeLabel: (type: string) => string }) {
   const [active, setActive] = useState(0);
   const [open, setOpen] = useState(false);
   const id = useId().replace(/[^\w-]/g, "");
@@ -185,7 +195,7 @@ function FindNode({ nodes, query, setQuery, onPick, listMode }: { nodes: GraphNo
     <div className="map-find">
       <label className="searchbox">
         <Icon name="search" size={18} />
-        <span className="sr-only">{listMode ? "Filter ties" : "Find a node"}</span>
+        <span className="sr-only">{listMode ? v("Filter connections", "Filter ties") : v("Find a record", "Find a node")}</span>
         <input
           className="input"
           type="search"
@@ -195,7 +205,7 @@ function FindNode({ nodes, query, setQuery, onPick, listMode }: { nodes: GraphNo
           aria-autocomplete="list"
           aria-activedescendant={show ? `${id}-${active}` : undefined}
           value={query}
-          placeholder={listMode ? "Filter ties…" : "Find a node…"}
+          placeholder={listMode ? v("Filter connections…", "Filter ties…") : v("Find a record…", "Find a node…")}
           autoComplete="off"
           spellCheck={false}
           onChange={(e) => {
@@ -215,13 +225,13 @@ function FindNode({ nodes, query, setQuery, onPick, listMode }: { nodes: GraphNo
         />
       </label>
       {show && (
-        <ul className="map-find__list" role="listbox" id={`${id}-list`} aria-label="Matching nodes">
+        <ul className="map-find__list" role="listbox" id={`${id}-list`} aria-label={v("Matching records", "Matching nodes")}>
           {matches.map((n, i) => (
             <li key={n.slug} role="none">
               <button type="button" role="option" id={`${id}-${i}`} aria-selected={i === active} data-active={i === active ? "" : undefined} tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(n.slug)} onMouseEnter={() => setActive(i)}>
                 <TypeDot type={n.type} />
                 <span>{n.title}</span>
-                <span className="small muted push">{n.type}</span>
+                <span className="small muted push">{typeLabel(n.type)}</span>
               </button>
             </li>
           ))}
@@ -231,14 +241,16 @@ function FindNode({ nodes, query, setQuery, onPick, listMode }: { nodes: GraphNo
   );
 }
 
-function relText(m: MergedEdge, title: (slug: string) => string): string {
+function relText(m: MergedEdge, title: (slug: string) => string, voice: Voice): string {
   const lines = [];
-  if (m.forward.length) lines.push(`${title(m.source)} — ${m.forward.join(", ")} → ${title(m.target)}`);
-  if (m.backward.length) lines.push(`${title(m.target)} — ${m.backward.join(", ")} → ${title(m.source)}`);
+  const rels = (xs: string[]) => xs.map((r) => relName(r, voice)).join(", ");
+  if (m.forward.length) lines.push(`${title(m.source)} — ${rels(m.forward)} → ${title(m.target)}`);
+  if (m.backward.length) lines.push(`${title(m.target)} — ${rels(m.backward)} → ${title(m.source)}`);
   return lines.join("\n");
 }
 
-function MapCanvas({ graph, merged, focus, onFocus, flyTo }: { graph: Graph; merged: MergedEdge[]; focus: string | null; onFocus: (slug: string | null) => void; flyTo: { slug: string; seq: number } | null }) {
+function MapCanvas({ graph, merged, focus, onFocus, flyTo, voice, typeLabel }: { graph: Graph; merged: MergedEdge[]; focus: string | null; onFocus: (slug: string | null) => void; flyTo: { slug: string; seq: number } | null; voice: Voice; typeLabel: (type: string) => string }) {
+  const { v } = voice;
   const uid = useId().replace(/[^\w-]/g, "");
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -516,8 +528,11 @@ function MapCanvas({ graph, merged, focus, onFocus, flyTo }: { graph: Graph; mer
         viewBox={`0 0 ${Math.max(1, w)} ${Math.max(1, h)}`}
         tabIndex={0}
         role="group"
-        aria-roledescription="relation map"
-        aria-label="Relation map. Arrow keys pan, plus and minus zoom, 0 frames everything, Escape clears the focus. Tab through the nodes and press Enter to focus one."
+        aria-roledescription={v("connections diagram", "relation map")}
+        aria-label={v(
+          "Connections diagram. Arrow keys move around, plus and minus zoom, 0 shows everything, Escape clears the selection. Tab through the records and press Enter to select one.",
+          "Relation map. Arrow keys pan, plus and minus zoom, 0 frames everything, Escape clears the focus. Tab through the nodes and press Enter to focus one.",
+        )}
         onPointerDown={onDown}
         onPointerMove={onMove}
         onPointerUp={(e) => onUp(e)}
@@ -544,7 +559,7 @@ function MapCanvas({ graph, merged, focus, onFocus, flyTo }: { graph: Graph; mer
               const marker = `url(#${uid}-${isHot ? "h" : "a"})`;
               return (
                 <g key={m.key} onPointerEnter={() => setHoverEdge(m.key)} onPointerLeave={() => setHoverEdge((k) => (k === m.key ? null : k))}>
-                  <title>{relText(m, title)}</title>
+                  <title>{relText(m, title, voice)}</title>
                   <line className="map-edge-hit" x1={x1} y1={y1} x2={x2} y2={y2} />
                   <line className={`map-edge${isHot ? " is-hot" : ""}${dim ? " is-dim" : ""}`} x1={x1} y1={y1} x2={x2} y2={y2} markerEnd={m.forward.length ? marker : undefined} markerStart={m.backward.length ? marker : undefined} />
                 </g>
@@ -565,7 +580,7 @@ function MapCanvas({ graph, merged, focus, onFocus, flyTo }: { graph: Graph; mer
                   tabIndex={0}
                   role="button"
                   aria-pressed={isFocus}
-                  aria-label={`${n.title}, ${n.type}, ${plural(n.degree, "tie")}`}
+                  aria-label={v(`${n.title}, ${typeLabel(n.type)}, ${plural(n.degree, "connection")}`, `${n.title}, ${n.type}, ${plural(n.degree, "tie")}`)}
                   onPointerDown={(e) => onNodeDown(e, n.slug)}
                   onPointerEnter={() => setHover(n.slug)}
                   onPointerLeave={() => setHover((s) => (s === n.slug ? null : s))}
@@ -593,7 +608,7 @@ function MapCanvas({ graph, merged, focus, onFocus, flyTo }: { graph: Graph; mer
             const b = store.current.get(m.target);
             if (!a || !b || a.x === undefined || b.x === undefined) return null;
             const [sx, sy] = toScreen(view, (a.x + b.x) / 2, (a.y! + b.y!) / 2);
-            const rels = [...m.forward, ...m.backward].join(" · ");
+            const rels = [...m.forward, ...m.backward].map((r) => relName(r, voice)).join(" · ");
             return (
               <text key={m.key} className="map-label map-label--rel" x={sx} y={sy - 4} textAnchor="middle">
                 {short(rels, 32)}
@@ -632,18 +647,19 @@ function MapCanvas({ graph, merged, focus, onFocus, flyTo }: { graph: Graph; mer
             autoFit.current = true;
             fit();
           }}
-          aria-label="Frame the whole map"
-          title="Frame everything (0)"
+          aria-label={v("Show everything", "Frame the whole map")}
+          title={v("Show everything (0)", "Frame everything (0)")}
         >
           <Icon name="refresh" />
         </button>
       </div>
-      {!interacted && !focus && <div className="map-hint">{coarse ? "Drag to pan · pinch to zoom · tap a node" : "Drag to pan · scroll to zoom · click a node"}</div>}
+      {!interacted && !focus && <div className="map-hint">{coarse ? v("Drag to move · pinch to zoom · tap a record", "Drag to pan · pinch to zoom · tap a node") : v("Drag to move · scroll to zoom · click a record", "Drag to pan · scroll to zoom · click a node")}</div>}
     </div>
   );
 }
 
-function FocusCard({ node, graph, byslug, hidden, onPick, onClose, onCenter }: { node: GraphNode; graph: Graph; byslug: Map<string, GraphNode>; hidden: Set<string>; onPick: (slug: string) => void; onClose: () => void; onCenter: () => void }) {
+function FocusCard({ node, graph, byslug, hidden, onPick, onClose, onCenter, voice, typeLabel }: { node: GraphNode; graph: Graph; byslug: Map<string, GraphNode>; hidden: Set<string>; onPick: (slug: string) => void; onClose: () => void; onCenter: () => void; voice: Voice; typeLabel: (type: string) => string }) {
+  const { v } = voice;
   const rels = useMemo(
     () =>
       graph.edges
@@ -654,22 +670,22 @@ function FocusCard({ node, graph, byslug, hidden, onPick, onClose, onCenter }: {
     [graph, node.slug, byslug],
   );
   return (
-    <aside className={`panel map-card typed typed--${node.type}`} aria-label={`${node.title} on the map`}>
+    <aside className={`panel map-card typed typed--${node.type}`} aria-label={v(`${node.title}: details`, `${node.title} on the map`)}>
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <TypeBadge type={node.type} />
-        <button type="button" className="btn btn--ghost btn--icon" onClick={onClose} aria-label="Clear focus" title="Clear focus (Esc)">
+        <TypeTag type={node.type} />
+        <button type="button" className="btn btn--ghost btn--icon" onClick={onClose} aria-label={v("Clear selection", "Clear focus")} title={v("Clear selection (Esc)", "Clear focus (Esc)")}>
           <Icon name="close" />
         </button>
       </div>
       <h2>{node.title}</h2>
       <div className="small muted">
-        {plural(node.degree, "tie")}
+        {v(plural(node.degree, "connection"), plural(node.degree, "tie"))}
         {node.status ? ` · ${node.status}` : ""}
         {node.tags.length ? ` · ${node.tags.map((t) => `#${t}`).join(" ")}` : ""}
       </div>
       <div className="row" style={{ marginTop: 12 }}>
         <a className="btn btn--sm btn--primary" href={href.entity(node.slug)}>
-          Open the sheet <Icon name="chevron" size={16} />
+          {v("Open record", "Open the sheet")} <Icon name="chevron" size={16} />
         </a>
         <button type="button" className="btn btn--sm" onClick={onCenter}>
           <Icon name="eye" size={16} /> Center
@@ -682,9 +698,18 @@ function FocusCard({ node, graph, byslug, hidden, onPick, onClose, onCenter }: {
               <span className="ties__arrow" aria-hidden>
                 {r.dir === "out" ? "→" : "←"}
               </span>
-              <span className="map-card__rel">{r.rel}</span>
+              <span className="map-card__rel">{relName(r.rel, voice)}</span>
               <span className="sr-only">{r.dir === "out" ? "to" : "from"}</span>
-              <button type="button" className="nodebtn" onClick={() => onPick(r.other.slug)} title={hidden.has(r.other.type) ? `${r.other.type} is hidden; picking it shows that kind again` : `Focus ${r.other.title}`}>
+              <button
+                type="button"
+                className="nodebtn"
+                onClick={() => onPick(r.other.slug)}
+                title={
+                  hidden.has(r.other.type)
+                    ? v(`${typeLabel(r.other.type)} records are hidden; selecting this shows them again`, `${r.other.type} is hidden; picking it shows that kind again`)
+                    : v(`Select ${r.other.title}`, `Focus ${r.other.title}`)
+                }
+              >
                 <TypeDot type={r.other.type} />
                 {r.other.title}
               </button>
@@ -694,7 +719,7 @@ function FocusCard({ node, graph, byslug, hidden, onPick, onClose, onCenter }: {
         </ul>
       ) : (
         <p className="small muted" style={{ marginTop: 12 }}>
-          No ties: an island on the map.
+          {v("Not connected to any other record.", "No ties: an island on the map.")}
         </p>
       )}
     </aside>
@@ -702,7 +727,8 @@ function FocusCard({ node, graph, byslug, hidden, onPick, onClose, onCenter }: {
 }
 
 /** The accessible view of the same graph: one row per tie. */
-function EdgeTable({ graph, byslug, query }: { graph: Graph; byslug: Map<string, GraphNode>; query: string }) {
+function EdgeTable({ graph, byslug, query, voice }: { graph: Graph; byslug: Map<string, GraphNode>; query: string; voice: Voice }) {
+  const { v } = voice;
   const ref = (slug: string) => byslug.get(slug) ?? { slug, title: slug, type: "other" };
   const rows = useMemo(() => {
     const all = graph.edges.map((e) => ({ ...e, a: ref(e.from), b: ref(e.to) })).sort((x, y) => x.a.title.localeCompare(y.a.title) || x.rel.localeCompare(y.rel) || x.b.title.localeCompare(y.b.title));
@@ -717,11 +743,14 @@ function EdgeTable({ graph, byslug, query }: { graph: Graph; byslug: Map<string,
       {rows.length ? (
         <div className="table-wrap">
           <table className="table edge-table">
-            <caption className="sr-only">Ties between entities{query.trim() ? `, filtered by “${query.trim()}”` : ""}</caption>
+            <caption className="sr-only">
+              {v("Connections between records", "Ties between entities")}
+              {query.trim() ? `, filtered by “${query.trim()}”` : ""}
+            </caption>
             <thead>
               <tr>
                 <th scope="col">From</th>
-                <th scope="col">Tie</th>
+                <th scope="col">{v("Relationship", "Tie")}</th>
                 <th scope="col">To</th>
               </tr>
             </thead>
@@ -732,7 +761,7 @@ function EdgeTable({ graph, byslug, query }: { graph: Graph; byslug: Map<string,
                     <EntityLink entity={r.a} />
                   </td>
                   <td>
-                    {r.rel} <span aria-hidden>→</span>
+                    {relName(r.rel, voice)} <span aria-hidden>→</span>
                   </td>
                   <td>
                     <EntityLink entity={r.b} />
@@ -743,7 +772,7 @@ function EdgeTable({ graph, byslug, query }: { graph: Graph; byslug: Map<string,
           </table>
         </div>
       ) : (
-        <Empty icon="link" title={query.trim() ? "No tie matches" : "No ties among the shown kinds"} />
+        <Empty icon="link" title={query.trim() ? v("No connection matches", "No tie matches") : v("No connections among the shown kinds", "No ties among the shown kinds")} />
       )}
       {isolated.length > 0 && !query.trim() && (
         <p className="small muted" style={{ margin: "16px 0 0" }}>

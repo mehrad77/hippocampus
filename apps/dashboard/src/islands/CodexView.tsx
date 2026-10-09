@@ -4,11 +4,12 @@ import { useResource } from "../lib/cache.ts";
 import { plural } from "../lib/format.ts";
 import { fuzzyFilter } from "../lib/fuzzy.ts";
 import { typeRank } from "../lib/graph.ts";
+import { useTerms } from "../lib/prefs.ts";
 import { href } from "../lib/routes.ts";
 import type { Catalog, EntityCard } from "../lib/types.ts";
 import { TypeDot } from "../ui/EntityLink.tsx";
 import { Icon } from "../ui/Icon.tsx";
-import { FactTally, StatusChip, plainText } from "../ui/lore/bits.tsx";
+import { FactTally, StatusChip, plainText, useTypeLabel } from "../ui/lore/bits.tsx";
 import { PageGate } from "../ui/PageGate.tsx";
 import { Empty, RelTime, Skeleton, SkeletonPanel } from "../ui/Parts.tsx";
 
@@ -55,6 +56,8 @@ export default function CodexView() {
 }
 
 function Codex() {
+  const { v } = useTerms();
+  const typeLabel = useTypeLabel();
   const { data, error } = useResource<Catalog>("/catalog");
   const [f, setF] = useState<Filters>(readFilters);
   useEffect(() => writeFilters(f), [f]);
@@ -111,10 +114,13 @@ function Codex() {
     <div className="stack" style={{ ["--gap" as string]: "20px" }}>
       <header className="page-head">
         <div>
-          <div className="page-head__kicker">Lore of {data.campaign}</div>
-          <h1>The Codex</h1>
+          <div className="page-head__kicker">{v(data.campaign, `Lore of ${data.campaign}`)}</div>
+          <h1>{v("Records", "The Codex")}</h1>
           <p className="page-head__lede">
-            {plural(data.entities.length, "entry", "entries")} across {plural(types.length, "kind")}: every person, place, faction and quest the party has written down.
+            {v(
+              `${plural(data.entities.length, "record")} of ${plural(types.length, "kind")}: the people, places, organizations and goals your agents have recorded.`,
+              `${plural(data.entities.length, "entry", "entries")} across ${plural(types.length, "kind")}: every person, place, faction and quest the party has written down.`,
+            )}
           </p>
         </div>
       </header>
@@ -123,7 +129,7 @@ function Codex() {
         <div className="lore-toolbar">
           <label className="searchbox">
             <Icon name="search" size={18} />
-            <span className="sr-only">Filter entries</span>
+            <span className="sr-only">{v("Filter records", "Filter entries")}</span>
             <input className="input" type="search" value={f.q} onChange={(e) => update({ q: e.target.value })} placeholder="Filter by name, alias or summary…" autoComplete="off" spellCheck={false} />
           </label>
           {tags.length > 0 && (
@@ -157,7 +163,7 @@ function Codex() {
           {types.map((t) => (
             <button key={t.name} type="button" className={`chip typed typed--${t.name}`} aria-pressed={f.types.includes(t.name)} onClick={() => toggleType(t.name)} title={t.description}>
               <TypeDot type={t.name} />
-              {t.name} <span className="chip__count">{t.count}</span>
+              {typeLabel(t.name)} <span className="chip__count">{t.count}</span>
             </button>
           ))}
         </div>
@@ -165,7 +171,7 @@ function Codex() {
       </section>
 
       <div className="result-line" aria-live="polite">
-        <span>{filtering ? `${shown.length} of ${plural(data.entities.length, "entry", "entries")}` : plural(shown.length, "entry", "entries")}</span>
+        <span>{filtering ? `${shown.length} of ${v(plural(data.entities.length, "record"), plural(data.entities.length, "entry", "entries"))}` : v(plural(shown.length, "record"), plural(shown.length, "entry", "entries"))}</span>
         {filtering && (
           <button type="button" className="linkish" onClick={() => setF({ q: "", types: [], tag: "", sort: f.sort === "match" ? undefined : f.sort })}>
             Clear filters
@@ -180,12 +186,12 @@ function Codex() {
           ))}
         </div>
       ) : data.entities.length ? (
-        <Empty icon="codex" title="No entry matches">
+        <Empty icon="codex" title={v("No records match", "No entry matches")}>
           Try fewer filters, or <button type="button" className="linkish" onClick={() => setF({ q: "", types: [], tag: "" })}>clear them all</button>.
         </Empty>
       ) : (
-        <Empty icon="codex" title="The codex is empty">
-          Entries appear after the curator's first sleep, or when you add notes in Obsidian.
+        <Empty icon="codex" title={v("No records yet", "The codex is empty")}>
+          {v("Records appear after the first nightly update, or when you add notes in Obsidian.", "Entries appear after the curator's first sleep, or when you add notes in Obsidian.")}
         </Empty>
       )}
     </div>
@@ -202,13 +208,14 @@ function sortCards(cards: EntityCard[], sort: Sort): EntityCard[] {
 }
 
 function CodexCard({ e }: { e: EntityCard }) {
+  const typeLabel = useTypeLabel();
   const summary = plainText(e.summary).trim();
   return (
     <a className={`codex-card typed typed--${e.type}`} href={href.entity(e.slug)}>
       <div className="codex-card__head">
         <span className="codex-card__type">
           <TypeDot type={e.type} />
-          {e.type}
+          {typeLabel(e.type)}
         </span>
         <StatusChip status={e.status} />
       </div>

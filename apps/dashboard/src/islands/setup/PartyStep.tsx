@@ -3,6 +3,7 @@ import { postJson } from "../../lib/api.ts";
 import { invalidate, useResource } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
 import { titleCase } from "../../lib/format.ts";
+import { readPrefs, useTerms } from "../../lib/prefs.ts";
 import type { Catalog, Overview, PartyMember } from "../../lib/types.ts";
 import { EntityLink } from "../../ui/EntityLink.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -21,12 +22,13 @@ interface NewMember {
 /** `POST actions/party` (the main API, so it works wherever the source can add members), then refresh what shows the party. */
 export async function addPartyMember(body: NewMember): Promise<{ slug: string; path: string }> {
   const res = await postJson<{ slug: string; path: string }>("/actions/party", body);
-  toast(`${body.title} joined the party (${res.path}).`, "ok");
+  toast(readPrefs().look === "codex" ? `${body.title} joined the party (${res.path}).` : `Added ${body.title} as an agent (${res.path}).`, "ok");
   void invalidate((k) => k.startsWith("/overview") || k.startsWith("/catalog") || k.startsWith("/setup") || k.startsWith("/entity"));
   return res;
 }
 
 export function PartyStep({ session, status }: StepProps) {
+  const { v } = useTerms();
   const overview = useResource<Overview>("/overview");
   const catalog = useResource<Catalog>("/catalog");
   const [prefill, setPrefill] = useState<string>();
@@ -41,7 +43,13 @@ export function PartyStep({ session, status }: StepProps) {
       <Effects
         items={[
           ["writes", <>one note per agent, <code>party/&lt;id&gt;.md</code>, in the vault, signed by you. It's an ordinary note: change it in Obsidian any time.</>],
-          ["never", "gives an agent authority you didn't tick. Without authority, an agent's word stays a rumor until something corroborates it."],
+          [
+            "never",
+            v(
+              "gives an agent authority you didn't tick. Without authority, what an agent reports stays unverified until another source confirms it.",
+              "gives an agent authority you didn't tick. Without authority, an agent's word stays a rumor until something corroborates it.",
+            ),
+          ],
         ]}
       />
 
@@ -54,7 +62,7 @@ export function PartyStep({ session, status }: StepProps) {
         }}
       />
 
-      <h3 className="sz-subhead">Around the table</h3>
+      <h3 className="sz-subhead">{v("Your agents", "Around the table")}</h3>
       {overview.error && !overview.data ? (
         <ErrorCallout error={overview.error} onRetry={() => void overview.reload()} />
       ) : !overview.data ? (
@@ -62,19 +70,21 @@ export function PartyStep({ session, status }: StepProps) {
       ) : members.length ? (
         <MemberList members={members} />
       ) : (
-        <Empty icon="party" title="No one at the table yet">
+        <Empty icon="party" title={v("No agents yet", "No one at the table yet")}>
           Add your first agent below.
         </Empty>
       )}
 
-      <h3 className="sz-subhead">Add a party member</h3>
+      <h3 className="sz-subhead">{v("Add an agent", "Add a party member")}</h3>
       <div ref={formRef}>
         {canAdd ? (
           <AddMember key={prefill ?? ""} initialId={prefill} domains={domains} taken={taken} />
         ) : (
           <div className="callout callout--warn">
             <Icon name="warn" />
-            <div>This vault can't take new party members from the dashboard. Add a note to <code>party/</code> in Obsidian instead.</div>
+            <div>
+              {v("This vault can't add agents from the dashboard.", "This vault can't take new party members from the dashboard.")} Add a note to <code>party/</code> in Obsidian instead.
+            </div>
           </div>
         )}
       </div>
@@ -83,6 +93,7 @@ export function PartyStep({ session, status }: StepProps) {
 }
 
 export function UnknownAgents({ ids, canAdd, onCustomize }: { ids: readonly string[]; canAdd: boolean; onCustomize?: (id: string) => void }) {
+  const { v } = useTerms();
   const action = useAction();
   const [adding, setAdding] = useState<string>();
   if (!ids.length) return null;
@@ -91,9 +102,16 @@ export function UnknownAgents({ ids, canAdd, onCustomize }: { ids: readonly stri
       <Icon name="party" />
       <div className="stack sz-tight">
         <strong>
-          {ids.length === 1 ? "A stranger writes to the inbox" : `${ids.length} strangers write to the inbox`}
+          {ids.length === 1
+            ? v("An unknown agent sends notes to the inbox", "A stranger writes to the inbox")
+            : v(`${ids.length} unknown agents send notes to the inbox`, `${ids.length} strangers write to the inbox`)}
         </strong>
-        <span className="small">These agents filed memories but have no party note, so their word counts as rumor. Give them a seat:</span>
+        <span className="small">
+          {v(
+            "These agents sent notes but aren't set up as agents yet, so what they report stays unverified. Add them:",
+            "These agents filed memories but have no party note, so their word counts as rumor. Give them a seat:",
+          )}
+        </span>
         <ul className="sz-strangers">
           {ids.map((id) => (
             <li key={id}>
@@ -129,6 +147,7 @@ export function UnknownAgents({ ids, canAdd, onCustomize }: { ids: readonly stri
 }
 
 function MemberList({ members }: { members: readonly PartyMember[] }) {
+  const { v } = useTerms();
   return (
     <ul className="list sz-members">
       {members.map((p) => (
@@ -150,7 +169,7 @@ function MemberList({ members }: { members: readonly PartyMember[] }) {
                 ))}
               </>
             ) : (
-              <span className="muted">No authority yet: its word is a rumor until corroborated.</span>
+              <span className="muted">{v("No authority yet: what it reports stays unverified until another source confirms it.", "No authority yet: its word is a rumor until corroborated.")}</span>
             )}
             {p.host && <span className="muted">· runs in {p.host}</span>}
           </div>
@@ -161,6 +180,7 @@ function MemberList({ members }: { members: readonly PartyMember[] }) {
 }
 
 function AddMember({ initialId, domains, taken }: { initialId?: string; domains: readonly string[]; taken: readonly string[] }) {
+  const { v } = useTerms();
   const [id, setId] = useState(initialId ?? "");
   const [title, setTitle] = useState(initialId ? titleCase(initialId) : "");
   const [lane, setLane] = useState("");
@@ -195,13 +215,13 @@ function AddMember({ initialId, domains, taken }: { initialId?: string; domains:
       }}
     >
       <div className="sz-form">
-        <Field label="Id" hint="How it signs its memories. Lowercase letters, digits and dashes." problem={tried || cleanId ? problem : undefined}>
+        <Field label="Id" hint={v("How it signs its notes. Lowercase letters, digits and dashes.", "How it signs its memories. Lowercase letters, digits and dashes.")} problem={tried || cleanId ? problem : undefined}>
           {(f) => <input id={f.id} className="input mono" value={id} onChange={(e) => setId(e.target.value.toLowerCase())} aria-describedby={f.describedBy} aria-invalid={f.invalid} placeholder="residency-agent" autoComplete="off" spellCheck={false} />}
         </Field>
-        <Field label="Name" hint="Shown on its character sheet.">
+        <Field label="Name" hint={v("Shown on its profile.", "Shown on its character sheet.")}>
           {(f) => <input id={f.id} className="input" value={title} onChange={(e) => setTitle(e.target.value)} aria-describedby={f.describedBy} placeholder={cleanId ? titleCase(cleanId) : "Residency Agent"} maxLength={120} />}
         </Field>
-        <Field label="Lane (optional)" hint="What it handles, in a sentence." wide>
+        <Field label={v("Role (optional)", "Lane (optional)")} hint="What it handles, in a sentence." wide>
           {(f) => <input id={f.id} className="input" value={lane} onChange={(e) => setLane(e.target.value)} aria-describedby={f.describedBy} placeholder="Visa, residence permit and the migration agency" maxLength={500} />}
         </Field>
         <div className="field sz-wide">
@@ -222,7 +242,7 @@ function AddMember({ initialId, domains, taken }: { initialId?: string; domains:
               This vault has no domains yet. Add some under <code>domains</code> in <code>_hippo/config.yaml</code>.
             </span>
           )}
-          <span className="hint">Where its word becomes canon on its own. Yours still outranks it.</span>
+          <span className="hint">{v("Topics where its reports count as confirmed on their own. Your edits still outrank it.", "Where its word becomes canon on its own. Yours still outranks it.")}</span>
         </div>
         <Field label="Runs in (optional)" hint="The app or machine it lives in, as a reminder.">
           {(f) => <input id={f.id} className="input" value={host} onChange={(e) => setHost(e.target.value)} aria-describedby={f.describedBy} placeholder="Claude Desktop" maxLength={120} />}
@@ -231,7 +251,7 @@ function AddMember({ initialId, domains, taken }: { initialId?: string; domains:
       {action.error !== undefined && <ErrorCallout error={action.error} />}
       <div className="row">
         <button type="submit" className="btn btn--primary" disabled={action.busy}>
-          <Icon name="party" /> {action.busy ? "Adding…" : "Add to the party"}
+          <Icon name="party" /> {action.busy ? "Adding…" : v("Add the agent", "Add to the party")}
         </button>
         {cleanId && !problem && (
           <span className="hint">

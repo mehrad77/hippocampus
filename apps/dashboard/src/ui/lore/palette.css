@@ -214,3 +214,60 @@
     display: none;
   }
 }
+
+/* Plain look (the default): flat, square and readable; the codex keeps the rules above. */
+
+:root:not([data-style="codex"]) .palette {
+  border-color: var(--rule);
+}
+
+:root:not([data-style="codex"]) .palette::backdrop {
+  backdrop-filter: none;
+}
+
+:root:not([data-style="codex"]) .palette__head {
+  background: var(--surface);
+}
+
+:root:not([data-style="codex"]) .palette__head > svg {
+  color: var(--ink-3);
+}
+
+:root:not([data-style="codex"]) .palette__input::placeholder {
+  font-style: normal;
+}
+
+:root:not([data-style="codex"]) .palette__esc {
+  border-bottom-width: 1px;
+  border-radius: 0;
+  font-size: 0.875rem;
+}
+
+:root:not([data-style="codex"]) .palette__section {
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .palette__spin {
+  border-color: var(--rule);
+  border-top-color: var(--accent);
+}
+
+:root:not([data-style="codex"]) .pal-opt {
+  padding: var(--space-2) var(--space-4);
+}
+
+:root:not([data-style="codex"]) .pal-opt.is-active {
+  background: var(--surface-sunk);
+}
+
+:root:not([data-style="codex"]) :is(.pal-opt__sub, .pal-opt__hint, .palette__foot) {
+  font-size: 0.875rem;
+}
+
+:root:not([data-style="codex"]) .palette__empty strong {
+  font-family: var(--font-body);
+  font-weight: 600;
+}

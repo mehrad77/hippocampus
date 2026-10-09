@@ -5,6 +5,7 @@
 }
 
 html {
+  font-size: calc(100% * var(--text-scale));
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
   scroll-padding-top: 80px;
@@ -14,8 +15,8 @@ body {
   margin: 0;
   min-height: 100dvh;
   font-family: var(--font-body);
-  font-size: 18px;
-  line-height: 1.5;
+  font-size: var(--text-body);
+  line-height: var(--leading);
   font-variant-numeric: lining-nums;
   color: var(--ink);
   background-color: var(--bg);
@@ -24,8 +25,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Paper grain: an SVG noise tile, kept faint so text stays crisp. */
-body::before {
+/* Paper grain (codex look only): an SVG noise tile, kept faint so text stays crisp. */
+:root[data-style="codex"] body::before {
   content: "";
   position: fixed;
   inset: 0;
@@ -36,12 +37,12 @@ body::before {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .35  0 0 0 0 .25  0 0 0 0 .12  0 0 0 .55 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
 }
 
-:root[data-theme="candlelit"] body::before {
+:root[data-style="codex"][data-theme="dark"] body::before {
   mix-blend-mode: screen;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:where(:not([data-theme="parchment"])) body::before {
+  :root[data-style="codex"]:where(:not([data-theme="light"])) body::before {
     mix-blend-mode: screen;
   }
 }
@@ -51,9 +52,9 @@ h2,
 h3,
 h4 {
   font-family: var(--font-display);
-  font-weight: 600;
-  line-height: 1.15;
-  letter-spacing: 0.02em;
+  font-weight: var(--heading-weight);
+  line-height: 1.2;
+  letter-spacing: var(--heading-tracking);
   margin: 0 0 var(--space-3);
   color: var(--ink);
   text-wrap: balance;
@@ -494,4 +495,10 @@ textarea {
 
 .navlink__badge[data-badge="satchel"] {
   background: var(--gold);
+}
+
+/* Wording that differs between the looks is rendered twice in static pages; CSS shows the right one. */
+:root:not([data-style="codex"]) .lbl-codex,
+:root[data-style="codex"] .lbl-plain {
+  display: none !important;
 }

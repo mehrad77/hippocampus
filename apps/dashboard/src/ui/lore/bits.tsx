@@ -1,6 +1,8 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useResource } from "../../lib/cache.ts";
 import { titleCase } from "../../lib/format.ts";
+import { useTerms } from "../../lib/prefs.ts";
+import { kindLabel, typeLabel } from "../../lib/terms.ts";
 import { href } from "../../lib/routes.ts";
 import type { Catalog, FactStatus, Ref } from "../../lib/types.ts";
 import { EntityLink, TypeDot } from "../EntityLink.tsx";
@@ -12,28 +14,46 @@ export function plainText(text: string): string {
   return text.replace(LINK, (_m, target: string, alias?: string) => (alias ?? target).trim());
 }
 
-const TALLY: [FactStatus, string, string][] = [
-  ["canon", "✓", "canon"],
-  ["rumor", "?", "rumors"],
-  ["disputed", "!", "disputed"],
-  ["retconned", "✕", "retconned"],
+export { kindLabel, typeLabel } from "../../lib/terms.ts";
+
+/** `type → label` in the reader's voice. */
+export function useTypeLabel(): (type: string) => string {
+  const { plain } = useTerms();
+  return useCallback((type: string) => typeLabel(type, plain), [plain]);
+}
+
+/** `episode kind → label` in the reader's voice. */
+export function useKindLabel(): (kind: string) => string {
+  const { plain } = useTerms();
+  return useCallback((kind: string) => kindLabel(kind, plain), [plain]);
+}
+
+const TALLY: [FactStatus, string, [plain: string, codex: string]][] = [
+  ["canon", "✓", ["confirmed", "canon"]],
+  ["rumor", "?", ["unverified", "rumors"]],
+  ["disputed", "!", ["disputed", "disputed"]],
+  ["retconned", "✕", ["replaced", "retconned"]],
 ];
 
 /** A card's facts by status as tiny seals (glyph + count, the word in the tooltip and for screen readers). */
 export function FactTally({ facts }: { facts: Record<FactStatus, number> }) {
+  const { v } = useTerms();
   const shown = TALLY.filter(([s]) => facts[s] > 0);
   if (!shown.length) return <span className="small muted">no facts yet</span>;
   return (
     <span className="tally">
-      {shown.map(([s, glyph, word]) => (
-        <span key={s} className={`seal seal--${s}`} title={`${facts[s]} ${word}`}>
-          <span className="seal__glyph" aria-hidden>
-            {glyph}
+      {shown.map(([s, glyph, words]) => {
+        const word = v(...words);
+        return (
+          <span key={s} className={`seal seal--${s}`} title={`${facts[s]} ${word}`}>
+            <span className="seal__glyph" aria-hidden>
+              {glyph}
+            </span>
+            {facts[s]}
+            <span className="sr-only"> {word}</span>
           </span>
-          {facts[s]}
-          <span className="sr-only"> {word}</span>
-        </span>
-      ))}
+        );
+      })}
     </span>
   );
 }
@@ -55,17 +75,31 @@ export function SlugLink({ slug, refs, fallbackType = "other" }: { slug: string;
  * party note (an unknown agent) stays plain text instead of linking to a missing page.
  */
 export function AgentLink({ agent, refs }: { agent: string; refs?: Map<string, Ref> }) {
-  if (refs?.size && !refs.has(agent)) return <span title="No party note for this agent">{agent}</span>;
+  const { v } = useTerms();
+  if (refs?.size && !refs.has(agent)) return <span title={v("Not set up as an agent", "No party note for this agent")}>{agent}</span>;
   return <SlugLink slug={agent} refs={refs ?? new Map()} fallbackType="party" />;
 }
 
 /** "quest" chip with its type dot, linking to the Codex filtered to that type. */
 export function TypeLink({ type }: { type: string }) {
+  const { plain, v } = useTerms();
+  const label = typeLabel(type, plain);
   return (
-    <a className={`chip typed typed--${type}`} href={href.codex(type)} title={`All ${type} entries`}>
+    <a className={`chip typed typed--${type}`} href={href.codex(type)} title={v(`All ${label} records`, `All ${type} entries`)}>
       <TypeDot type={type} />
-      {type}
+      {label}
     </a>
+  );
+}
+
+/** A type chip (no link) in the reader's voice. */
+export function TypeTag({ type }: { type: string }) {
+  const label = useTypeLabel()(type);
+  return (
+    <span className={`chip typed typed--${type}`}>
+      <TypeDot type={type} />
+      {label}
+    </span>
   );
 }
 

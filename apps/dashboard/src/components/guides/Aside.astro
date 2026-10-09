@@ -1,5 +1,7 @@
 ---
 import NavIcon from "../../ui/NavIcon.astro";
+import Term from "../../ui/Term.astro";
+import { nextId } from "./ids.ts";
 import type { IconName } from "../../lib/icons.ts";
 
 /**
@@ -11,18 +13,20 @@ interface Props {
   title?: string;
 }
 const { kind = "lore", title } = Astro.props;
-const LOOK: Record<NonNullable<Props["kind"]>, { icon: IconName; title: string; tone: string }> = {
-  lore: { icon: "scroll", title: "From the lore", tone: "" },
-  tip: { icon: "sparkle", title: "Game master's tip", tone: "callout--ok" },
-  warn: { icon: "warn", title: "Watch your step", tone: "callout--warn" },
-  rule: { icon: "lock", title: "House rule", tone: "callout--danger" },
+const LOOK: Record<NonNullable<Props["kind"]>, { icon: IconName; title: readonly [plain: string, codex: string]; tone: string }> = {
+  lore: { icon: "scroll", title: ["Background", "From the lore"], tone: "" },
+  tip: { icon: "sparkle", title: ["Tip", "Game master's tip"], tone: "callout--ok" },
+  warn: { icon: "warn", title: ["Watch out", "Watch your step"], tone: "callout--warn" },
+  rule: { icon: "lock", title: ["Rule", "House rule"], tone: "callout--danger" },
 };
 const look = LOOK[kind];
+// The default title differs by look, so the aside is named by its visible title element rather than one fixed string.
+const titleId = nextId("guide-aside");
 ---
-<aside class:list={["callout", "guide-aside", look.tone]} aria-label={title ?? look.title}>
+<aside class:list={["callout", "guide-aside", look.tone]} aria-labelledby={titleId}>
   <NavIcon name={look.icon} size={22} />
   <div class="guide-aside__body">
-    <p class="guide-aside__title">{title ?? look.title}</p>
+    <p class="guide-aside__title" id={titleId}>{title ?? <Term plain={look.title[0]} codex={look.title[1]} />}</p>
     <slot />
   </div>
 </aside>

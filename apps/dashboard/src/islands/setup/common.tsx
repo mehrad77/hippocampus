@@ -3,13 +3,14 @@ import { ApiError, getJson, postJson } from "../../lib/api.ts";
 import { invalidate } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
 import type { IconName } from "../../lib/icons.ts";
+import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
 import type { Job, SetupItem, Snippet } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { CopyButton, Dialog, RelTime } from "../../ui/Parts.tsx";
-import { describeError, STATE_META, type BadgeState } from "./model.ts";
+import { describeError, STATE_META, type BadgeState, type Wording } from "./model.ts";
 
-/** Refetch Session Zero's status (and the session, which changes when a vault opens). */
+/** Refetch setup's status (and the session, which changes when a vault opens). */
 export function refreshSetup(): Promise<void[]> {
   return invalidate((k) => k.startsWith("/setup") || k === "/session");
 }
@@ -69,6 +70,7 @@ export function Snippets({ snippets }: { snippets: readonly Snippet[] }) {
 }
 
 export function ErrorCallout({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+  const { v } = useTerms();
   const e = describeError(error);
   return (
     <div className={`callout ${e.unsupported ? "callout--warn" : "callout--danger"}`} role="alert">
@@ -83,7 +85,7 @@ export function ErrorCallout({ error, onRetry }: { error: unknown; onRetry?: () 
         )}
         {e.unsupported && (
           <a href={href.page("guides")} className="small">
-            Open the guides →
+            {v("Open help →", "Open the guides →")}
           </a>
         )}
         {onRetry && (
@@ -318,13 +320,14 @@ export function ConfirmDialog({ open, title, children, confirmLabel, danger, bus
   );
 }
 
-const JOB_WORD: Record<Job["kind"], string> = { "sleep-dry-run": "Dry-run sleep", reindex: "Index rebuild" };
+const JOB_WORD: Record<Job["kind"], Wording> = { "sleep-dry-run": ["Test run", "Dry-run sleep"], reindex: ["Index rebuild", "Index rebuild"] };
 
 /**
  * Starts a server job and follows it: polls `setup/jobs/<id>` every second until it is done,
  * showing the log as it grows.
  */
 export function JobRunner({ kind, limit, label, disabled, idleHint }: { kind: Job["kind"]; limit?: number; label: string; disabled?: boolean; idleHint?: React.ReactNode }) {
+  const { v } = useTerms();
   const [id, setId] = useState<string>();
   const [job, setJob] = useState<Job>();
   const start = useAction();
@@ -374,7 +377,7 @@ export function JobRunner({ kind, limit, label, disabled, idleHint }: { kind: Jo
         </button>
         {job && (
           <span className="small muted">
-            {JOB_WORD[job.kind]} started <RelTime at={job.started} />
+            {v(...JOB_WORD[job.kind])} started <RelTime at={job.started} />
           </span>
         )}
         {!job && !running && idleHint && <span className="small muted">{idleHint}</span>}
@@ -383,7 +386,7 @@ export function JobRunner({ kind, limit, label, disabled, idleHint }: { kind: Jo
       {pollError !== undefined && <ErrorCallout error={pollError} />}
       {job && (
         <>
-          <pre ref={logRef} className="sz-log" role="log" aria-label={`${JOB_WORD[job.kind]} log`} tabIndex={0}>
+          <pre ref={logRef} className="sz-log" role="log" aria-label={`${v(...JOB_WORD[job.kind])} log`} tabIndex={0}>
             {job.log.length ? job.log.join("\n") : "Waiting for the first line…"}
           </pre>
           {job.state === "done" && (

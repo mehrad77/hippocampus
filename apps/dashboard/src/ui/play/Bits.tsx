@@ -1,41 +1,56 @@
 import type { IconName } from "../../lib/icons.ts";
+import { useTerms } from "../../lib/prefs.ts";
 import { Icon } from "../Icon.tsx";
-import type { Authority, QuestStatus } from "./model.ts";
+import { questStatusWord, type Authority, type QuestStatus } from "./model.ts";
 
 const QUEST_GLYPH: Record<QuestStatus, string> = { active: "→", blocked: "!", dormant: "z", done: "✓", failed: "✕" };
-const QUEST_HELP: Record<QuestStatus, string> = {
-  active: "Active: in motion",
-  blocked: "Blocked: waiting on something before it can move",
-  dormant: "Dormant: set aside for now",
-  done: "Done: the tale is told",
-  failed: "Failed: it didn't work out",
+const QUEST_HELP: Record<QuestStatus, [plain: string, codex: string]> = {
+  active: ["Active: in progress", "Active: in motion"],
+  blocked: ["Blocked: waiting on something before it can move forward", "Blocked: waiting on something before it can move"],
+  dormant: ["On hold: paused for now", "Dormant: set aside for now"],
+  done: ["Done: completed", "Done: the tale is told"],
+  failed: ["Failed: it didn't work out", "Failed: it didn't work out"],
 };
 
 /** A quest's status as a seal: glyph + word, like fact seals, never color alone. */
 export function QuestSeal({ status }: { status?: string }) {
+  const { look, v } = useTerms();
   const s = (status && status in QUEST_GLYPH ? status : "active") as QuestStatus;
   return (
-    <span className={`seal qseal qseal--${s}`} title={QUEST_HELP[s]}>
+    <span className={`seal qseal qseal--${s}`} title={v(...QUEST_HELP[s])}>
       <span className="seal__glyph" aria-hidden>
         {QUEST_GLYPH[s]}
       </span>
-      {s}
+      {questStatusWord(s, look)}
     </span>
   );
 }
 
-const AUTH: Record<Authority, { label: string; icon: IconName; help: string }> = {
-  human: { label: "Your word", icon: "quill", help: "Written by you. Human authority outranks every agent." },
-  authority: { label: "Lane authority", icon: "key", help: "This agent's lane covers this entity, so it outranks agents without authority here." },
-  none: { label: "No authority", icon: "eye", help: "This agent has no lane authority here: its word counts only with corroboration." },
+const AUTH: Record<Authority, { label: [plain: string, codex: string]; icon: IconName; help: [plain: string, codex: string] }> = {
+  human: {
+    label: ["You", "Your word"],
+    icon: "quill",
+    help: ["Written by you. What you write outranks every agent.", "Written by you. Human authority outranks every agent."],
+  },
+  authority: {
+    label: ["Responsible agent", "Lane authority"],
+    icon: "key",
+    help: ["This agent is responsible for this record, so it outranks agents that aren't.", "This agent's lane covers this entity, so it outranks agents without authority here."],
+  },
+  none: {
+    label: ["Not responsible", "No authority"],
+    icon: "eye",
+    help: ["This agent isn't responsible for this record: its report counts only when another source confirms it.", "This agent has no lane authority here: its word counts only with corroboration."],
+  },
 };
 
 export function AuthorityBadge({ authority }: { authority: Authority }) {
+  const { v } = useTerms();
   const a = AUTH[authority];
   return (
-    <span className={`auth auth--${authority}`} title={a.help}>
+    <span className={`auth auth--${authority}`} title={v(...a.help)}>
       <Icon name={a.icon} size={14} />
-      {a.label}
+      {v(...a.label)}
     </span>
   );
 }
@@ -54,7 +69,7 @@ export function PageHead({ kicker, title, lede, action }: { kicker: React.ReactN
   );
 }
 
-/** A centered ornament divider with a label, e.g. ❦ Dormant ❦. */
+/** A section divider with a label: ❦ Dormant ❦ in the codex, a plain heading otherwise. */
 export function Ornament({ children, id }: { children: React.ReactNode; id?: string }) {
   return (
     <h2 className="ornament play-ornament" id={id}>

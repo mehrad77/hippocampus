@@ -6,12 +6,14 @@ import { emit, on } from "../lib/events.ts";
 import { relTime } from "../lib/format.ts";
 import { fuzzyScore } from "../lib/fuzzy.ts";
 import type { IconName } from "../lib/icons.ts";
+import { useTerms } from "../lib/prefs.ts";
 import { href, param, type Page } from "../lib/routes.ts";
 import { useSession } from "../lib/session.ts";
+import { TERMS } from "../lib/terms.ts";
 import type { Catalog, SearchResult } from "../lib/types.ts";
 import { TypeDot } from "../ui/EntityLink.tsx";
 import { Icon } from "../ui/Icon.tsx";
-import { plainText } from "../ui/lore/bits.tsx";
+import { kindLabel, plainText, typeLabel } from "../ui/lore/bits.tsx";
 
 interface Item {
   key: string;
@@ -33,17 +35,18 @@ interface Section {
   busy?: boolean;
 }
 
-const PAGES: [Page, string, IconName, string][] = [
-  ["tavern", "Tavern", "tavern", "home overview start"],
-  ["quests", "Quest board", "quest", "quests objectives clocks deadlines tasks"],
-  ["council", "Council", "council", "disputes rulings conflicts"],
-  ["satchel", "Satchel", "satchel", "inbox episodes pending waiting"],
-  ["codex", "Codex", "codex", "entities entries wiki all"],
-  ["map", "Map", "map", "graph relations ties network"],
-  ["chronicle", "Chronicle", "chronicle", "timeline history journal log"],
-  ["party", "Party", "party", "agents members lanes"],
-  ["guides", "Guides", "guides", "help docs how"],
-  ["setup", "Setup & health", "setup", "settings tokens connect health status"],
+// Synonyms carry both vocabularies, so "quest" finds Goals and "goal" finds the Quest board in either look.
+const PAGES: [Page, IconName, string][] = [
+  ["tavern", "tavern", "home tavern overview dashboard start"],
+  ["quests", "quest", "goals quests steps objectives progress clocks deadlines tasks"],
+  ["council", "council", "disputes council decisions rulings conflicts"],
+  ["satchel", "satchel", "inbox satchel notes episodes pending waiting"],
+  ["codex", "codex", "records codex entities entries wiki all"],
+  ["map", "map", "connections map relationships relations ties graph network"],
+  ["chronicle", "chronicle", "timeline chronicle events history journal log"],
+  ["party", "party", "agents party members roles lanes"],
+  ["guides", "guides", "help guides handbook docs how"],
+  ["setup", "setup", "setup settings personalization look theme tokens connect health status"],
 ];
 
 const MIN_PAGE_SCORE = 25;
@@ -60,6 +63,7 @@ const clip = (s: string, n = 120) => (s.length > n ? `${s.slice(0, n - 1)}…` :
 
 /** ⌘K / Ctrl+K / "/": jump to any page, entry or action, with a semantic search underneath. */
 export function CommandPalette() {
+  const { look, plain, t, v } = useTerms();
   const session = useSession();
   const ready = !!session.data && session.data.mode !== "setup";
   const [open, setOpen] = useState(false);
@@ -146,17 +150,17 @@ export function CommandPalette() {
     const remember = !!session.data?.capabilities.remember;
     const onEntity = location.pathname.replace(/\/+$/, "").endsWith("/entity") ? param("ref") : null;
 
-    const pages = rank(PAGES, q, ([, label, , kw]) => [label, kw], q ? MIN_PAGE_SCORE : 0).map(({ item: [p, label, icon], score }) => ({
+    const pages = rank(PAGES, q, ([p, , kw]) => [t(p), kw, ...TERMS[p]], q ? MIN_PAGE_SCORE : 0).map(({ item: [p, icon], score }) => ({
       score,
-      item: { key: `page:${p}`, label, icon, href: href.page(p), hint: "page" } as Item,
+      item: { key: `page:${p}`, label: t(p), icon, href: href.page(p), hint: "page" } as Item,
     }));
 
     const actionList: (Item & { kw: string })[] = [];
     if (remember) {
-      if (onEntity) actionList.push({ key: "act:scribe-about", label: "Scribe about this entry", icon: "quill", hint: "action", kw: "remember note write memory episode", run: () => emit("scribe:open", { about: [onEntity] }) });
-      actionList.push({ key: "act:scribe", label: "Scribe a memory", icon: "quill", hint: "action", kw: "remember note write add episode new", run: () => emit("scribe:open", {}) });
+      if (onEntity) actionList.push({ key: "act:scribe-about", label: v("Add a note about this record", "Scribe about this entry"), icon: "quill", hint: "action", kw: "remember note write memory episode scribe add", run: () => emit("scribe:open", { about: [onEntity] }) });
+      actionList.push({ key: "act:scribe", label: t("scribe"), icon: "quill", hint: "action", kw: "remember note write add episode new scribe memory", run: () => emit("scribe:open", {}) });
     }
-    if (onEntity) actionList.push({ key: "act:map", label: "Show this entry on the map", icon: "map", hint: "action", kw: "graph focus", href: href.map(onEntity) });
+    if (onEntity) actionList.push({ key: "act:map", label: v("Show this record's connections", "Show this entry on the map"), icon: "map", hint: "action", kw: "graph focus map connections", href: href.map(onEntity) });
     const actions = rank(actionList, q, (a) => [a.label, a.kw], q ? MIN_PAGE_SCORE : 0);
 
     const all = catalog.data?.entities ?? [];
@@ -175,7 +179,7 @@ export function CommandPalette() {
         label: e.title,
         sub: e.aliases.length ? `also ${e.aliases.join(", ")}` : clip(plainText(e.summary)),
         type: e.type,
-        hint: e.type,
+        hint: typeLabel(e.type, plain),
         href: href.entity(e.slug),
       } as Item,
     }));
@@ -186,7 +190,7 @@ export function CommandPalette() {
     };
     push("Pages", pages);
     push("Actions", actions);
-    push(q ? "Entries" : "Recently updated", entityItems, { busy: !!q && wanted && catalog.loading && !catalog.data });
+    push(q ? v("Records", "Entries") : "Recently updated", entityItems, { busy: !!q && wanted && catalog.loading && !catalog.data });
 
     if (q) out.sort((a, b) => b.top - a.top);
 
@@ -196,18 +200,18 @@ export function CommandPalette() {
       for (const e of r?.entities ?? []) {
         if (seen.has(e.slug)) continue;
         seen.add(e.slug);
-        deepItems.push({ key: `deep:${e.slug}`, label: e.title, sub: clip(plainText(e.summary)) || undefined, type: e.type, hint: e.type, href: href.entity(e.slug) });
+        deepItems.push({ key: `deep:${e.slug}`, label: e.title, sub: clip(plainText(e.summary)) || undefined, type: e.type, hint: typeLabel(e.type, plain), href: href.entity(e.slug) });
       }
       for (const rel of r?.related ?? []) {
         if (seen.has(rel.ref.slug)) continue;
         seen.add(rel.ref.slug);
-        deepItems.push({ key: `rel:${rel.ref.slug}`, label: rel.ref.title, sub: `related, via ${rel.via}`, type: rel.ref.type, hint: rel.ref.type, href: href.entity(rel.ref.slug) });
+        deepItems.push({ key: `rel:${rel.ref.slug}`, label: rel.ref.title, sub: `related, via ${rel.via}`, type: rel.ref.type, hint: typeLabel(rel.ref.type, plain), href: href.entity(rel.ref.slug) });
       }
       for (const ep of r?.pending ?? []) {
         deepItems.push({
           key: `ep:${ep.id}`,
-          label: ep.secret || ep.text === null ? "A sealed episode" : clip(plainText(ep.text), 90),
-          sub: `${ep.agent} · ${ep.kind} · ${relTime(ep.at)} · waiting in the satchel`,
+          label: ep.secret || ep.text === null ? v("A hidden note", "A sealed episode") : clip(plainText(ep.text), 90),
+          sub: `${ep.agent} · ${kindLabel(ep.kind, plain)} · ${relTime(ep.at)} · ${v("waiting in the inbox", "waiting in the satchel")}`,
           icon: ep.secret ? "lock" : "satchel",
           hint: "pending",
           href: href.page("satchel", `#${ep.id}`),
@@ -216,7 +220,7 @@ export function CommandPalette() {
       if (deepItems.length || deep.loading) out.push({ title: "Deep search", items: deepItems, top: 0, busy: deep.loading });
     }
     return out;
-  }, [q, catalog.data, catalog.loading, deep, session.data, ready, wanted]);
+  }, [q, catalog.data, catalog.loading, deep, session.data, ready, wanted, look]);
 
   const flat = useMemo(() => sections.flatMap((s) => s.items), [sections]);
   const at = flat.length ? Math.min(active, flat.length - 1) : -1;
@@ -272,8 +276,8 @@ export function CommandPalette() {
               aria-controls={`${uid}-list`}
               aria-activedescendant={at >= 0 ? optId(at) : undefined}
               aria-autocomplete="list"
-              aria-label="Search pages, entries and actions"
-              placeholder="Search the codex, or jump to a page…"
+              aria-label={v("Search pages, records and actions", "Search pages, entries and actions")}
+              placeholder={v("Search records, or jump to a page…", "Search the codex, or jump to a page…")}
               value={query}
               autoComplete="off"
               spellCheck={false}
@@ -325,8 +329,8 @@ export function CommandPalette() {
             ))}
             {!flat.length && !sections.some((s) => s.busy) && (
               <div className="palette__empty">
-                <strong>Nothing answers to “{q}”</strong>
-                <span className="small">{ready ? "Try other words, or browse the Codex." : "Only pages are searchable until a vault is connected."}</span>
+                <strong>{v(`No results for “${q}”`, `Nothing answers to “${q}”`)}</strong>
+                <span className="small">{ready ? v(`Try other words, or browse ${t("codex")}.`, "Try other words, or browse the Codex.") : "Only pages are searchable until a vault is connected."}</span>
               </div>
             )}
             {deep.error && q.length >= 2 && <div className="palette__empty small">Deep search failed: {deep.error}</div>}

@@ -1,89 +1,116 @@
-// Session Zero's pure parts: the steps, state words, validation, and the snippets the wizard builds
-// itself (the server builds the rest). No DOM here, so it is unit-tested in model.test.ts.
+// Setup's pure parts (Session Zero in the codex): the steps, state words, validation, and the snippets
+// the wizard builds itself (the server builds the rest). No DOM here, so it is unit-tested in model.test.ts.
 import type { GitStatus, LocalSetupStatus, SessionInfo, SetupItem, SetupState, Snippet } from "@hippocampus/dashboard";
 import type { IconName } from "../../lib/icons.ts";
 
 export type StepId = "welcome" | "vault" | "party" | "secrets" | "llm" | "git" | "agents" | "schedule" | "remote" | "done";
 
+/** A phrase in both voices; islands pick one with `v(...wording)` from `useTerms()`. */
+export type Wording = readonly [plain: string, codex: string];
+
 export interface StepDef {
   id: StepId;
-  title: string;
+  title: Wording;
   icon: IconName;
   /** Locked until a vault exists. */
   needsVault: boolean;
-  lede: string;
+  lede: Wording;
 }
 
 export const STEPS: readonly StepDef[] = [
   {
     id: "welcome",
-    title: "Welcome",
+    title: ["Welcome", "Welcome"],
     icon: "d20",
     needsVault: false,
-    lede: "Session Zero is the evening before a campaign starts, when the table agrees on the world, the party and the rules. Here it takes a few minutes, and every step says what it changes on this machine.",
+    lede: [
+      "Setup takes a few minutes. Every step says what it changes on this machine before you press anything.",
+      "Session Zero is the evening before a campaign starts, when the table agrees on the world, the party and the rules. Here it takes a few minutes, and every step says what it changes on this machine.",
+    ],
   },
   {
     id: "vault",
-    title: "The vault",
+    title: ["Vault", "The vault"],
     icon: "codex",
     needsVault: false,
-    lede: "The vault is your campaign wiki: a folder of Markdown notes you can open in Obsidian. Everything else builds on it.",
+    lede: [
+      "The vault is where the memory lives: a folder of Markdown notes you can open in Obsidian. Everything else builds on it.",
+      "The vault is your campaign wiki: a folder of Markdown notes you can open in Obsidian. Everything else builds on it.",
+    ],
   },
   {
     id: "party",
-    title: "The party",
+    title: ["Agents", "The party"],
     icon: "party",
     needsVault: true,
-    lede: "Every agent that remembers things gets a character sheet: who it is, what it handles, and where its word counts as canon.",
+    lede: [
+      "Every agent that saves memories gets a profile note: who it is, what it handles, and the topics where its reports count as confirmed.",
+      "Every agent that remembers things gets a character sheet: who it is, what it handles, and where its word counts as canon.",
+    ],
   },
   {
     id: "secrets",
-    title: "Secrets key",
+    title: ["Secrets key", "Secrets key"],
     icon: "key",
     needsVault: true,
-    lede: "Passport numbers, account ids and passwords are sealed with age encryption before they are written into the vault.",
+    lede: [
+      "Passport numbers, account ids and passwords are encrypted with age before they are written into the vault.",
+      "Passport numbers, account ids and passwords are sealed with age encryption before they are written into the vault.",
+    ],
   },
   {
     id: "llm",
-    title: "Curator model",
+    title: ["AI model", "Curator model"],
     icon: "brain",
     needsVault: false,
-    lede: "Each night a curator model reads the inbox and decides what becomes canon. A small local model is enough.",
+    lede: [
+      "Each night an AI model reads the inbox and decides which reports become confirmed facts. A small local model is enough.",
+      "Each night a curator model reads the inbox and decides what becomes canon. A small local model is enough.",
+    ],
   },
   {
     id: "git",
-    title: "Git & GitHub",
+    title: ["Git & GitHub", "Git & GitHub"],
     icon: "github",
     needsVault: true,
-    lede: "A private GitHub repository backs the vault up, and lets agents elsewhere reach it.",
+    lede: ["A private GitHub repository backs the vault up, and lets agents elsewhere reach it.", "A private GitHub repository backs the vault up, and lets agents elsewhere reach it."],
   },
   {
     id: "agents",
-    title: "Connect agents",
+    title: ["Connect agents", "Connect agents"],
     icon: "link",
     needsVault: true,
-    lede: "Each agent connects as itself, so what it remembers is filed under its name and weighed by its authority.",
+    lede: [
+      "Each agent connects under its own id, so what it saves is filed under its name and weighed by its authority.",
+      "Each agent connects as itself, so what it remembers is filed under its name and weighed by its authority.",
+    ],
   },
   {
     id: "schedule",
-    title: "Nightly sleep",
+    title: ["Nightly update", "Nightly sleep"],
     icon: "moonStars",
     needsVault: true,
-    lede: "The curator sleeps once a night: while you rest, it consolidates the day's inbox into canon.",
+    lede: [
+      "Once a night, while you're away, the nightly update (hippo sleep) processes the day's inbox into the vault.",
+      "The curator sleeps once a night: while you rest, it consolidates the day's inbox into canon.",
+    ],
   },
   {
     id: "remote",
-    title: "Remote",
+    title: ["Remote access", "Remote"],
     icon: "cloud",
     needsVault: false,
-    lede: "Optional. Put your memory on a Cloudflare Worker so hosted assistants (Claude.ai, ChatGPT) and agents away from this machine can reach it.",
+    lede: [
+      "Optional. Put your memory on a Cloudflare Worker so hosted assistants (Claude.ai, ChatGPT) and agents away from this machine can reach it.",
+      "Optional. Put your memory on a Cloudflare Worker so hosted assistants (Claude.ai, ChatGPT) and agents away from this machine can reach it.",
+    ],
   },
   {
     id: "done",
-    title: "The table is set",
+    title: ["All set", "The table is set"],
     icon: "tavern",
     needsVault: true,
-    lede: "Everything a campaign needs is in place. The rest happens at the table.",
+    lede: ["Everything is in place. From here on, you use the dashboard day to day.", "Everything a campaign needs is in place. The rest happens at the table."],
   },
 ];
 
@@ -296,7 +323,7 @@ export function truncateKey(key: string | undefined): string {
 /** A token id (its SHA-256) shortened for tables. */
 export const shortId = (id: string) => id.slice(0, 10);
 
-// ── Curator and embeddings providers ────────────────────────────────────────
+// ── Curator (nightly update model) and embeddings providers ─────────────────
 
 export interface ProviderDef {
   id: string;
@@ -391,15 +418,15 @@ export function workerDeploySteps(url: string | undefined): DeployStep[] {
   ];
 }
 
-export const TOKEN_SCOPES: readonly { id: "read" | "remember" | "quest"; label: string; help: string }[] = [
-  { id: "read", label: "Read", help: "Recall and read the vault. Every token needs it." },
-  { id: "remember", label: "Remember", help: "File new memories into the inbox." },
-  { id: "quest", label: "Quest", help: "Update quests: objectives, clocks and deadlines." },
+export const TOKEN_SCOPES: readonly { id: "read" | "remember" | "quest"; label: Wording; help: Wording }[] = [
+  { id: "read", label: ["Read", "Read"], help: ["Search and read the vault. Every token needs it.", "Recall and read the vault. Every token needs it."] },
+  { id: "remember", label: ["Remember", "Remember"], help: ["Send new notes to the inbox.", "File new memories into the inbox."] },
+  { id: "quest", label: ["Goals (quest)", "Quest"], help: ["Update goals: objectives, clocks and deadlines.", "Update quests: objectives, clocks and deadlines."] },
 ];
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
-/** An API failure in plain words. 501 means this runtime can't do it; NO_VAULT means Session Zero isn't done. */
+/** An API failure in plain words. 501 means this runtime can't do it; NO_VAULT means setup isn't done. */
 export function describeError(err: unknown): { title: string; message: string; noVault: boolean; unsupported: boolean } {
   const e = (typeof err === "object" && err ? err : {}) as { status?: unknown; code?: unknown; message?: unknown };
   const status = typeof e.status === "number" ? e.status : undefined;
@@ -409,4 +436,13 @@ export function describeError(err: unknown): { title: string; message: string; n
   if (status === 409 && code === "NO_VAULT") return { title: "No vault yet", message: "Create or open a vault first.", noVault: true, unsupported: false };
   if (status === 0 || code === "NETWORK") return { title: "Can't reach the dashboard server", message: "Is hippo dashboard still running?", noVault: false, unsupported: false };
   return { title: "That didn't work", message, noVault: false, unsupported: false };
+}
+
+/**
+ * A health item's title in the reader's voice. Item titles come from the server in one wording;
+ * when the item is a wizard step, the step's own plain/codex title is used instead.
+ */
+export function itemTitle(item: { id: string; title: string }, plain: boolean): string {
+  const step = STEPS.find((s) => s.id === item.id);
+  return step ? step.title[plain ? 0 : 1] : item.title;
 }

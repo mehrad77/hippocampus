@@ -1,4 +1,6 @@
 ---
+import Term from "../../ui/Term.astro";
+
 /** A fact status as the dashboard shows it: glyph, word and color together, never color alone. */
 interface Props {
   status: "canon" | "rumor" | "disputed" | "retconned";
@@ -6,4 +8,4 @@ interface Props {
 const { status } = Astro.props;
 const GLYPH = { canon: "✓", rumor: "?", disputed: "!", retconned: "✕" } as const;
 ---
-<span class:list={["seal", `seal--${status}`]}><span class="seal__glyph" aria-hidden="true">{GLYPH[status]}</span>{status}</span>
+<span class:list={["seal", `seal--${status}`]}><span class="seal__glyph" aria-hidden="true">{GLYPH[status]}</span><Term k={status} /></span>

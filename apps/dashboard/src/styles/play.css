@@ -1318,3 +1318,511 @@ a.ability:hover {
     transform: rotate(-6deg);
   }
 }
+
+/* ── Plain look (Carbon) ─────────────────────────────────────────────────
+ * The same parts without the tabletop dress: flat tiles on the page background, square corners,
+ * no tilt, pins, cork, wax or stamps, and labels in sentence case at a readable size. Everything
+ * above stays the codex. Selectors that plain.css also styles repeat a class to win regardless of
+ * load order.
+ */
+
+:root:not([data-style="codex"]) .play-h {
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+
+:root:not([data-style="codex"]) .play-h svg {
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .play-h__count {
+  border: 0;
+  background: var(--surface-selected);
+  color: var(--ink);
+  font-size: var(--label-size);
+}
+
+/* The ❦ divider becomes a plain section heading. */
+:root:not([data-style="codex"]) .ornament.play-ornament {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+
+:root:not([data-style="codex"]) .ornament.play-ornament::before,
+:root:not([data-style="codex"]) .ornament.play-ornament::after,
+:root:not([data-style="codex"]) .play-ornament > span::before,
+:root:not([data-style="codex"]) .play-ornament > span::after {
+  content: none;
+}
+
+:root:not([data-style="codex"]) .chip__n {
+  font-family: var(--font-body);
+  font-size: inherit;
+  font-weight: 600;
+  opacity: 1;
+}
+
+:root:not([data-style="codex"]) .chip.chip--gold {
+  background: var(--surface-selected);
+  color: var(--ink);
+}
+
+:root:not([data-style="codex"]) .chip.chip--gold svg {
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .is-target,
+:root:not([data-style="codex"]) .is-target:focus {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+:root:not([data-style="codex"]) .seal.qseal--active {
+  --c: var(--link-hover);
+  --b: var(--accent-soft);
+}
+
+:root:not([data-style="codex"]) .seal.qseal--dormant {
+  --c: var(--ink-2);
+  --b: var(--surface-selected);
+}
+
+/* Goals: a grid of flat tiles. */
+:root:not([data-style="codex"]) .board,
+:root:not([data-style="codex"]) .board--quiet {
+  gap: var(--space-4);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .board--empty {
+  padding: var(--space-4);
+  background: var(--surface);
+}
+
+:root:not([data-style="codex"]) .notice,
+:root:not([data-style="codex"]) .board--quiet > .notice {
+  --tilt: 0deg;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: none;
+  transform: none;
+  transition: none;
+}
+
+:root:not([data-style="codex"]) .notice__pin {
+  display: none;
+}
+
+:root:not([data-style="codex"]) .notice--blocked {
+  box-shadow: inset 3px 0 0 var(--support-error);
+}
+
+:root:not([data-style="codex"]) .notice__title {
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .notice__meta {
+  margin-top: calc(-1 * var(--space-2));
+  font-size: var(--label-size);
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .notice__due {
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-sunk);
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .notice__due.due--overdue,
+:root:not([data-style="codex"]) .notice__due.due--soon {
+  background: var(--disputed-bg);
+}
+
+:root:not([data-style="codex"]) .notice__due.due--near {
+  background: var(--rumor-bg);
+}
+
+:root:not([data-style="codex"]) .notice__summary {
+  font-style: normal;
+}
+
+:root:not([data-style="codex"]) .notice__section,
+:root:not([data-style="codex"]) .notice__controls,
+:root:not([data-style="codex"]) .case__custom {
+  border-top: 1px solid var(--rule);
+}
+
+:root:not([data-style="codex"]) .notice__label {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+:root:not([data-style="codex"]) .notice__label .row {
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .notice__add {
+  margin-left: 0;
+}
+
+:root:not([data-style="codex"]) .objective__row {
+  margin: 0;
+  padding: var(--space-1) 0;
+  border-radius: 0;
+}
+
+:root:not([data-style="codex"]) label.objective__row:hover {
+  background: var(--surface-hover);
+}
+
+:root:not([data-style="codex"]) .objective__row input {
+  accent-color: var(--ink);
+}
+
+:root:not([data-style="codex"]) .objective__mark {
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .clockbox__name {
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .clock--live:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+:root:not([data-style="codex"]) .tales {
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: none;
+  padding: var(--space-2) var(--space-4);
+}
+
+:root:not([data-style="codex"]) .tales__chev {
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .tales__title {
+  font-family: var(--font-body);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+/* Disputes. */
+:root:not([data-style="codex"]) .case.panel {
+  border-top: 3px solid var(--support-error);
+}
+
+:root:not([data-style="codex"]) .case__kicker {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .case__title {
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+
+:root:not([data-style="codex"]) .case__now {
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-sunk);
+}
+
+:root:not([data-style="codex"]) .claim {
+  padding: var(--space-4);
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-sunk);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .claim--now {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+:root:not([data-style="codex"]) .claim__num {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+:root:not([data-style="codex"]) .claim__tag {
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .claim__value {
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+
+:root:not([data-style="codex"]) .claim__facts {
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .claim__facts dt,
+:root:not([data-style="codex"]) .sheet__rows dt {
+  padding-top: 0;
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .auth {
+  padding: 1px 10px;
+  border: 0;
+  background: var(--surface-selected);
+  color: var(--ink);
+  font-size: var(--label-size);
+  font-weight: 400;
+}
+
+:root:not([data-style="codex"]) .auth svg {
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .auth--human {
+  background: var(--accent-soft);
+}
+
+:root:not([data-style="codex"]) .auth--human svg {
+  color: var(--link-hover);
+}
+
+:root:not([data-style="codex"]) .auth--none {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--rule);
+  color: var(--ink-2);
+}
+
+/* The decision dialog: a simple summary tile, no proclamation or wax seal. */
+:root:not([data-style="codex"]) .decree {
+  padding: var(--space-4);
+  border: 0;
+  border-left: 3px solid var(--accent);
+  border-radius: 0;
+  background: var(--surface-sunk);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .decree__label {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .decree__line {
+  font-family: var(--font-body);
+}
+
+:root:not([data-style="codex"]) .decree__value {
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+
+:root:not([data-style="codex"]) .decree__seal {
+  display: none;
+}
+
+:root:not([data-style="codex"]) .consequences svg {
+  color: var(--accent);
+}
+
+:root:not([data-style="codex"]) .precedence li::before {
+  content: counter(rank);
+  border-color: var(--rule-strong);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .precedence li:first-child::before {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+:root:not([data-style="codex"]) .precedence li > span {
+  font-size: var(--label-size);
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .adjourned__seal {
+  width: 64px;
+  height: 64px;
+  background: var(--canon-bg);
+  color: var(--canon);
+  box-shadow: none;
+  animation: none;
+  transform: none;
+}
+
+/* Inbox. */
+:root:not([data-style="codex"]) .sleep__last > svg,
+:root:not([data-style="codex"]) .sleep__steps li::marker {
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .letter {
+  padding: var(--space-4);
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .letter--waited {
+  background: color-mix(in oklab, var(--rumor-bg) 55%, var(--surface));
+  box-shadow: inset 3px 0 0 var(--support-warning);
+}
+
+:root:not([data-style="codex"]) .letter__warn {
+  color: var(--rumor);
+}
+
+:root:not([data-style="codex"]) .letter__text {
+  font-size: 1rem;
+}
+
+:root:not([data-style="codex"]) .letter__path {
+  font-size: var(--label-size);
+}
+
+/* A hidden note: a plain tile with a lock, no envelope flap or wax seal. */
+:root:not([data-style="codex"]) .envelope {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  background: var(--surface-sunk);
+}
+
+:root:not([data-style="codex"]) .envelope > p {
+  margin: 0;
+}
+
+:root:not([data-style="codex"]) .wax {
+  position: static;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  border-radius: 0;
+  background: var(--surface-selected);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+/* Agents: flat cards. */
+:root:not([data-style="codex"]) .sheet,
+:root:not([data-style="codex"]) .sheet--player {
+  padding: var(--space-4);
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .sheet--player {
+  box-shadow: inset 0 3px 0 var(--accent);
+}
+
+:root:not([data-style="codex"]) .sheet::after {
+  display: none;
+}
+
+:root:not([data-style="codex"]) .sheet__sigil {
+  width: 48px;
+  height: 48px;
+  border: 0;
+  box-shadow: none;
+  background: var(--surface-selected);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+:root:not([data-style="codex"]) .sheet__sigil.typed {
+  box-shadow: inset 0 0 0 2px var(--c);
+}
+
+:root:not([data-style="codex"]) .sheet__sigil--player {
+  background: var(--accent-soft);
+  color: var(--link-hover);
+}
+
+:root:not([data-style="codex"]) .sheet__sigil--small {
+  width: 32px;
+  height: 32px;
+  border: 1px dashed var(--rule-strong);
+  background: transparent;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .sheet__class {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .sheet__name {
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+
+:root:not([data-style="codex"]) .sheet__lane {
+  font-style: normal;
+}
+
+:root:not([data-style="codex"]) .ability {
+  padding: var(--space-2);
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-sunk);
+}
+
+:root:not([data-style="codex"]) a.ability:hover {
+  background: var(--surface-hover);
+}
+
+:root:not([data-style="codex"]) .ability__score {
+  font-weight: 300;
+}
+
+:root:not([data-style="codex"]) .ability__label {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  line-height: 1.3;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .sheet__rows {
+  font-size: var(--label-size);
+}

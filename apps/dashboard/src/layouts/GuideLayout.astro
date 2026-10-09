@@ -2,6 +2,8 @@
 import Shell from "./Shell.astro";
 import "../styles/guides.css";
 import NavIcon from "../ui/NavIcon.astro";
+import Term from "../ui/Term.astro";
+import { plainSection } from "../components/guides/sections.ts";
 import { href } from "../lib/routes.ts";
 import type { IconName } from "../lib/icons.ts";
 
@@ -24,6 +26,7 @@ interface Props {
 }
 
 const { title, summary, section, sigil, position, total, headings, prev, next } = Astro.props;
+const sectionPlain = plainSection(section);
 
 // A two-level table of contents: each h2 with the h3s under it.
 const toc: { slug: string; text: string; children: { slug: string; text: string }[] }[] = [];
@@ -35,15 +38,15 @@ for (const h of headings) {
 <Shell title={title} page="guide" description={summary}>
   <div class="guide">
     <nav class="guide-crumbs small" aria-label="Breadcrumb">
-      <a href={href.page("guides")}>Player's Handbook</a>
+      <a href={href.page("guides")}><Term plain="Help & guides" codex="Player's Handbook" /></a>
       <span aria-hidden="true">›</span>
-      <span>{section}</span>
+      <span><Term plain={sectionPlain} codex={section} /></span>
     </nav>
 
     <header class="guide-head">
       <span class="guide-sigil" aria-hidden="true"><NavIcon name={sigil} size={30} /></span>
       <div>
-        <p class="page-head__kicker">{section} · Guide {position} of {total}</p>
+        <p class="page-head__kicker"><Term plain={sectionPlain} codex={section} /> · Guide {position} of {total}</p>
         <h1>{title}</h1>
         <p class="guide-head__summary">{summary}</p>
       </div>
@@ -106,7 +109,7 @@ for (const h of headings) {
       ) : (
         <a class="guide-pager__link guide-pager__link--prev" href={href.page("guides")}>
           <span class="guide-pager__dir"><NavIcon name="back" size={16} /> All guides</span>
-          <span class="guide-pager__title">The Player's Handbook</span>
+          <span class="guide-pager__title"><Term k="handbook" /></span>
         </a>
       )}
       {next ? (
@@ -117,14 +120,14 @@ for (const h of headings) {
       ) : (
         <a class="guide-pager__link guide-pager__link--next" href={href.page("tavern")}>
           <span class="guide-pager__dir">Done reading <NavIcon name="chevron" size={16} /></span>
-          <span class="guide-pager__title">Back to the Tavern</span>
+          <span class="guide-pager__title"><Term plain="Back to Home" codex="Back to the Tavern" /></span>
         </a>
       )}
     </nav>
 
     <p class="guide-edition small">
       <NavIcon name="scroll" size={16} />
-      <span><strong>Edit-free:</strong> these guides ship with your version of Hippocampus, so they always match the tool you run. They describe the tool, never your vault.</span>
+      <span><strong><Term plain="Built in:" codex="Edit-free:" /></strong> these guides ship with your version of Hippocampus, so they always match the tool you run. They describe the tool, never your vault.</span>
     </p>
   </div>
 </Shell>

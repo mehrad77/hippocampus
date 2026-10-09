@@ -3,7 +3,10 @@ import "../styles/fonts.css";
 import "../styles/tokens.css";
 import "../styles/base.css";
 import "../styles/components.css";
+import "../styles/plain.css";
 import NavIcon from "../ui/NavIcon.astro";
+import Term from "../ui/Term.astro";
+import { TERMS, type TermKey } from "../lib/terms.ts";
 import Global from "../islands/Global.tsx";
 import ThemeToggle from "../islands/ThemeToggle.tsx";
 import { href, type Page } from "../lib/routes.ts";
@@ -11,32 +14,38 @@ import type { IconName } from "../lib/icons.ts";
 
 interface Props {
   title: string;
+  /** Plain and codex titles for pages that aren't in the nav (e.g. the entity sheet). */
+  titles?: readonly [plain: string, codex: string];
   page: Page | "entity" | "guide";
   description?: string;
 }
-const { title, page, description = "Your party's shared memory, as a campaign codex." } = Astro.props;
+const { title, page, titles, description = "Your agents' shared memory: what they know, what's due, and what needs you." } = Astro.props;
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+// Nav pages have a plain and a codex name; other pages (entity sheets, guides) pass one title.
+const [plainTitle, codexTitle] = titles ?? (page in TERMS ? TERMS[page as TermKey] : [title, title]);
 
-const play: [Page, string, IconName, string?][] = [
-  ["tavern", "Tavern", "tavern"],
-  ["quests", "Quest board", "quest"],
-  ["council", "Council", "council", "council"],
-  ["satchel", "Satchel", "satchel", "satchel"],
+// [page, icon, badge key]; names come from TERMS in both voices.
+const play: [Page, IconName, string?][] = [
+  ["tavern", "tavern"],
+  ["quests", "quest"],
+  ["council", "council", "council"],
+  ["satchel", "satchel", "satchel"],
 ];
-const lore: [Page, string, IconName, string?][] = [
-  ["codex", "Codex", "codex"],
-  ["map", "Map", "map"],
-  ["chronicle", "Chronicle", "chronicle"],
-  ["party", "Party", "party"],
+const lore: [Page, IconName][] = [
+  ["codex", "codex"],
+  ["map", "map"],
+  ["chronicle", "chronicle"],
+  ["party", "party"],
 ];
-const meta: [Page, string, IconName][] = [
-  ["guides", "Guides", "guides"],
-  ["setup", "Setup & health", "setup"],
+const meta: [Page, IconName][] = [
+  ["guides", "guides"],
+  ["setup", "setup"],
 ];
+const term = (p: Page) => p as TermKey;
 const current = (p: string) => (p === page || (page === "guide" && p === "guides") ? "page" : undefined);
 ---
 <!doctype html>
-<html lang="en">
+<html lang="en" data-title-plain={`${plainTitle} · Hippocampus`} data-title-codex={`${codexTitle} · Hippocampus`}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -45,8 +54,8 @@ const current = (p: string) => (p === page || (page === "guide" && p === "guides
     <meta name="description" content={description} />
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" type="image/svg+xml" href={`${base}/favicon.svg`} />
+    <title>{plainTitle} · Hippocampus</title>
     <script is:inline src={`${base}/theme.js`}></script>
-    <title>{title} · Hippocampus</title>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -54,27 +63,27 @@ const current = (p: string) => (p === page || (page === "guide" && p === "guides
       <nav class="rail" id="rail" aria-label="Main">
         <a class="rail__brand" href={href.page("tavern")}>
           <NavIcon name="d20" size={34} />
-          <span class="rail__title">Hippocampus<span class="rail__campaign" data-campaign>campaign codex</span></span>
+          <span class="rail__title">Hippocampus<span class="rail__campaign" data-campaign><Term plain="memory dashboard" codex="campaign codex" /></span></span>
         </a>
-        <div class="rail__section">At the table</div>
-        {play.map(([p, label, icon, badge]) => (
+        <div class="rail__section"><Term k="navPlay" /></div>
+        {play.map(([p, icon, badge]) => (
           <a class="navlink" href={href.page(p)} aria-current={current(p)}>
-            <NavIcon name={icon} />{label}{badge && <span class="navlink__badge" data-badge={badge} hidden></span>}
+            <NavIcon name={icon} /><span><Term k={term(p)} /></span>{badge && <span class="navlink__badge" data-badge={badge} hidden></span>}
           </a>
         ))}
-        <div class="rail__section">Lore</div>
-        {lore.map(([p, label, icon]) => (
-          <a class="navlink" href={href.page(p)} aria-current={current(p)}><NavIcon name={icon} />{label}</a>
+        <div class="rail__section"><Term k="navLore" /></div>
+        {lore.map(([p, icon]) => (
+          <a class="navlink" href={href.page(p)} aria-current={current(p)}><NavIcon name={icon} /><span><Term k={term(p)} /></span></a>
         ))}
         <div class="rail__foot">
           <button type="button" class="navlink navlink--button" data-open-palette>
             <NavIcon name="search" />Search <kbd class="push">⌘K</kbd>
           </button>
           <button type="button" class="navlink navlink--button" data-open-scribe>
-            <NavIcon name="quill" />Scribe a memory
+            <NavIcon name="quill" /><span><Term k="scribe" /></span>
           </button>
-          {meta.map(([p, label, icon]) => (
-            <a class="navlink" href={href.page(p)} aria-current={current(p)}><NavIcon name={icon} />{label}</a>
+          {meta.map(([p, icon]) => (
+            <a class="navlink" href={href.page(p)} aria-current={current(p)}><NavIcon name={icon} /><span><Term k={term(p)} /></span></a>
           ))}
           <ThemeToggle client:only="react" />
         </div>
@@ -85,7 +94,7 @@ const current = (p: string) => (p === page || (page === "guide" && p === "guides
           <button type="button" class="btn btn--ghost btn--icon" aria-label="Open menu" aria-controls="rail" aria-expanded="false" data-open-drawer>
             <NavIcon name="menu" />
           </button>
-          <span class="topbar__title">{title}</span>
+          <span class="topbar__title">{plainTitle === codexTitle ? title : <Term plain={plainTitle} codex={codexTitle} />}</span>
           <button type="button" class="btn btn--ghost btn--icon" aria-label="Search" data-open-palette><NavIcon name="search" /></button>
         </header>
         <main class="main" id="main">
@@ -95,10 +104,10 @@ const current = (p: string) => (p === page || (page === "guide" && p === "guides
         </main>
       </div>
       <nav class="tabbar" aria-label="Quick">
-        <a href={href.page("tavern")} aria-current={current("tavern")}><NavIcon name="tavern" />Tavern</a>
-        <a href={href.page("quests")} aria-current={current("quests")}><NavIcon name="quest" />Quests</a>
-        <button type="button" data-open-scribe aria-label="Scribe a memory"><NavIcon name="quill" />Scribe</button>
-        <a href={href.page("council")} aria-current={current("council")}><NavIcon name="council" />Council<span class="navlink__badge" data-badge="council" hidden></span></a>
+        <a href={href.page("tavern")} aria-current={current("tavern")}><NavIcon name="tavern" /><Term k="tavern" /></a>
+        <a href={href.page("quests")} aria-current={current("quests")}><NavIcon name="quest" /><Term plain="Goals" codex="Quests" /></a>
+        <button type="button" data-open-scribe aria-label="Add a note to the inbox"><NavIcon name="quill" /><Term plain="Add" codex="Scribe" /></button>
+        <a href={href.page("council")} aria-current={current("council")}><NavIcon name="council" /><Term k="council" /><span class="navlink__badge" data-badge="council" hidden></span></a>
         <button type="button" data-open-drawer aria-label="More"><NavIcon name="menu" />More</button>
       </nav>
     </div>

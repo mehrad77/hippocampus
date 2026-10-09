@@ -1300,3 +1300,284 @@ a.month-strip__day:focus-visible {
     border: 0;
   }
 }
+
+/* ── Plain look ───────────────────────────────────────────────────────────
+ * The default look, after Carbon: flat layers, square corners (the radius tokens are 0 there),
+ * no gradients, shadows or ornaments, labels in sentence case at 14px or more, and long text kept
+ * to a comfortable measure. Tokens only; the codex rules above stay untouched.
+ */
+
+:root:not([data-style="codex"]) .tally .seal,
+:root:not([data-style="codex"]) .status-chip,
+:root:not([data-style="codex"]) .sheet-tag,
+:root:not([data-style="codex"]) .flag,
+:root:not([data-style="codex"]) .authority,
+:root:not([data-style="codex"]) .ledger__who,
+:root:not([data-style="codex"]) .mention__meta,
+:root:not([data-style="codex"]) .chron-entry__time,
+:root:not([data-style="codex"]) .chron-day__head .muted,
+:root:not([data-style="codex"]) .month-strip__axis,
+:root:not([data-style="codex"]) .touched,
+:root:not([data-style="codex"]) .map-hint,
+:root:not([data-style="codex"]) .map-card__rel,
+:root:not([data-style="codex"]) .codex-card__foot {
+  font-size: 0.875rem;
+}
+
+/* Small labels: the body face, semibold, sentence case. */
+:root:not([data-style="codex"]) :is(.codex-card__type, .ledger__field, .prov__body dt, .kv dt, .chron-filters__label, .ties__group dt) {
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* Italics are for emphasis, not decoration. */
+:root:not([data-style="codex"]) :is(.codex-typenote, .codex-card__aka, .codex-card__summary--empty, .sheet-head__aka, .authority, .episode--sealed) {
+  font-style: normal;
+}
+
+/* A comfortable measure for prose. */
+:root:not([data-style="codex"]) :is(.codex-typenote, .sheet-brief, .sheet-notes .prose, .mention__text, .notfound p) {
+  max-width: 70ch;
+}
+
+:root:not([data-style="codex"]) .chron-entry {
+  max-width: 80ch;
+}
+
+/* The type avatar: a plain circle in the type's color. */
+:root:not([data-style="codex"]) .sigil {
+  width: 48px;
+  height: 48px;
+  border: 0;
+  box-shadow: none;
+  font-family: var(--font-body);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+/* Codex: flat clickable tiles. */
+:root:not([data-style="codex"]) .codex-filters {
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .codex-grid {
+  gap: var(--space-4);
+}
+
+:root:not([data-style="codex"]) .codex-card {
+  padding: var(--space-4);
+  border: 1px solid var(--rule);
+  background: var(--surface-2);
+  box-shadow: none;
+  transition: background-color 110ms ease, border-color 110ms ease;
+}
+
+:root:not([data-style="codex"]) .codex-card:hover,
+:root:not([data-style="codex"]) .codex-card:focus-visible {
+  transform: none;
+  border-color: var(--accent);
+  background: var(--surface-sunk);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .codex-card__title {
+  font-family: var(--font-body);
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+:root:not([data-style="codex"]) .codex-card__foot {
+  border-top-style: solid;
+}
+
+/* Record page */
+:root:not([data-style="codex"]) .sheet-head {
+  border-top: 1px solid var(--rule);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .ledger__row--disputed {
+  padding-left: var(--space-3);
+  background: none;
+  box-shadow: inset 3px 0 0 var(--disputed);
+}
+
+:root:not([data-style="codex"]) .ledger__value {
+  font-family: var(--font-body);
+  font-size: 1rem;
+}
+
+:root:not([data-style="codex"]) .authority--human {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .prov__body {
+  border: 0;
+  background: var(--surface-sunk);
+}
+
+:root:not([data-style="codex"]) .ties__arrow {
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+/* Steps: an upright checkbox, not a tilted diamond. */
+:root:not([data-style="codex"]) .objectives__box {
+  width: 14px;
+  height: 14px;
+  transform: translateY(2px);
+  border: 1px solid var(--ink-2);
+  border-radius: 0;
+}
+
+:root:not([data-style="codex"]) .objectives li[data-done] .objectives__box {
+  border-color: var(--ink);
+  background: var(--ink);
+}
+
+:root:not([data-style="codex"]) .notfound > svg {
+  color: var(--ink-3);
+}
+
+/* Timeline */
+:root:not([data-style="codex"]) a.month-strip__day {
+  background: color-mix(in oklab, var(--accent) calc(var(--heat, 0) * 100%), var(--surface-2));
+  border-color: color-mix(in oklab, var(--accent) 50%, var(--rule));
+}
+
+:root:not([data-style="codex"]) .month-strip__day {
+  border-radius: 0;
+}
+
+:root:not([data-style="codex"]) .chron-filters__label {
+  min-width: 64px;
+}
+
+:root:not([data-style="codex"]) .chron-day__head {
+  background: var(--bg);
+  backdrop-filter: none;
+}
+
+:root:not([data-style="codex"]) .chron-day__head h2 {
+  font-family: var(--font-body);
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .chron-entry.is-target {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+  animation: none;
+}
+
+/* Connections: a plain canvas, labels in the body face. */
+:root:not([data-style="codex"]) .map-stage {
+  background: var(--surface);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .map-stage::before {
+  display: none;
+}
+
+:root:not([data-style="codex"]) .map-label {
+  font-family: var(--font-body);
+  font-weight: 400;
+  stroke: var(--surface);
+}
+
+:root:not([data-style="codex"]) .map-label--focus {
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .map-label--rel {
+  font-family: var(--font-body);
+  font-size: 12px;
+}
+
+:root:not([data-style="codex"]) .map-controls {
+  padding: 0;
+  gap: 0;
+  background: var(--surface-2);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .map-hint {
+  border-radius: 0;
+  background: var(--surface-2);
+}
+
+:root:not([data-style="codex"]) .map-card {
+  border-top: 1px solid var(--rule);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .map-card h2 {
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .map-card__rel,
+:root:not([data-style="codex"]) .edge-table td:nth-child(2) {
+  font-family: var(--font-body);
+}
+
+:root:not([data-style="codex"]) .map-find__list {
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .nodebtn {
+  color: var(--link);
+  font-weight: 400;
+  border-bottom: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* View switch: a content switcher, the selected side filled. */
+:root:not([data-style="codex"]) .seg {
+  padding: 0;
+  background: none;
+}
+
+:root:not([data-style="codex"]) .seg button {
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  border-radius: 0;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .seg button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--ink-inverse);
+  box-shadow: none;
+}
+
+/* Connection list: a data table with a shaded header and clear rows. */
+:root:not([data-style="codex"]) .edge-table th {
+  background: var(--surface-sunk);
+  color: var(--ink);
+  font-weight: 600;
+  padding: var(--space-3) var(--space-4);
+}
+
+@media (min-width: 601px) {
+  :root:not([data-style="codex"]) .edge-table td {
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--rule);
+  }
+}
+
+:root:not([data-style="codex"]) .edge-table td:nth-child(2) {
+  font-size: 0.875rem;
+}
+
+:root:not([data-style="codex"]) .edge-table tbody tr:hover {
+  background: var(--surface-sunk);
+}

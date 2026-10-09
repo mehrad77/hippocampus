@@ -8,13 +8,45 @@ sigil: map
 import Aside from "../../components/guides/Aside.astro";
 import Link from "../../components/guides/Link.astro";
 
-The dashboard is the human's side of the table. It's where you see what happened, settle disputes, move quests along, and set everything up. Agents never use it. They have MCP and the handbook.
+The dashboard is the human's side of the table. It's where you see what happened, settle disputes, move goals along, and set everything up. Agents never use it. They have MCP and the handbook.
 
 ```bash
 npx @mehrad77/hippocampus dashboard
 ```
 
-Run it inside a vault, or point it at one with `-v`. If there's no vault yet, it opens **Session Zero**, the guided setup.
+Run it inside a vault, or point it at one with `-v`. If there's no vault yet, it opens **Setup** (called Session Zero in the campaign look), the guided setup.
+
+## Two looks: plain or campaign
+
+The dashboard comes in two looks. Pick one in **Setup & health → Personalization**, the last card on that page:
+
+- **Theme**: **Plain (IBM Carbon)**, the default, is clean and easy to read, with everyday names for every page. **Campaign codex** is the tabletop look: parchment and candlelight, with the campaign names these guides grew up with.
+- **Colors**: match your device, or always light, or always dark.
+- **Text size**: standard or large.
+
+The choice applies at once and is saved in this browser only, never in your vault. Another browser, or a private window, starts with the defaults. Both looks show the same data and offer the same actions; only the names and the styling change.
+
+| Plain look | Campaign look |
+| --- | --- |
+| Home | Tavern |
+| Goals | Quest board |
+| Disputes | Council |
+| Inbox | Satchel |
+| Records | Codex |
+| Connections | Map |
+| Timeline | Chronicle |
+| Agents | Party |
+| Help | Guides |
+| Setup | Session Zero |
+| Add a note | Scribe a memory |
+| Note (in the inbox) | Episode |
+| Confirmed | canon |
+| Unverified | rumor |
+| Disputed | disputed |
+| Replaced | retconned |
+| Nightly update | Sleep |
+
+The commands stay the same in both looks: the nightly update is still `hippo sleep`. The other guides use the campaign names; this table is the key.
 
 ## Where the data comes from
 
@@ -23,59 +55,59 @@ Run it inside a vault, or point it at one with `-v`. If there's no vault yet, it
 | `hippo dashboard`, in or with `-v` a vault folder | The local folder | You, the human |
 | `hippo --github you/my-campaign dashboard` | The GitHub repo, no checkout (token in `HIPPO_GITHUB_TOKEN`) | You; each action is one commit |
 | `hippo dashboard --mcp https://…/mcp` | Any Hippocampus MCP server (token in `HIPPO_MCP_TOKEN`) | The token's agent, within its scopes |
-| `/dashboard/` on your Worker | The vault repo, behind GitHub sign-in | You; rulings and new party members also name your GitHub login |
+| `/dashboard/` on your Worker | The vault repo, behind GitHub sign-in | You; rulings and new agents also name your GitHub login |
 | `hippo dashboard --demo` | A fictional campaign, in memory | Nobody: it's a sandbox, gone when you stop it |
 
-**Over MCP** the dashboard reads through resources that agent hosts don't list, and writes through the same tools agents use. Scribing and quest edits are filed as the token's agent. Rulings belong to the human, so they aren't available there. Whatever a source can't do, the dashboard simply hides.
+**Over MCP** the dashboard reads through resources that agent hosts don't list, and writes through the same tools agents use. New notes and goal edits are filed as the token's agent. Rulings belong to the human, so they aren't available there. Whatever a source can't do, the dashboard simply hides.
 
-**The demo** is the fictional Lisbon arc from the bundled seed, with three weeks of made-up party activity replayed through the curator's own rules: a passport secret, a flat in Alfama, an agency that keeps moving its counter. It's the safe way to look around, take screenshots, or show someone how it works.
+**The demo** is the fictional Lisbon arc from the bundled seed, with three weeks of made-up agent activity replayed through the nightly update's own rules: a passport secret, a flat in Alfama, an agency that keeps moving its counter. It's the safe way to look around, take screenshots, or show someone how it works.
 
-## At the table
+## Work (At the table)
 
 | Page | What you see | What you can do |
 | --- | --- | --- |
-| **Tavern** | "Previously on…" from the chronicle, what needs your eye, quests in motion, dates in the next 90 days, the party, 30 days of activity, recently changed notes | Jump straight to whatever needs you |
-| **Quest board** | Every quest with owner, status, objectives, clocks and deadlines | Tick and untick objectives, turn clocks, set status and deadlines |
-| **Council** | Open disputes: each claim with who, whether they had authority, and when, beside the current value | Rule: pick a claim, apply a `ruling:` already in the note, or type the value |
-| **Satchel** | The inbox, newest first: agent, kind, time and hints for each episode | See what the next sleep will read, and which episodes already waited through one |
+| **Home** (Tavern) | Recent activity from the timeline ("Previously on…"), what needs your attention, goals in progress, dates in the next 90 days, your agents, 30 days of activity, recently changed notes | Jump straight to whatever needs you |
+| **Goals** (Quest board) | Every goal (quest) with owner, status, objectives, clocks and deadlines | Tick and untick objectives, turn clocks, set status and deadlines |
+| **Disputes** (Council) | Open disputes: each claim with who, whether they had authority, and when, beside the current value | Decide (rule): pick a claim, apply a `ruling:` already in the note, or type the value |
+| **Inbox** (Satchel) | The inbox, newest first: agent, kind, time and hints for each note (episode) | See what the next nightly update will read, and which notes already waited through one |
 
-"What needs your eye" gathers open disputes, rumors, stale canon, orphan notes, episodes that sat through a sleep, and agents without a party sheet. The badges on Council and Satchel count open disputes and episodes in the inbox. A ruling in the Council is canon **immediately**, by you. See <Link guide="precedence-and-disputes">Precedence and disputes</Link>.
+"Needs your attention" gathers open disputes, unverified facts (rumors), confirmed facts that need re-checking (stale canon), orphan notes, notes that sat through a nightly update, and agents that aren't set up yet. The badges on Disputes and Inbox count open disputes and notes in the inbox. A decision (ruling) on the Disputes page is confirmed (canon) **immediately**, by you. See <Link guide="precedence-and-disputes">Precedence and disputes</Link>.
 
-## Lore
+## Knowledge (Lore)
 
 | Page | What it is |
 | --- | --- |
-| **Codex** | Every note, by type, with tags and how many facts are canon, rumor or disputed |
-| **Entity sheets** | One note in full: summary, facts with their seals and provenance, relations both ways, disputes, the quest or party card, chronicle mentions from the last 90 days, inbox episodes about it, and your own notes |
-| **Map** | The relation graph: notes as nodes colored by type, relations as edges |
-| **Chronicle** | Month by month, day by day: every consolidated episode with its agent, kind, time and the notes it touched |
-| **Party** | Each member's lane, authority, host, when it was last seen, waiting episodes, recent activity and the quests it owns. Add a member here |
+| **Records** (Codex) | Every note, by type, with tags and how many facts are confirmed, unverified or disputed |
+| **Record pages** (entity sheets) | One note in full: summary, facts with their status and provenance, relations both ways, disputes, the goal or agent card, timeline mentions from the last 90 days, inbox notes about it, and your own notes |
+| **Connections** (Map) | The relation graph: notes as nodes colored by type, relations as edges |
+| **Timeline** (Chronicle) | Month by month, day by day: every processed note with its agent, kind, time and the notes it touched |
+| **Agents** (Party) | Each agent's role (lane), authority, host, when it was last seen, waiting notes, recent activity and the goals it owns. Add an agent here |
 
-On an entity sheet, each fact shows who said it, whether they had authority, when, which episodes back it, earlier values, and whether it's stale. It's the quickest way to answer "why does Hippocampus believe this?"
+On a record page, each fact shows who said it, whether they had authority, when, which notes back it, earlier values, and whether it's stale. It's the quickest way to answer "why does Hippocampus believe this?"
 
 ## Everywhere
 
 - **⌘K** opens the command palette: jump to any note or page, or search memory the way agents' `recall` does.
-- **Scribe a memory** drops an episode into the inbox in your name. Pick a kind, link the notes it's about, and tick the box if it contains an ID or a password. It joins canon at the next sleep, with your authority.
-- **Guides** are these pages. They ship with the tool and work without JavaScript.
-- **Setup & health** is Session Zero.
+- **Add a note** (Scribe a memory) drops a note into the inbox in your name. Pick a kind, link the notes it's about, and tick the box if it contains an ID or a password. It's confirmed at the next nightly update, with your authority.
+- **Help** (Guides) is these pages. They ship with the tool and work without JavaScript.
+- **Setup & health** holds the setup steps (Session Zero) and the Personalization settings.
 
-## Session Zero
+## Setup (Session Zero)
 
 Every setup step can be done from the browser. Each one either **does** the work on this machine, or **shows** you exactly what to run.
 
 | Step | Done for you | Shown to copy |
 | --- | --- | --- |
 | Vault | Create one from the template (optionally a seed), open one, or connect a GitHub repo or MCP server | `hippo migrate` when the format is older |
-| Party | Add agents, including unknown ones seen in the inbox | |
-| Secrets | Forge the age key, or reuse the one on this machine | Where to back it up |
-| Curator | Save the model settings and test them | Key pages for hosted providers |
+| Agents (Party) | Add agents, including unknown ones seen in the inbox | |
+| Secrets | Create (forge) the age key, or reuse the one on this machine | Where to back it up |
+| AI model (Curator) | Save the model settings and test them | Key pages for hosted providers |
 | Git | Check that the GitHub repo is private | Creating the repo and pushing |
-| Agents | | Connection snippets for each party member |
-| Sleep | Install the nightly launchd job, rehearse a dry run | A cron line on Linux |
-| Remote | Check a Worker URL, save embedding settings, rebuild the index | The Worker deploy commands |
+| Connect agents | | Connection snippets for each agent |
+| Nightly update (Sleep) | Install the nightly launchd job, start a test run that saves nothing (a dry run) | A cron line on Linux |
+| Remote access | Check a Worker URL, save embedding settings, rebuild the index | The Worker deploy commands |
 
-Settings it saves go to `~/.config/hippocampus/env` (mode 0600; `HIPPO_CONFIG_DIR` moves it). Your shell environment and a local `.env` still win. Keys you enter are write-only: the browser never gets them back. On the Worker, Setup shows the Worker's health instead, and lets you mint, list and revoke agent tokens.
+Settings it saves go to `~/.config/hippocampus/env` (mode 0600; `HIPPO_CONFIG_DIR` moves it). Your shell environment and a local `.env` still win. Keys you enter are write-only: the browser never gets them back. On the Worker, Setup shows the Worker's health instead, and lets you create (mint), list and revoke agent tokens.
 
 ## How it stays private
 
@@ -90,7 +122,7 @@ Settings it saves go to `~/.config/hippocampus/env` (mode 0600; `HIPPO_CONFIG_DI
 **Everywhere:**
 
 - Pages carry a strict content security policy: no outside scripts, fonts or images, and they can't be framed.
-- Secret values never reach the page. They show as a lock, and secret-bearing inbox episodes are sealed.
+- Secret values never reach the page. They show as a lock, and inbox notes that carry a secret are hidden.
 - You can't type a ruling for a secret field, so a secret can't land in a note as plain text by accident.
 
 <Aside kind="rule" title="Screenshots are vault content">

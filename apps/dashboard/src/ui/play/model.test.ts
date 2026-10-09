@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EpisodeView, Overview, QuestCard } from "../../lib/types.ts";
-import { agentIdProblem, byUrgency, clockProblem, confidenceLabel, countBy, editQuest, filterEpisodes, groupQuests, initials, nextDue, objectiveProblem, roman, unwrapRef, withQuest } from "./model.ts";
+import { agentIdProblem, byUrgency, changeLabel, clockProblem, confidenceLabel, countBy, editQuest, filterEpisodes, groupQuests, initials, kindLabel, nextDue, objectiveProblem, questStatusWord, roman, unwrapRef, withQuest } from "./model.ts";
 
 function quest(slug: string, over: Partial<QuestCard> = {}): QuestCard {
   return {
@@ -99,7 +99,8 @@ describe("nextDue", () => {
       quest("residence-permit", { daysLeft: 45, clocks: [{ name: "Paperwork", segments: 6, filled: 3, daysLeft: 18 }] }),
       quest("apartment-hunt", { daysLeft: -1, clocks: [{ name: "Lease signing", segments: 4, filled: 2, daysLeft: 9 }] }),
     ];
-    expect(nextDue(qs)).toEqual({ what: "apartment hunt: Lease signing clock", slug: "apartment-hunt", daysLeft: 9 });
+    expect(nextDue(qs)).toEqual({ what: "apartment hunt: Lease signing", slug: "apartment-hunt", daysLeft: 9 });
+    expect(nextDue(qs, "codex")).toEqual({ what: "apartment hunt: Lease signing clock", slug: "apartment-hunt", daysLeft: 9 });
     expect(nextDue([quest("paid-work")])).toBeUndefined();
   });
 });
@@ -115,6 +116,29 @@ describe("validation", () => {
     expect(clockProblem(q, "Deposit", 6)).toBeUndefined();
   });
 
+  it("says it in the reader's words", () => {
+    expect(clockProblem(q, "lease signing", 4)).toBe("This goal already has a progress tracker with that name.");
+    expect(clockProblem(q, "lease signing", 4, "codex")).toBe("This quest already has a clock with that name.");
+    expect(objectiveProblem(q, "shortlist listings")).toBe("That step is already on the list.");
+    expect(objectiveProblem(q, "shortlist listings", "codex")).toBe("That objective is already on the list.");
+    expect(agentIdProblem("home-finder", ["home-finder"])).toBe('"home-finder" is already an agent.');
+    expect(agentIdProblem("home-finder", ["home-finder"], undefined, "codex")).toBe('"home-finder" is already in the party.');
+    expect(kindLabel("beat")).toBe("Milestone");
+    expect(kindLabel("beat", "codex")).toBe("Story beat");
+    expect(kindLabel("fact", "codex")).toBe("Fact");
+    expect(kindLabel("rumination")).toBe("rumination");
+    expect(questStatusWord("dormant")).toBe("On hold");
+    expect(questStatusWord("dormant", "codex")).toBe("dormant");
+  });
+
+  it("rewords core's quest change notes for the plain look", () => {
+    expect(changeLabel("clock Lease signing 3/4")).toBe("Lease signing 3/4");
+    expect(changeLabel("status → dormant")).toBe("status → On hold");
+    expect(changeLabel("✓ Shortlist listings")).toBe("✓ Shortlist listings");
+    expect(changeLabel("clock Lease signing 3/4", "codex")).toBe("clock Lease signing 3/4");
+    expect(changeLabel("status → dormant", "codex")).toBe("status → dormant");
+  });
+
   it("checks new objectives", () => {
     expect(objectiveProblem(q, "  ")).toBeDefined();
     expect(objectiveProblem(q, "shortlist listings")).toMatch(/already/);
@@ -123,7 +147,8 @@ describe("validation", () => {
 
   it("checks agent ids like core does", () => {
     expect(agentIdProblem("home-finder", ["home-finder"])).toMatch(/already/);
-    expect(agentIdProblem("player", [], "player")).toMatch(/human/);
+    expect(agentIdProblem("player", [], "player")).toMatch(/your own name/);
+    expect(agentIdProblem("player", [], "player", "codex")).toMatch(/human/);
     expect(agentIdProblem("Job Scout", [])).toMatch(/lowercase/);
     expect(agentIdProblem("-scout", [])).toMatch(/lowercase/);
     expect(agentIdProblem("a".repeat(64), [])).toMatch(/lowercase/);

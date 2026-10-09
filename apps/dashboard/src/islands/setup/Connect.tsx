@@ -1,21 +1,23 @@
 import { useState } from "react";
+import { useTerms } from "../../lib/prefs.ts";
 import type { AgentConnect } from "../../lib/types.ts";
 import { Empty, RelTime } from "../../ui/Parts.tsx";
 import { Snippets } from "./common.tsx";
 
-/** Pick a party member, copy the snippet for the app it runs in. Snippets come from the server with real paths. */
+/** Pick an agent (party member), copy the snippet for the app it runs in. Snippets come from the server with real paths. */
 export function ConnectAgents({ agents, emptyHint }: { agents: readonly AgentConnect[]; emptyHint?: React.ReactNode }) {
+  const { v } = useTerms();
   const [picked, setPicked] = useState<string | undefined>(agents[0]?.agent);
   const current = agents.find((a) => a.agent === picked) ?? agents[0];
   if (!current)
     return (
-      <Empty icon="party" title="No party members yet">
-        {emptyHint ?? "Add an agent to the party first; its connection snippets appear here."}
+      <Empty icon="party" title={v("No agents yet", "No party members yet")}>
+        {emptyHint ?? v("Add an agent first; its connection snippets appear here.", "Add an agent to the party first; its connection snippets appear here.")}
       </Empty>
     );
   return (
     <div className="stack">
-      <div className="sz-agents" role="group" aria-label="Party member">
+      <div className="sz-agents" role="group" aria-label={v("Agent", "Party member")}>
         {agents.map((a) => {
           const on = a.agent === current.agent;
           return (

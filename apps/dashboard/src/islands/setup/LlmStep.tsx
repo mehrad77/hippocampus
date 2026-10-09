@@ -3,6 +3,7 @@ import type { LlmServer, LlmSettings, LlmSetupRequest } from "@hippocampus/dashb
 import { postJson } from "../../lib/api.ts";
 import { useResource } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
+import { useTerms } from "../../lib/prefs.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Effects, ErrorCallout, Field, refreshSetup, useAction } from "./common.tsx";
 import { LLM_PROVIDERS, providerDef, providerForServer, type StepProps } from "./model.ts";
@@ -15,6 +16,7 @@ interface TestResult {
 }
 
 export function LlmStep({ status }: StepProps) {
+  const { v } = useTerms();
   // What the server holds; updated from each save's answer so the form settles at once.
   const [saved, setSaved] = useState<LlmSettings>(status.llm);
   const [provider, setProvider] = useState(saved.provider);
@@ -68,7 +70,7 @@ export function LlmStep({ status }: StepProps) {
     setRemoveKey(false);
     setKeySet(res.apiKey === "set");
     setResult(undefined);
-    toast(`Curator settings saved to ${status.envFile}.`, "ok");
+    toast(v(`AI model settings saved to ${status.envFile}.`, `Curator settings saved to ${status.envFile}.`), "ok");
     void refreshSetup();
   };
 
@@ -85,7 +87,12 @@ export function LlmStep({ status }: StepProps) {
     <div className="stack">
       <Effects
         items={[
-          ["writes", <>HIPPO_LLM_* settings (and the key, if you give one) to <code>{status.envFile}</code>. The nightly sleep reads them from there.</>],
+          [
+            "writes",
+            <>
+              HIPPO_LLM_* settings (and the key, if you give one) to <code>{status.envFile}</code>. {v("The nightly update reads them from there.", "The nightly sleep reads them from there.")}
+            </>,
+          ],
           ["contacts", <>LM Studio (:1234) and Ollama (:11434) on this machine, to list their models. Testing sends one short prompt to the saved model{def?.key === "required" ? ", which for a hosted API means its servers" : ""}.</>],
           ["never", "sends a saved API key back to this page."],
         ]}
@@ -240,10 +247,10 @@ export function LlmStep({ status }: StepProps) {
         {save.error !== undefined && <ErrorCallout error={save.error} />}
         <div className="row">
           <button type="submit" className="btn btn--primary" disabled={save.busy || !dirty}>
-            <Icon name="brain" /> {save.busy ? "Saving…" : dirty ? "Save curator settings" : "Saved"}
+            <Icon name="brain" /> {save.busy ? "Saving…" : dirty ? v("Save model settings", "Save curator settings") : "Saved"}
           </button>
           <button type="button" className="btn" onClick={() => void runTest()} disabled={test.busy || dirty}>
-            <Icon name={test.busy ? "hourglass" : "sparkle"} className={test.busy ? "sz-spin" : undefined} /> {test.busy ? "Asking the curator…" : "Test the curator"}
+            <Icon name={test.busy ? "hourglass" : "sparkle"} className={test.busy ? "sz-spin" : undefined} /> {test.busy ? v("Asking the model…", "Asking the curator…") : v("Test the model", "Test the curator")}
           </button>
           {dirty && <span className="hint">Save first: the test uses the saved settings.</span>}
         </div>
@@ -254,14 +261,15 @@ export function LlmStep({ status }: StepProps) {
           <div className="callout callout--ok" role="status">
             <Icon name="check" />
             <div>
-              The curator answered in <strong>{(result.ms / 1000).toFixed(result.ms < 10_000 ? 1 : 0)} s</strong> with <span className="mono">{result.model}</span>. It's ready to sleep on your inbox.
+              {v("The model answered in", "The curator answered in")} <strong>{(result.ms / 1000).toFixed(result.ms < 10_000 ? 1 : 0)} s</strong> with <span className="mono">{result.model}</span>.{" "}
+              {v("It's ready for the nightly update.", "It's ready to sleep on your inbox.")}
             </div>
           </div>
         ) : (
           <div className="callout callout--danger" role="alert">
             <Icon name="warn" />
             <div>
-              <strong>The curator didn't answer properly</strong> (<span className="mono">{result.model}</span>, {result.ms} ms).
+              <strong>{v("The model didn't answer properly", "The curator didn't answer properly")}</strong> (<span className="mono">{result.model}</span>, {result.ms} ms).
               <div>{result.error ?? "No error message."}</div>
             </div>
           </div>

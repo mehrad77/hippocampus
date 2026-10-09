@@ -3,6 +3,7 @@ import type { LocalSetupStatus, ScheduleStatus } from "@hippocampus/dashboard";
 import { postJson } from "../../lib/api.ts";
 import { patch } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
+import { useTerms } from "../../lib/prefs.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { RelTime } from "../../ui/Parts.tsx";
 import { ConfirmDialog, Effects, ErrorCallout, Facts, Field, JobRunner, refreshSetup, SnippetBlock, useAction } from "./common.tsx";
@@ -11,6 +12,7 @@ import { hhmm, pad2, type StepProps } from "./model.ts";
 const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
 export function ScheduleStep({ status }: StepProps) {
+  const { v } = useTerms();
   const sched = status.schedule;
   const [hour, setHour] = useState(sched.hour ?? 3);
   const [minute, setMinute] = useState(sched.minute ?? 30);
@@ -26,7 +28,12 @@ export function ScheduleStep({ status }: StepProps) {
     setConfirm(undefined);
     if (!res) return;
     patch<LocalSetupStatus>("/setup/status", (s) => ({ ...s, schedule: res }));
-    toast("remove" in body ? "The nightly sleep is unscheduled." : `The curator will sleep at ${hhmm(body.hour, body.minute)} every night.`, "ok");
+    toast(
+      "remove" in body
+        ? v("The nightly update is unscheduled.", "The nightly sleep is unscheduled.")
+        : v(`The nightly update will run at ${hhmm(body.hour, body.minute)} every night.`, `The curator will sleep at ${hhmm(body.hour, body.minute)} every night.`),
+      "ok",
+    );
     void refreshSetup();
   };
 
@@ -36,15 +43,25 @@ export function ScheduleStep({ status }: StepProps) {
         <Effects
           items={[
             ["writes", <>a launchd agent, <code className="sz-break">{plist}</code>, and loads it with launchctl. Removing it unloads and deletes that file.</>],
-            ["runs", <>hippo sleep for this vault every night at the time you pick, with the curator settings from <code>{status.envFile}</code>. If your Mac is asleep then, launchd runs it when it wakes.</>],
-            ["never", "touches the vault by scheduling. The dry run below writes nothing either."],
+            [
+              "runs",
+              v(
+                <>
+                  <code>hippo sleep</code> (the nightly update) for this vault every night at the time you pick, with the AI model settings from <code>{status.envFile}</code>. If your Mac is asleep then, launchd runs it when it wakes.
+                </>,
+                <>
+                  hippo sleep for this vault every night at the time you pick, with the curator settings from <code>{status.envFile}</code>. If your Mac is asleep then, launchd runs it when it wakes.
+                </>,
+              ),
+            ],
+            ["never", v("touches the vault by scheduling. The test run below writes nothing either.", "touches the vault by scheduling. The dry run below writes nothing either.")],
           ]}
         />
       ) : (
         <Effects
           items={[
             ["shows", "a cron line for you to add yourself. This dashboard installs schedules only on macOS."],
-            ["never", "touches the vault. The dry run below writes nothing either."],
+            ["never", v("touches the vault. The test run below writes nothing either.", "touches the vault. The dry run below writes nothing either.")],
           ]}
         />
       )}
@@ -53,7 +70,7 @@ export function ScheduleStep({ status }: StepProps) {
         rows={[
           ["Scheduled", sched.installed ? (sched.hour !== undefined && sched.minute !== undefined ? `Every night at ${hhmm(sched.hour, sched.minute)}` : "Yes") : <span className="sz-warn-text">Not yet</span>],
           ...(sched.installed ? ([["Loaded", sched.loaded === false ? <strong className="sz-warn-text">No: installed but not loaded</strong> : "Yes"]] as [string, React.ReactNode][]) : []),
-          ...(sched.nextRun ? ([["Next sleep", <RelTime at={sched.nextRun} />]] as [string, React.ReactNode][]) : []),
+          ...(sched.nextRun ? ([[v("Next update", "Next sleep"), <RelTime at={sched.nextRun} />]] as [string, React.ReactNode][]) : []),
           ["Platform", sched.platform],
         ]}
       />
@@ -93,7 +110,12 @@ export function ScheduleStep({ status }: StepProps) {
           <p className="hint sz-flush">A quiet hour works best, after your agents are done for the day and before you wake. Times are this machine's local time.</p>
           <div className="row">
             <button type="submit" className="btn btn--primary" disabled={action.busy || !changed}>
-              <Icon name="moonStars" /> {sched.installed ? (changed ? `Move it to ${hhmm(hour, minute)}` : `Sleeping at ${hhmm(hour, minute)}`) : `Sleep nightly at ${hhmm(hour, minute)}`}
+              <Icon name="moonStars" />{" "}
+              {sched.installed
+                ? changed
+                  ? `Move it to ${hhmm(hour, minute)}`
+                  : v(`Runs at ${hhmm(hour, minute)}`, `Sleeping at ${hhmm(hour, minute)}`)
+                : v(`Run nightly at ${hhmm(hour, minute)}`, `Sleep nightly at ${hhmm(hour, minute)}`)}
             </button>
             {sched.installed && (
               <button type="button" className="btn btn--danger" onClick={() => setConfirm("remove")} disabled={action.busy}>
@@ -112,25 +134,30 @@ export function ScheduleStep({ status }: StepProps) {
           <SnippetBlock snippet={{ label: "Add with crontab -e", lang: "text", code: sched.cron }} />
         </details>
       ) : (
-        <SnippetBlock snippet={{ label: "Add this line with crontab -e", lang: "text", code: sched.cron, note: "Or run the same command from a systemd timer. It needs the curator settings in its environment." }} />
+        <SnippetBlock snippet={{ label: "Add this line with crontab -e", lang: "text", code: sched.cron, note: v("Or run the same command from a systemd timer. It needs the AI model settings in its environment.", "Or run the same command from a systemd timer. It needs the curator settings in its environment.") }} />
       )}
 
-      <h3 className="sz-subhead">Rehearse a sleep</h3>
-      <p>
-        A dry run reads up to a few inbox episodes and shows what the curator would make of them, <strong>without writing anything</strong>. It uses the saved curator model, so it can take a minute or two; with a hosted API, the episodes it reads are sent there.
-      </p>
+      <h3 className="sz-subhead">{v("Test run (nothing is saved)", "Rehearse a sleep")}</h3>
+      {v(
+        <p>
+          A test run reads up to a few notes from the inbox and shows what the nightly update would make of them, <strong>without saving anything</strong>. It uses the saved AI model, so it can take a minute or two; with a hosted API, the notes it reads are sent there.
+        </p>,
+        <p>
+          A dry run reads up to a few inbox episodes and shows what the curator would make of them, <strong>without writing anything</strong>. It uses the saved curator model, so it can take a minute or two; with a hosted API, the episodes it reads are sent there.
+        </p>,
+      )}
       <div className="row">
         <label className="field sz-limit">
-          <span>Episodes</span>
+          <span>{v("Notes", "Episodes")}</span>
           <input className="input" type="number" min={1} max={50} value={limit} onChange={(e) => setLimit(Math.max(1, Math.min(50, Number(e.target.value) || 1)))} />
         </label>
       </div>
-      <JobRunner kind="sleep-dry-run" limit={limit} label="Rehearse a sleep (dry run)" idleHint="Nothing is written to the vault." />
+      <JobRunner kind="sleep-dry-run" limit={limit} label={v("Start a test run", "Rehearse a sleep (dry run)")} idleHint="Nothing is written to the vault." />
 
       <ConfirmDialog
         open={confirm === "install"}
         onClose={() => setConfirm(undefined)}
-        title={sched.installed ? "Move the nightly sleep?" : "Schedule the nightly sleep?"}
+        title={sched.installed ? v("Move the nightly update?", "Move the nightly sleep?") : v("Schedule the nightly update?", "Schedule the nightly sleep?")}
         confirmLabel={sched.installed ? `Move it to ${hhmm(hour, minute)}` : `Schedule it at ${hhmm(hour, minute)}`}
         busy={action.busy}
         onConfirm={() => void apply({ hour, minute })}
@@ -140,9 +167,23 @@ export function ScheduleStep({ status }: StepProps) {
         </p>
         <p className="muted">Remove it here any time.</p>
       </ConfirmDialog>
-      <ConfirmDialog open={confirm === "remove"} onClose={() => setConfirm(undefined)} title="Remove the nightly sleep?" confirmLabel="Remove it" danger busy={action.busy} onConfirm={() => void apply({ remove: true })}>
+      <ConfirmDialog
+        open={confirm === "remove"}
+        onClose={() => setConfirm(undefined)}
+        title={v("Remove the nightly update?", "Remove the nightly sleep?")}
+        confirmLabel="Remove it"
+        danger
+        busy={action.busy}
+        onConfirm={() => void apply({ remove: true })}
+      >
         <p>
-          This unloads the launchd agent and deletes <code className="sz-break">{plist}</code>. The vault is untouched; episodes simply wait in the inbox until the next sleep you run.
+          This unloads the launchd agent and deletes <code className="sz-break">{plist}</code>.{" "}
+          {v(
+            <>
+              The vault is untouched; notes simply wait in the inbox until you next run <code>hippo sleep</code>.
+            </>,
+            "The vault is untouched; episodes simply wait in the inbox until the next sleep you run.",
+          )}
         </p>
       </ConfirmDialog>
     </div>

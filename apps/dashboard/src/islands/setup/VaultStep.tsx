@@ -3,6 +3,7 @@ import type { LocalSetupStatus, LocalVaultStatus, VaultSetupRequest } from "@hip
 import { postJson } from "../../lib/api.ts";
 import { invalidate } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
+import { useTerms } from "../../lib/prefs.ts";
 import type { SessionInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { ChipsInput, Effects, ErrorCallout, Facts, Field, SnippetBlock, TabPanel, Tabs, useAction } from "./common.tsx";
@@ -163,6 +164,7 @@ function MakeDefault({ checked, onChange, envFile, what }: { checked: boolean; o
 }
 
 function CreateForm({ status, busy, onSubmit }: { status: LocalSetupStatus; busy: boolean; onSubmit: Submit }) {
+  const { v } = useTerms();
   const d = status.defaults;
   const [dir, setDir] = useState(d.dir);
   const [campaign, setCampaign] = useState("");
@@ -176,7 +178,7 @@ function CreateForm({ status, busy, onSubmit }: { status: LocalSetupStatus; busy
 
   const problems = {
     dir: dir.trim() ? undefined : "Choose a folder.",
-    campaign: campaign.trim() ? undefined : "Name the campaign.",
+    campaign: campaign.trim() ? undefined : v("Give it a name.", "Name the campaign."),
     human: agentIdProblem(human),
     timezone: isTimeZone(timezone) ? undefined : "Use a time zone name such as Europe/Lisbon.",
   };
@@ -193,7 +195,7 @@ function CreateForm({ status, busy, onSubmit }: { status: LocalSetupStatus; busy
         if (!valid) return;
         onSubmit(
           { action: "create", dir: dir.trim(), campaign: campaign.trim(), human: human.trim(), timezone: timezone.trim(), domains, seed: seed || undefined, makeDefault },
-          `${campaign.trim()} begins: the vault is at ${dir.trim()}.`,
+          v(`Created ${campaign.trim()}: the vault is at ${dir.trim()}.`, `${campaign.trim()} begins: the vault is at ${dir.trim()}.`),
         );
       }}
     >
@@ -201,13 +203,13 @@ function CreateForm({ status, busy, onSubmit }: { status: LocalSetupStatus; busy
         <Field label="Folder" hint="A new or empty folder. ~ means your home folder." problem={show(problems.dir)}>
           {(f) => <input id={f.id} className="input mono" value={dir} onChange={(e) => setDir(e.target.value)} aria-describedby={f.describedBy} aria-invalid={f.invalid} autoComplete="off" spellCheck={false} />}
         </Field>
-        <Field label="Campaign name" hint="What this memory is about, e.g. “Lisbon Arc”." problem={show(problems.campaign)}>
+        <Field label={v("Name", "Campaign name")} hint="What this memory is about, e.g. “Lisbon Arc”." problem={show(problems.campaign)}>
           {(f) => <input id={f.id} className="input" value={campaign} onChange={(e) => setCampaign(e.target.value)} aria-describedby={f.describedBy} aria-invalid={f.invalid} placeholder="Lisbon Arc" />}
         </Field>
-        <Field label="Your id" hint="How notes and agents refer to you. Your word outranks every agent's." problem={show(problems.human)}>
+        <Field label="Your id" hint={v("How notes and agents refer to you. Your edits outrank every agent's.", "How notes and agents refer to you. Your word outranks every agent's.")} problem={show(problems.human)}>
           {(f) => <input id={f.id} className="input mono" value={human} onChange={(e) => setHuman(e.target.value)} aria-describedby={f.describedBy} aria-invalid={f.invalid} autoComplete="off" spellCheck={false} />}
         </Field>
-        <Field label="Time zone" hint="Dates and the nightly sleep follow it." problem={show(problems.timezone)}>
+        <Field label="Time zone" hint={v("Dates and the nightly update follow it.", "Dates and the nightly sleep follow it.")} problem={show(problems.timezone)}>
           {(f) => (
             <>
               <input id={f.id} className="input" value={timezone} onChange={(e) => setTimezone(e.target.value)} aria-describedby={f.describedBy} aria-invalid={f.invalid} list="sz-zones" autoComplete="off" spellCheck={false} />
@@ -219,10 +221,24 @@ function CreateForm({ status, busy, onSubmit }: { status: LocalSetupStatus; busy
             </>
           )}
         </Field>
-        <ChipsInput label="Domains (your lanes)" values={domains} onChange={setDomains} validate={domainProblem} placeholder="add a domain…" />
-        <p className="hint sz-wide sz-flush">Domains are the areas an agent can be the authority on, like housing or career. You give agents authority over them in the party step.</p>
+        <ChipsInput label={v("Domains (areas of responsibility)", "Domains (your lanes)")} values={domains} onChange={setDomains} validate={domainProblem} placeholder="add a domain…" />
+        <p className="hint sz-wide sz-flush">
+          {v(
+            "Domains are the areas an agent can be the authority on, like housing or career. You give agents authority over them in the Agents step.",
+            "Domains are the areas an agent can be the authority on, like housing or career. You give agents authority over them in the party step.",
+          )}
+        </p>
         {d.seeds.length > 0 && (
-          <Field label="Start from" hint={seed === "example-relocation" ? "A fictional campaign (a move to Lisbon, with a residency agent, a home finder and friends) to look around in before you make your own." : seed ? "Copies the seed's example notes into the new vault." : "An empty vault: just the template."}>
+          <Field label="Start from" hint={
+              seed === "example-relocation"
+                ? v(
+                    "A fictional example (a move to Lisbon, with a residency agent, a home finder and others) to look around in before you make your own.",
+                    "A fictional campaign (a move to Lisbon, with a residency agent, a home finder and friends) to look around in before you make your own.",
+                  )
+                : seed
+                  ? "Copies the seed's example notes into the new vault."
+                  : "An empty vault: just the template."
+            }>
             {(f) => (
               <select id={f.id} className="select" value={seed} onChange={(e) => setSeed(e.target.value)} aria-describedby={f.describedBy}>
                 <option value="">The empty template</option>
@@ -345,6 +361,7 @@ function GithubForm({ status, busy, onSubmit }: { status: LocalSetupStatus; busy
 }
 
 function McpForm({ busy, onSubmit }: { busy: boolean; onSubmit: Submit }) {
+  const { v } = useTerms();
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [tried, setTried] = useState(false);
@@ -373,7 +390,13 @@ function McpForm({ busy, onSubmit }: { busy: boolean; onSubmit: Submit }) {
       <Effects
         items={[
           ["contacts", "the MCP server, to read the vault through it."],
-          ["never", "does more than the token allows: steps that need the vault's files (secrets, git, the nightly sleep) stay with the machine that has them."],
+          [
+            "never",
+            v(
+              "does more than the token allows: steps that need the vault's files (secrets, git, the nightly update) stay with the machine that has them.",
+              "does more than the token allows: steps that need the vault's files (secrets, git, the nightly sleep) stay with the machine that has them.",
+            ),
+          ],
         ]}
       />
       <div className="row">

@@ -1,0 +1,7 @@
+---
+import { TERMS, type TermKey } from "../lib/terms.ts";
+interface Props { k?: TermKey; plain?: string; codex?: string }
+const { k } = Astro.props;
+const [plain, codex] = k ? TERMS[k] : [Astro.props.plain ?? "", Astro.props.codex ?? Astro.props.plain ?? ""];
+---
+{plain === codex ? plain : <><span class="lbl-plain">{plain}</span><span class="lbl-codex">{codex}</span></>}

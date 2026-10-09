@@ -1,6 +1,7 @@
 /*
- * Session Zero (/setup/): the wizard rail and stepper, step frames, "what this step does" boxes,
- * copy-paste snippets, job logs and the token reveal. Colors come from tokens.css only.
+ * Setup & health (/setup/, Session Zero in the codex): the wizard rail and stepper, step frames,
+ * "what this step does" boxes, copy-paste snippets, job logs and the token reveal. Colors come from
+ * tokens.css only. The plain look (IBM Carbon) overrides sit together at the end of the file.
  */
 
 .sz {
@@ -1238,4 +1239,337 @@
     padding-left: 0;
     padding-top: 36px;
   }
+}
+
+/* ── Plain look (IBM Carbon) ──────────────────────────────────────────────
+ * Flat and quiet: no glows, gradients, rotated diamonds or roman numerals. The step rail becomes a
+ * Carbon vertical progress indicator: a gray ring per step, a blue ring with a dot for the current
+ * one, a blue check for done, and a line that turns blue below finished steps. Words stay beside every
+ * glyph (the state tags), so color is never the only signal. */
+
+:root:not([data-style="codex"]) .sz-subhead {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* State tags: Carbon's pill-shaped tags, borderless, at a readable size. */
+:root:not([data-style="codex"]) .sz-state {
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-color: transparent;
+  font-size: var(--label-size);
+  font-weight: 400;
+  line-height: 1.43;
+}
+
+:root:not([data-style="codex"]) .sz-state--compact {
+  padding: 0 var(--space-2);
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .sz-state--compact svg {
+  width: 12px;
+  height: 12px;
+}
+
+:root:not([data-style="codex"]) .sz-state--optional {
+  --c: var(--ink);
+  --b: var(--accent-soft);
+}
+
+:root:not([data-style="codex"]) .sz-state--locked {
+  --b: transparent;
+  border-color: var(--rule-strong);
+}
+
+:root:not([data-style="codex"]) .sz-how {
+  font-size: var(--label-size);
+}
+
+/* The rail as a vertical progress indicator. */
+:root:not([data-style="codex"]) .sz-rail__list {
+  gap: 0;
+}
+
+:root:not([data-style="codex"]) .sz-rail__item:not(:last-child)::after {
+  left: 16px;
+  top: 30px;
+  bottom: -6px;
+  width: 1px;
+  background: var(--rule-strong);
+  opacity: 1;
+}
+
+:root:not([data-style="codex"]) .sz-rail__item[data-state="done"]:not(:last-child)::after {
+  background: var(--accent);
+}
+
+:root:not([data-style="codex"]) .sz-rail__link {
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-2);
+  border-radius: 0;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .sz-rail__link:hover {
+  background: var(--surface-hover, var(--surface-sunk));
+  color: var(--ink);
+}
+
+:root:not([data-style="codex"]) .sz-rail__link[aria-current="step"] {
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+}
+
+:root:not([data-style="codex"]) .sz-rail__link[aria-current="step"]:hover {
+  background: var(--surface-hover, var(--surface-sunk));
+}
+
+/* Step icons are decoration here; the progress ring carries the position. */
+:root:not([data-style="codex"]) .sz-rail__icon {
+  display: none;
+}
+
+/* The number stays in the markup (it's aria-hidden); the ring replaces it on screen. */
+:root:not([data-style="codex"]) .sz-rail__num {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  font-size: 0;
+  color: transparent;
+}
+
+:root:not([data-style="codex"]) .sz-rail__num::before {
+  inset: 0;
+  transform: none;
+  border: 1px solid var(--ink-3);
+  border-radius: 50%;
+  background: transparent;
+}
+
+:root:not([data-style="codex"]) .sz-rail__item[data-state="done"] .sz-rail__num::before {
+  border-color: var(--accent);
+  background: transparent;
+}
+
+:root:not([data-style="codex"]) .sz-rail__item[data-state="done"] .sz-rail__num::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 3px;
+  width: 4px;
+  height: 7px;
+  border: solid var(--accent);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+:root:not([data-style="codex"]) .sz-rail__item:is([data-state="warn"], [data-state="error"]) .sz-rail__num::before {
+  border-color: var(--warn);
+}
+
+:root:not([data-style="codex"]) .sz-rail__item[data-state="error"] .sz-rail__num::before {
+  border-color: var(--danger);
+}
+
+:root:not([data-style="codex"]) .sz-rail__item:is([data-state="warn"], [data-state="error"]) .sz-rail__num::after {
+  content: "!";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--warn);
+}
+
+:root:not([data-style="codex"]) .sz-rail__item[data-state="error"] .sz-rail__num::after {
+  color: var(--danger);
+}
+
+:root:not([data-style="codex"]) .sz-rail__item[data-state="locked"] .sz-rail__num::before {
+  border-style: dashed;
+  border-color: var(--rule-strong);
+}
+
+/* Current step: a blue ring with a blue dot, whatever its state. */
+:root:not([data-style="codex"]) .sz-rail__link[aria-current="step"] .sz-rail__num::before {
+  border: 2px solid var(--accent);
+  background: transparent;
+}
+
+:root:not([data-style="codex"]) .sz-rail__link[aria-current="step"] .sz-rail__num::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 50%;
+  transform: none;
+  background: var(--accent);
+}
+
+:root:not([data-style="codex"]) .sz-stepper {
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .sz-stepper__count {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .sz-stepper__track li {
+  height: 4px;
+  border-radius: var(--radius-s);
+}
+
+:root:not([data-style="codex"]) .sz-stepper__track li[data-current] {
+  height: 8px;
+  outline: 0;
+  background: var(--accent);
+}
+
+/* A step. */
+:root:not([data-style="codex"]) .sz-step__kicker {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .sz-step__lede,
+:root:not([data-style="codex"]) .sz-done__lede {
+  font-style: normal;
+}
+
+/* "What this step does": a Carbon inline notification (info). */
+:root:not([data-style="codex"]) .sz-effects {
+  padding: var(--space-4);
+  border: 0;
+  border-left: 3px solid var(--accent);
+  border-radius: 0;
+  background: var(--surface-sunk);
+}
+
+:root:not([data-style="codex"]) .sz-effects__title {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Snippets and logs. */
+:root:not([data-style="codex"]) .sz-snippet__head {
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  background: transparent;
+}
+
+:root:not([data-style="codex"]) .sz-snippet__lang {
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .sz-snippet__note {
+  padding: var(--space-2) var(--space-4);
+  border-top-style: solid;
+}
+
+:root:not([data-style="codex"]) .sz-log {
+  font-size: 0.875rem;
+}
+
+/* Forms: hints at label size, the chips field dressed like a Carbon field. */
+:root:not([data-style="codex"]) .field > .hint {
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .sz-chips {
+  border: 0;
+  border-bottom: 1px solid var(--rule-strong);
+  border-radius: 0;
+  background: var(--surface-sunk);
+}
+
+/* Cards, facts, lists. */
+:root:not([data-style="codex"]) .sz-facts dt {
+  padding-top: 0.15em;
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .sz-deploy__step::before {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--ink-3);
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .sz-pillar {
+  border-color: transparent;
+  background: var(--surface-sunk);
+}
+
+:root:not([data-style="codex"]) .sz-pillar::before {
+  content: none;
+}
+
+:root:not([data-style="codex"]) .sz-pillar > svg,
+:root:not([data-style="codex"]) .sz-door > svg {
+  color: var(--link);
+}
+
+:root:not([data-style="codex"]) .sz-done__seal {
+  width: auto;
+  height: auto;
+  background: none;
+  color: var(--canon);
+}
+
+/* Doors: Carbon clickable tiles. */
+:root:not([data-style="codex"]) .sz-door {
+  align-items: flex-start;
+  text-align: left;
+}
+
+:root:not([data-style="codex"]) .sz-door:hover {
+  transform: none;
+  border-color: var(--rule);
+  background: var(--surface-hover, var(--surface-sunk));
+}
+
+:root:not([data-style="codex"]) .sz-door strong,
+:root:not([data-style="codex"]) .sz-agent__title {
+  font-weight: 600;
+}
+
+/* Agents: Carbon selectable tiles. */
+:root:not([data-style="codex"]) .sz-agent:hover {
+  background: var(--surface-hover, var(--surface-sunk));
+}
+
+:root:not([data-style="codex"]) .sz-agent[aria-pressed="true"] {
+  background: var(--surface-selected, var(--accent-soft));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+:root:not([data-style="codex"]) .sz-agent__seen {
+  font-size: var(--label-size);
+}
+
+/* Tokens. */
+:root:not([data-style="codex"]) .sz-tokens td[data-label]::before {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .sz-token__value {
+  border: 1px solid var(--rule-strong);
+  background: var(--surface-sunk);
 }

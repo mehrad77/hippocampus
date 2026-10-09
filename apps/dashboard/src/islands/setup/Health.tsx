@@ -2,10 +2,12 @@ import type { SetupItem } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Runes } from "../../ui/Parts.tsx";
 import { HowChip, StateBadge } from "./common.tsx";
-import { tally } from "./model.ts";
+import { useTerms } from "../../lib/prefs.ts";
+import { itemTitle, tally } from "./model.ts";
 
 /** "Setup & health": every status item at a glance, each linking to where it is fixed. */
 export function HealthChecklist({ items, linkFor, defaultOpen = true, title = "Setup & health" }: { items: readonly SetupItem[]; linkFor: (id: string) => string | undefined; defaultOpen?: boolean; title?: string }) {
+  const { plain } = useTerms();
   const t = tally(items);
   return (
     <details className="panel sz-health" open={defaultOpen}>
@@ -31,7 +33,7 @@ export function HealthChecklist({ items, linkFor, defaultOpen = true, title = "S
             <li key={item.id} className={`sz-health__item sz-health__item--${item.state}`}>
               <StateBadge state={item.state} />
               <span className="sz-health__text">
-                <strong>{link ? <a href={link}>{item.title}</a> : item.title}</strong>
+                <strong>{link ? <a href={link}>{itemTitle(item, plain)}</a> : itemTitle(item, plain)}</strong>
                 <span className="small muted">{item.detail}</span>
               </span>
               <HowChip how={item.how} />

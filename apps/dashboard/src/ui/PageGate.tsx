@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useTerms } from "../lib/prefs.ts";
 import { BASE, href } from "../lib/routes.ts";
 import { useSession } from "../lib/session.ts";
 import type { SessionInfo } from "../lib/types.ts";
@@ -23,12 +24,13 @@ export function PageGate({ children, allowSetup }: { children: (session: Session
 }
 
 function SignInDoor({ code, message }: { code: string; message: string }) {
+  const { v } = useTerms();
   const local = code === "LOCAL_TOKEN";
   const login = `${BASE}/auth/login?return=${encodeURIComponent(location.pathname + location.search)}`;
   return (
     <div className="door panel">
       <Icon name={local ? "key" : "lock"} size={40} />
-      <h1>{local ? "Knock twice" : "The vault is sealed"}</h1>
+      <h1>{local ? v("Sign in", "Knock twice") : v("Sign in", "The vault is sealed")}</h1>
       {local ? (
         <>
           <p>This dashboard only opens for the browser that started it.</p>
@@ -53,6 +55,7 @@ function SignInDoor({ code, message }: { code: string; message: string }) {
 }
 
 function ServerTrouble({ message, status }: { message: string; status: number }) {
+  const { t, v } = useTerms();
   return (
     <div className="callout callout--danger" role="alert">
       <Icon name="warn" />
@@ -60,7 +63,8 @@ function ServerTrouble({ message, status }: { message: string; status: number })
         <strong>The dashboard can't reach its vault{status ? ` (${status})` : ""}.</strong>
         <div>{message}</div>
         <div className="small muted">
-          If the vault isn't set up yet, start <a href={href.page("setup")}>Session Zero</a>.
+          {v("If the vault isn't set up yet, go to ", "If the vault isn't set up yet, start ")}
+          <a href={href.page("setup")}>{t("sessionZero")}</a>.
         </div>
       </div>
     </div>

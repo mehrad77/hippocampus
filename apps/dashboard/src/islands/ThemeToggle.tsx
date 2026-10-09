@@ -1,35 +1,15 @@
-import { useEffect, useState } from "react";
+import { isDark, savePrefs, usePrefs } from "../lib/prefs.ts";
 import { Icon } from "../ui/Icon.tsx";
 
-type Theme = "parchment" | "candlelit";
-
-function current(): Theme {
-  const t = document.documentElement.getAttribute("data-theme");
-  if (t === "parchment" || t === "candlelit") return t;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "candlelit" : "parchment";
-}
-
+/** Quick light/dark switch in the nav; the full choices live in Setup & health → Personalization. */
 export default function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("parchment");
-  useEffect(() => setTheme(current()), []);
-  const next: Theme = theme === "candlelit" ? "parchment" : "candlelit";
+  const prefs = usePrefs();
+  const dark = typeof window !== "undefined" && isDark(prefs);
+  const label = prefs.look === "codex" ? (dark ? "Parchment" : "Candlelit") : dark ? "Light mode" : "Dark mode";
   return (
-    <button
-      type="button"
-      className="navlink navlink--button"
-      onClick={() => {
-        document.documentElement.setAttribute("data-theme", next);
-        try {
-          localStorage.setItem("hippo:theme", next);
-        } catch {
-          // Not persisted; fine for this page.
-        }
-        setTheme(next);
-      }}
-      aria-label={`Switch to ${next} theme`}
-    >
-      <Icon name={theme === "candlelit" ? "sun" : "moon"} />
-      {theme === "candlelit" ? "Parchment" : "Candlelit"}
+    <button type="button" className="navlink navlink--button" onClick={() => savePrefs({ mode: dark ? "light" : "dark" })} aria-label={`Switch to ${label.toLowerCase()}`}>
+      <Icon name={dark ? "sun" : "moon"} />
+      {label}
     </button>
   );
 }

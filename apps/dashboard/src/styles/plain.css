@@ -1,0 +1,481 @@
+/*
+ * The plain look (the default), built on IBM's Carbon design system: IBM Plex, gray-10 / gray-100
+ * themes, square corners, flat tiles, fields with a bottom border, the 2px focus ring, and labels at
+ * a readable size in sentence case. Same layout and components as the codex; only their dress changes.
+ * Scoped to "not the codex". Feature stylesheets add their own `:root:not([data-style="codex"])`
+ * rules next to the parts they own.
+ */
+
+/* Labels as authored: no uppercase, no letter-spacing tricks. */
+:root:not([data-style="codex"]) * {
+  text-transform: none !important;
+  letter-spacing: normal !important;
+}
+
+:root:not([data-style="codex"]) {
+  /* Carbon label-01 is 12px; readability first, so small labels never go below 14px here. */
+  --label-size: 0.875rem;
+}
+
+/* ── Type (Carbon productive scale) ──────────────────────────────────── */
+
+:root:not([data-style="codex"]) h1 {
+  font-size: clamp(1.75rem, 1.4rem + 1vw, 2.25rem);
+  font-weight: 400;
+  line-height: 1.25;
+}
+
+:root:not([data-style="codex"]) h2 {
+  font-size: 1.25rem;
+  font-weight: 400;
+  line-height: 1.4;
+}
+
+:root:not([data-style="codex"]) :is(h3, h4) {
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+:root:not([data-style="codex"]) a:not([class]):hover,
+:root:not([data-style="codex"]) .prose a:hover {
+  color: var(--link-hover);
+}
+
+:root:not([data-style="codex"]) :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+  border-radius: 0;
+}
+
+:root:not([data-style="codex"]) :is(code, kbd, pre) {
+  border-radius: 0;
+}
+
+:root:not([data-style="codex"]) ::selection {
+  background: var(--accent-soft);
+}
+
+:root:not([data-style="codex"]) :is(.rail__section, .page-head__kicker, .field > span, .field > label, .label, .table th, .prose th) {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .page-head__kicker {
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .page-head__lede {
+  font-style: normal;
+  color: var(--ink-2);
+}
+
+/* ── UI shell: Carbon side nav ───────────────────────────────────────── */
+
+:root:not([data-style="codex"]) .rail {
+  background: var(--surface);
+  border-right: 1px solid var(--rule);
+  padding-top: var(--space-4);
+}
+
+:root:not([data-style="codex"]) .rail__brand {
+  border-bottom-color: var(--rule);
+}
+
+:root:not([data-style="codex"]) .rail__brand svg {
+  color: var(--accent);
+}
+
+:root:not([data-style="codex"]) .rail__title {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+:root:not([data-style="codex"]) .rail__campaign {
+  font-style: normal;
+  font-size: 0.875rem;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .rail__section {
+  margin: var(--space-4) var(--space-3) var(--space-1);
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .navlink {
+  border-radius: 0;
+  padding: 8px var(--space-3);
+  color: var(--ink-2);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .navlink:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+:root:not([data-style="codex"]) .navlink[aria-current="page"] {
+  background: var(--surface-selected);
+  color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+:root:not([data-style="codex"]) .navlink__badge {
+  background: var(--support-error);
+  color: #ffffff;
+}
+
+:root:not([data-style="codex"]) .navlink__badge[data-badge="satchel"] {
+  background: var(--accent);
+}
+
+:root:not([data-style="codex"]) .topbar,
+:root:not([data-style="codex"]) .tabbar {
+  background: var(--surface);
+  backdrop-filter: none;
+}
+
+/* ── Tiles (panels), stats ───────────────────────────────────────────── */
+
+:root:not([data-style="codex"]) .panel {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .panel::after {
+  display: none;
+}
+
+:root:not([data-style="codex"]) .panel__title {
+  font-family: var(--font-body);
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .panel__title svg {
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .stat {
+  color: var(--ink);
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  padding: var(--space-4);
+}
+
+:root:not([data-style="codex"]) a.stat:hover {
+  background: var(--surface-hover);
+}
+
+:root:not([data-style="codex"]) .stat__label {
+  font-size: 0.875rem;
+  color: var(--ink-2);
+}
+
+:root:not([data-style="codex"]) .stat__value {
+  font-size: 2.25rem;
+  font-weight: 300;
+  line-height: 1.2;
+}
+
+:root:not([data-style="codex"]) .ornament {
+  color: var(--rule-strong);
+}
+
+:root:not([data-style="codex"]) .ornament::before,
+:root:not([data-style="codex"]) .ornament::after {
+  background: var(--rule);
+}
+
+:root:not([data-style="codex"]) .quest-tile {
+  border: 0;
+  border-radius: 0;
+  background: var(--surface-sunk);
+  box-shadow: none;
+}
+
+:root:not([data-style="codex"]) .quest-tile:hover {
+  transform: none;
+  background: var(--surface-hover);
+}
+
+:root:not([data-style="codex"]) .quest-tile__title,
+:root:not([data-style="codex"]) .empty__title {
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .empty svg {
+  color: var(--ink-3);
+}
+
+:root:not([data-style="codex"]) .timeline {
+  border-left-color: var(--rule);
+}
+
+:root:not([data-style="codex"]) .timeline__item::before {
+  border-color: var(--rule-strong);
+  background: var(--surface);
+}
+
+:root:not([data-style="codex"]) .timeline__item.kind--beat::before,
+:root:not([data-style="codex"]) .timeline__item.kind--decision::before {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+/* ── Buttons: primary, tertiary (default), ghost, danger ─────────────── */
+
+:root:not([data-style="codex"]) .btn {
+  min-height: 40px;
+  padding: 0 var(--space-4);
+  border-radius: 0;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  box-shadow: none;
+  font-weight: 400;
+  font-size: 0.9375rem;
+  transition: background 110ms cubic-bezier(0.2, 0, 0.38, 0.9), color 110ms cubic-bezier(0.2, 0, 0.38, 0.9);
+}
+
+:root:not([data-style="codex"]) .btn:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: var(--accent-ink);
+}
+
+:root:not([data-style="codex"]) .btn:active {
+  transform: none;
+  background: var(--accent-active);
+}
+
+:root:not([data-style="codex"]) .btn--icon {
+  width: 40px;
+  padding: 0;
+}
+
+:root:not([data-style="codex"]) .btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+:root:not([data-style="codex"]) .btn--ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink);
+}
+
+:root:not([data-style="codex"]) .btn--ghost:hover {
+  background: var(--surface-hover);
+  border-color: transparent;
+  color: var(--ink);
+}
+
+:root:not([data-style="codex"]) .btn--danger {
+  border-color: var(--support-error);
+  color: var(--support-error);
+}
+
+:root:not([data-style="codex"]) .btn--danger:hover {
+  background: var(--support-error);
+  border-color: var(--support-error);
+  color: #ffffff;
+}
+
+:root:not([data-style="codex"]) .btn:disabled,
+:root:not([data-style="codex"]) .btn[aria-disabled="true"] {
+  opacity: 1;
+  background: transparent;
+  border-color: var(--rule);
+  color: var(--ink-3);
+}
+
+:root:not([data-style="codex"]) .btn--primary:disabled {
+  background: var(--rule);
+  border-color: var(--rule);
+}
+
+/* ── Fields: Carbon text input (fill + bottom border) ────────────────── */
+
+:root:not([data-style="codex"]) :is(.input, .select, .textarea) {
+  min-height: 40px;
+  border: 0;
+  border-bottom: 1px solid var(--rule-strong);
+  border-radius: 0;
+  background: var(--surface-sunk);
+  box-shadow: none;
+  padding: 8px var(--space-4);
+}
+
+:root:not([data-style="codex"]) :is(.input, .select, .textarea):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+:root:not([data-style="codex"]) :is(.input, .textarea)::placeholder {
+  font-style: normal;
+}
+
+:root:not([data-style="codex"]) .check input {
+  accent-color: var(--ink);
+}
+
+/* ── Tags (seals, chips): Carbon's pill tags ─────────────────────────── */
+
+:root:not([data-style="codex"]) .seal {
+  border: 0;
+  padding: 2px 10px 2px 4px;
+  font-size: 0.8125rem;
+  font-weight: 400;
+}
+
+:root:not([data-style="codex"]) .chip {
+  border: 0;
+  background: var(--surface-selected);
+  color: var(--ink);
+  font-size: 0.875rem;
+  padding: 2px 12px;
+}
+
+:root:not([data-style="codex"]) button.chip:hover {
+  background: var(--rule-strong);
+  color: var(--accent-ink);
+}
+
+:root:not([data-style="codex"]) .chip[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+:root:not([data-style="codex"]) .lock {
+  border-radius: 0;
+}
+
+/* ── Notifications, dialogs, toasts ──────────────────────────────────── */
+
+:root:not([data-style="codex"]) .callout {
+  border: 0;
+  border-left: 3px solid var(--c, var(--support-info));
+  border-radius: 0;
+  background: color-mix(in oklab, var(--c, var(--support-info)) 9%, var(--surface));
+}
+
+:root:not([data-style="codex"]) .callout svg {
+  color: var(--c, var(--support-info));
+}
+
+:root:not([data-style="codex"]) .callout--warn {
+  --c: var(--support-warning);
+}
+
+:root:not([data-style="codex"]) .callout--warn svg {
+  color: var(--rumor);
+}
+
+:root:not([data-style="codex"]) .callout--danger {
+  --c: var(--support-error);
+}
+
+:root:not([data-style="codex"]) .callout--ok {
+  --c: var(--support-success);
+}
+
+:root:not([data-style="codex"]) .dialog {
+  border: 0;
+  border-radius: 0;
+}
+
+:root:not([data-style="codex"]) .dialog__head {
+  background: var(--surface);
+  border-bottom: 0;
+}
+
+:root:not([data-style="codex"]) .dialog__head h2 {
+  font-family: var(--font-body);
+  font-size: 1.25rem;
+  font-weight: 400;
+}
+
+:root:not([data-style="codex"]) .dialog__foot {
+  background: var(--surface);
+  border-top: 1px solid var(--rule);
+}
+
+:root:not([data-style="codex"]) .toast {
+  border: 0;
+  border-left: 3px solid var(--c, var(--support-info));
+  border-radius: 0;
+  background: var(--surface);
+}
+
+:root:not([data-style="codex"]) .toast--ok {
+  --c: var(--support-success);
+}
+
+:root:not([data-style="codex"]) .toast--error {
+  --c: var(--support-error);
+}
+
+/* ── Data tables, tabs, progress, skeletons ──────────────────────────── */
+
+:root:not([data-style="codex"]) .table th {
+  background: var(--surface-selected);
+  color: var(--ink);
+  font-weight: 600;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 0;
+}
+
+:root:not([data-style="codex"]) .table td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom-color: var(--rule);
+}
+
+:root:not([data-style="codex"]) .table tbody tr:hover td {
+  background: var(--surface-hover);
+}
+
+:root:not([data-style="codex"]) .tabs button {
+  border-bottom-width: 3px;
+  color: var(--ink-2);
+  font-weight: 400;
+}
+
+:root:not([data-style="codex"]) .tabs button[aria-selected="true"] {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+:root:not([data-style="codex"]) .runes i {
+  transform: none;
+  border-radius: 50%;
+  border-color: var(--accent);
+}
+
+:root:not([data-style="codex"]) .runes i[data-on] {
+  background: var(--accent);
+}
+
+:root:not([data-style="codex"]) .meter {
+  border-radius: 0;
+}
+
+:root:not([data-style="codex"]) .skeleton {
+  border-radius: 0;
+}
+
+:root:not([data-style="codex"]) .clock__seg--on {
+  fill: var(--accent);
+}
+
+:root:not([data-style="codex"]) .door > svg {
+  color: var(--accent);
+}

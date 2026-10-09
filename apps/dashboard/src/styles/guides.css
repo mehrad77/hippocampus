@@ -1,7 +1,8 @@
 /*
- * Guides: the Player's Handbook index, guide pages, MDX components (asides, clocks, diagrams),
- * the Prism code theme, and the 404 page. Everything is built from the design tokens, so both
- * themes (parchment and candlelit) come for free. No inline styles anywhere: the page CSP forbids them.
+ * Guides: the help index (the Player's Handbook in the codex), guide pages, MDX components (asides,
+ * clocks, diagrams), the Prism code theme, and the 404 page. Everything is built from the design
+ * tokens, so every theme comes for free. The plain look (IBM Carbon) overrides sit together at the
+ * end of the file. No inline styles anywhere: the page CSP forbids them.
  */
 
 /* ── Guide page ──────────────────────────────────────────────────────── */
@@ -945,4 +946,169 @@
 .lost__actions {
   justify-content: center;
   margin: var(--space-2) 0 var(--space-4);
+}
+
+/* ── Plain look (IBM Carbon) ──────────────────────────────────────────────
+ * Carbon long-form reading: 16/24 body text in a ~70ch measure, large headings at regular weight,
+ * flat tiles, and no seals, ornaments, map art or italics for effect. */
+
+:root:not([data-style="codex"]) .guide-crumbs {
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .guide-head__summary,
+:root:not([data-style="codex"]) .guide-hero__lede {
+  font-size: 1.125rem;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+/* Sigils: a plain icon, no medallion. */
+:root:not([data-style="codex"]) :is(.guide-sigil, .guide-card__sigil) {
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: var(--link);
+}
+
+:root:not([data-style="codex"]) .guide-hero__seal {
+  display: none;
+}
+
+/* Table of contents. */
+:root:not([data-style="codex"]) .guide-toc a:hover {
+  border-left-color: var(--accent);
+}
+
+:root:not([data-style="codex"]) .guide-toc ol ol a {
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .guide-toc__title,
+:root:not([data-style="codex"]) .guide-toc--compact summary {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* Guide text. */
+:root:not([data-style="codex"]) .guide-body {
+  max-width: 70ch;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+:root:not([data-style="codex"]) .guide .guide-body h2,
+:root:not([data-style="codex"]) .guide-section__head h2 {
+  font-size: 1.75rem;
+  font-weight: 400;
+  line-height: 1.29;
+}
+
+:root:not([data-style="codex"]) .guide .guide-body h2 {
+  margin-top: var(--space-7);
+  padding-top: 0;
+  border-top: 0;
+}
+
+:root:not([data-style="codex"]) .guide .guide-body h3 {
+  font-size: 1.25rem;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
+:root:not([data-style="codex"]) .guide-aside__title {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+  font-weight: 600;
+  color: var(--c, var(--ink));
+}
+
+:root:not([data-style="codex"]) :is(.guide-figure figcaption, .guide-section__head p, .lost__lede, .gd__label, .gd__sub--muted) {
+  font-style: normal;
+}
+
+/* Prism: Carbon-ish syntax colors from text-safe tokens, readable on the code surface in light and dark. */
+:root:not([data-style="codex"]) .guide-body {
+  --code-key: var(--link);
+  --code-string: var(--canon);
+  --code-number: var(--rumor);
+  --code-keyword: color-mix(in oklab, var(--t-faction) 70%, var(--ink));
+  --code-function: color-mix(in oklab, var(--t-item) 70%, var(--ink));
+  --code-variable: color-mix(in oklab, var(--t-character) 70%, var(--ink));
+}
+
+:root:not([data-style="codex"]) .guide-body pre[class*="language-"] {
+  box-shadow: none;
+}
+
+/* Pager and edition note. */
+:root:not([data-style="codex"]) .guide-pager__link:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover, var(--surface));
+}
+
+:root:not([data-style="codex"]) .guide-pager__dir {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .guide-edition {
+  border-top-style: solid;
+  border-top-color: var(--rule);
+}
+
+/* Index: no hero glow or ornaments; sections spaced on Carbon's 32px step instead. */
+:root:not([data-style="codex"]) .guide-index {
+  gap: var(--space-6);
+}
+
+:root:not([data-style="codex"]) .guide-index .guide-hero {
+  background: var(--surface);
+}
+
+:root:not([data-style="codex"]) .guide-index .ornament {
+  display: none;
+}
+
+:root:not([data-style="codex"]) .guide-card:hover {
+  transform: none;
+  border-color: var(--accent);
+  background: var(--surface-hover, var(--surface));
+}
+
+:root:not([data-style="codex"]) .guide-card__num {
+  font-family: var(--font-body);
+  font-size: var(--label-size);
+}
+
+:root:not([data-style="codex"]) .guide-card__title {
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+
+:root:not([data-style="codex"]) .guide-order li::marker {
+  font-family: var(--font-body);
+  font-weight: 400;
+  color: var(--ink-3);
+}
+
+/* 404: words and links only, left-aligned like the rest of the page. */
+:root:not([data-style="codex"]) .lost {
+  align-items: flex-start;
+  margin-top: var(--space-7);
+  text-align: left;
+}
+
+:root:not([data-style="codex"]) .lost__map {
+  display: none;
+}
+
+:root:not([data-style="codex"]) .lost__actions {
+  justify-content: flex-start;
 }

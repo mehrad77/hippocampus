@@ -1,7 +1,9 @@
 import { normalizeName } from "@hippocampus/core/text";
+import type { Look } from "../../lib/terms.ts";
 import type { ClaimView, EpisodeView, Overview, QuestCard } from "../../lib/types.ts";
 
 // Pure helpers for the "At the table" pages (quests, council, satchel, party): no DOM, unit-tested.
+// Messages a reader sees take the look, so they read in plain words or in the codex's.
 
 export const QUEST_STATUSES = ["active", "blocked", "dormant", "done", "failed"] as const;
 export type QuestStatus = (typeof QUEST_STATUSES)[number];
@@ -19,6 +21,23 @@ export function daysBetween(from: string, to: string): number {
 
 export function isQuestStatus(s: string | undefined): s is QuestStatus {
   return !!s && (QUEST_STATUSES as readonly string[]).includes(s);
+}
+
+const QUEST_WORD: Record<QuestStatus, string> = { active: "Active", blocked: "Blocked", dormant: "On hold", done: "Done", failed: "Failed" };
+
+/** A quest status in the reader's words: "On hold" in plain, "dormant" (as written in the note) in the codex. */
+export function questStatusWord(status: QuestStatus, look: Look = "plain"): string {
+  return look === "codex" ? status : QUEST_WORD[status];
+}
+
+/** One of core's quest change notes (`clock Paperwork 3/6`, `status → dormant`) in the reader's words. */
+export function changeLabel(change: string, look: Look = "plain"): string {
+  if (look === "codex") return change;
+  const clock = /^clock (.+ \d+\/\d+)$/.exec(change);
+  if (clock) return clock[1]!;
+  const status = /^status → (\S+)$/.exec(change);
+  if (status && isQuestStatus(status[1])) return `status → ${questStatusWord(status[1])}`;
+  return change;
 }
 
 /** What the quest action accepts (`POST /actions/quest`), minus the quest ref. */
@@ -101,41 +120,45 @@ export function groupQuests(quests: QuestCard[]): { board: QuestCard[]; dormant:
 }
 
 /** The soonest deadline still ahead, counting quest deadlines and clock deadlines. */
-export function nextDue(quests: QuestCard[]): { what: string; slug: string; daysLeft: number } | undefined {
+export function nextDue(quests: QuestCard[], look: Look = "plain"): { what: string; slug: string; daysLeft: number } | undefined {
   let best: { what: string; slug: string; daysLeft: number } | undefined;
   const consider = (what: string, slug: string, days: number | undefined) => {
     if (days !== undefined && days >= 0 && (!best || days < best.daysLeft)) best = { what, slug, daysLeft: days };
   };
   for (const q of quests) {
     consider(q.title, q.slug, q.daysLeft);
-    for (const c of q.clocks) consider(`${q.title}: ${c.name} clock`, q.slug, c.daysLeft);
+    for (const c of q.clocks) consider(look === "codex" ? `${q.title}: ${c.name} clock` : `${q.title}: ${c.name}`, q.slug, c.daysLeft);
   }
   return best;
 }
 
-/** Why a new clock can't be added yet, or undefined when it can. */
-export function clockProblem(q: QuestCard, name: string, segments: number): string | undefined {
-  if (!name.trim()) return "Name the clock first.";
+/** Why a new clock (a progress tracker, in plain words) can't be added yet, or undefined when it can. */
+export function clockProblem(q: QuestCard, name: string, segments: number, look: Look = "plain"): string | undefined {
+  const codex = look === "codex";
+  if (!name.trim()) return codex ? "Name the clock first." : "Name the progress tracker first.";
   if (name.trim().length > 100) return "Keep the name under 100 characters.";
-  if (!Number.isInteger(segments) || segments < 2 || segments > 12) return "A clock has 2 to 12 segments.";
-  if (q.clocks.some((c) => same(c.name, name))) return "This quest already has a clock with that name.";
+  if (!Number.isInteger(segments) || segments < 2 || segments > 12) return codex ? "A clock has 2 to 12 segments." : "A progress tracker has 2 to 12 parts.";
+  if (q.clocks.some((c) => same(c.name, name))) return codex ? "This quest already has a clock with that name." : "This goal already has a progress tracker with that name.";
   return undefined;
 }
 
-export function objectiveProblem(q: QuestCard, text: string): string | undefined {
-  if (!text.trim()) return "Write the objective first.";
+/** Why a new objective (a step, in plain words) can't be added yet. */
+export function objectiveProblem(q: QuestCard, text: string, look: Look = "plain"): string | undefined {
+  const codex = look === "codex";
+  if (!text.trim()) return codex ? "Write the objective first." : "Write the step first.";
   if (text.trim().length > 300) return "Keep it under 300 characters.";
-  if (q.objectives.some((o) => same(o.text, text))) return "That objective is already on the list.";
+  if (q.objectives.some((o) => same(o.text, text))) return codex ? "That objective is already on the list." : "That step is already on the list.";
   return undefined;
 }
 
 /** Why an agent id is refused, mirroring core's `addPartyMember` checks that the browser can know about. */
-export function agentIdProblem(id: string, taken: string[], human?: string): string | undefined {
+export function agentIdProblem(id: string, taken: string[], human?: string, look: Look = "plain"): string | undefined {
+  const codex = look === "codex";
   const v = id.trim().toLowerCase();
-  if (!v) return "Give the agent an id.";
+  if (!v) return codex ? "Give the agent an id." : "Enter an agent ID.";
   if (!AGENT_ID.test(v)) return "Use lowercase letters, digits and dashes, starting with a letter or digit (63 at most).";
-  if (human && v === human.toLowerCase()) return `"${v}" is you, the human, not an agent.`;
-  if (taken.some((t) => t.toLowerCase() === v)) return `"${v}" is already in the party.`;
+  if (human && v === human.toLowerCase()) return codex ? `"${v}" is you, the human, not an agent.` : `"${v}" is your own name, not an agent.`;
+  if (taken.some((t) => t.toLowerCase() === v)) return codex ? `"${v}" is already in the party.` : `"${v}" is already an agent.`;
   return undefined;
 }
 
@@ -145,14 +168,20 @@ export function unwrapRef(ref: string): string {
   return (m ? (m[1] ?? "") : ref).trim().replace(/\.md$/, "");
 }
 
-export const KIND_LABEL: Record<EpisodeKind, string> = {
-  fact: "Fact",
-  observation: "Observation",
-  decision: "Decision",
-  task: "Task",
-  question: "Question",
-  beat: "Story beat",
+export const KIND_LABEL: Record<EpisodeKind, readonly [plain: string, codex: string]> = {
+  fact: ["Fact", "Fact"],
+  observation: ["Observation", "Observation"],
+  decision: ["Decision", "Decision"],
+  task: ["Task", "Task"],
+  question: ["Question", "Question"],
+  beat: ["Milestone", "Story beat"],
 };
+
+/** An episode kind as a reader sees it; an unknown kind shows as written. */
+export function kindLabel(kind: string, look: Look = "plain"): string {
+  const pair = KIND_LABEL[kind as EpisodeKind];
+  return pair ? pair[look === "codex" ? 1 : 0] : kind;
+}
 
 export function confidenceLabel(c: number | undefined): string | undefined {
   if (c === undefined || Number.isNaN(c)) return undefined;

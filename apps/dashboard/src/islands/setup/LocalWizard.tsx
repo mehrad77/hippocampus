@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { useTerms } from "../../lib/prefs.ts";
 import type { LocalSetupStatus, SessionInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import { Personalization } from "../../ui/Personalization.tsx";
 import { AgentsStep } from "./AgentsStep.tsx";
 import { StateBadge } from "./common.tsx";
 import { DoneStep } from "./DoneStep.tsx";
@@ -39,14 +41,19 @@ function useHash(): string {
   return hash;
 }
 
-/** Session Zero against `hippo dashboard`: a wizard driven by `location.hash`, one step per hash. */
+/** Setup (Session Zero) against `hippo dashboard`: a wizard driven by `location.hash`, one step per hash. */
 export function LocalWizard({ session, status }: { session: SessionInfo; status: LocalSetupStatus }) {
+  const { t, v } = useTerms();
   const hasVault = session.mode !== "setup";
   const hash = useHash();
   const [arrivedWithHash] = useState(() => !!parseStep(location.hash.slice(1)));
   // A vault that is configured but won't load (say, an older format) needs the vault step, not the welcome.
   const fallback = !hasVault && (session.error || status.vault) ? "vault" : defaultStep(status.items, hasVault);
-  const current = parseStep(hash) ?? fallback;
+  // A hash that isn't a step (say, #personalization) keeps the step you were on and just scrolls.
+  const parsed = parseStep(hash);
+  const lastStep = useRef<StepId | undefined>(undefined);
+  if (parsed) lastStep.current = parsed;
+  const current = parsed ?? lastStep.current ?? fallback;
   const step = stepDef(current);
   const locked = isLocked(step, hasVault);
   const item = status.items.find((i) => i.id === current);
@@ -68,6 +75,17 @@ export function LocalWizard({ session, status }: { session: SessionInfo; status:
     h.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" });
   }, [current]);
 
+  useEffect(() => {
+    if (!hash || parsed) return;
+    let target: HTMLElement | null = null;
+    try {
+      target = document.getElementById(decodeURIComponent(hash));
+    } catch {
+      // A malformed hash: nothing to scroll to.
+    }
+    target?.scrollIntoView({ block: "start" });
+  }, [hash, parsed]);
+
   const Body = BODIES[current];
   const props: StepProps = { session, status, hasVault, item };
 
@@ -75,12 +93,18 @@ export function LocalWizard({ session, status }: { session: SessionInfo; status:
     <div className="stack sz">
       <header className="page-head">
         <div>
-          <div className="page-head__kicker">Session Zero{session.campaign ? ` · ${session.campaign}` : ""}</div>
-          <h1>{hasVault ? "Setup & health" : "Set the table"}</h1>
+          <div className="page-head__kicker">
+            {t("sessionZero")}
+            {session.campaign ? ` · ${session.campaign}` : ""}
+          </div>
+          <h1>{hasVault ? "Setup & health" : v("Get started", "Set the table")}</h1>
           <p className="page-head__lede">
             {hasVault
-              ? "How your campaign's machinery is doing, and the steps to put anything right."
-              : "Before the first session, the table gets set: a vault, a party, a key and a curator. Nothing happens until you press a button, and every button says what it will do."}
+              ? v("How your setup is doing, and the steps to fix anything that needs it.", "How your campaign's machinery is doing, and the steps to put anything right.")
+              : v(
+                  "A few steps before you start: a vault, your agents, an encryption key and an AI model for the nightly update. Nothing happens until you press a button, and every button says what it will do.",
+                  "Before the first session, the table gets set: a vault, a party, a key and a curator. Nothing happens until you press a button, and every button says what it will do.",
+                )}
           </p>
         </div>
         <span className="chip sz-where" title="This dashboard runs on your machine and can act on it.">
@@ -99,11 +123,11 @@ export function LocalWizard({ session, status }: { session: SessionInfo; status:
             </div>
             <div className="sz-step__titlerow">
               <h2 id="sz-step-title" ref={headingRef} tabIndex={-1}>
-                {step.title}
+                {v(...step.title)}
               </h2>
               {state && <StateBadge state={state} />}
             </div>
-            <p className="sz-step__lede">{step.lede}</p>
+            <p className="sz-step__lede">{v(...step.lede)}</p>
             {item && !locked && item.state !== "done" && item.detail && (
               <p className="sz-step__status small">
                 <span className="muted">Right now:</span> {item.detail}
@@ -130,7 +154,7 @@ export function LocalWizard({ session, status }: { session: SessionInfo; status:
           <footer className="sz-step__nav">
             {prev ? (
               <a className="btn btn--ghost" href={`#${prev.id}`}>
-                <Icon name="back" /> <span className="sz-step__navword">Back:</span> {prev.title}
+                <Icon name="back" /> <span className="sz-step__navword">Back:</span> {v(...prev.title)}
               </a>
             ) : (
               <span />
@@ -138,12 +162,13 @@ export function LocalWizard({ session, status }: { session: SessionInfo; status:
             {next && (
               <a className={`btn ${current === "welcome" ? "btn--primary" : ""}`} href={`#${next.id}`}>
                 {current === "welcome" ? "Begin: " : <span className="sz-step__navword">Next: </span>}
-                {next.title} <Icon name="chevron" />
+                {v(...next.title)} <Icon name="chevron" />
               </a>
             )}
           </footer>
         </section>
       </div>
+      <Personalization />
     </div>
   );
 }

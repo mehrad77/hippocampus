@@ -1101,3 +1101,202 @@ g:focus {
   flex-direction: column;
   line-height: 1.2;
 }
+
+/* ── Personalization ──────────────────────────────────────────────────── */
+
+.personalize__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-areas: "looks mode" "looks text";
+  gap: var(--space-4) var(--space-5);
+}
+
+@media (max-width: 760px) {
+  .personalize__grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "looks" "mode" "text";
+  }
+}
+
+.personalize__group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.personalize__group--looks {
+  grid-area: looks;
+}
+
+.personalize__group legend {
+  margin-bottom: var(--space-2);
+}
+
+.look-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+}
+
+.look-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.look-card[data-checked] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.look-card input,
+.segmented input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.look-card:has(input:focus-visible),
+.segmented label:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.look-card__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.look-card__default {
+  margin-left: var(--space-2);
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--ink-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.look-card__tick {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  color: var(--accent);
+}
+
+/* Miniature previews, drawn in each look's own colors whatever the current look. */
+.look-card__preview {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  height: 78px;
+  border-radius: 6px;
+  border: 1px solid var(--rule);
+}
+
+.look-card--plain .look-card__preview {
+  background: linear-gradient(#ffffff, #ffffff) 10px 10px / calc(100% - 20px) calc(100% - 20px) no-repeat, #f4f4f4;
+  border-color: #e0e0e0;
+  border-radius: 0;
+}
+
+.look-card--codex .look-card__preview {
+  background: radial-gradient(120px 60px at 20% 0%, #fbf7ec, transparent), #eee3c8;
+  border-color: #d6c49c;
+}
+
+.look-card__bar {
+  width: 55%;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.look-card__line {
+  height: 6px;
+  border-radius: 3px;
+}
+
+.look-card__line--short {
+  width: 70%;
+}
+
+.look-card__chip {
+  width: 36px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.look-card--plain .look-card__preview > * {
+  margin-left: 8px;
+  border-radius: 0;
+}
+
+.look-card--plain .look-card__bar {
+  background: #161616;
+}
+
+.look-card--plain .look-card__line {
+  background: #e0e0e0;
+}
+
+.look-card--plain .look-card__chip {
+  width: 48px;
+  background: #0f62fe;
+}
+
+.look-card--codex .look-card__bar {
+  background: #2a2118;
+}
+
+.look-card--codex .look-card__line {
+  background: #c9b48a;
+}
+
+.look-card--codex .look-card__chip {
+  background: #8b2a1d;
+}
+
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--surface-sunk);
+}
+
+.segmented label {
+  position: relative;
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 4px 12px;
+  border-radius: calc(var(--radius) - 2px);
+  color: var(--ink-2);
+  font-weight: 600;
+  font-size: 0.92rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.segmented label[data-checked] {
+  background: var(--surface-2);
+  color: var(--ink);
+  box-shadow: var(--shadow-1);
+}
+
+.segmented__big {
+  font-size: 1.2em;
+}

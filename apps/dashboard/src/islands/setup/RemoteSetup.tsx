@@ -1,7 +1,9 @@
 import { plural } from "../../lib/format.ts";
+import { useTerms } from "../../lib/prefs.ts";
 import type { RemoteSetupStatus, SessionInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Panel } from "../../ui/Parts.tsx";
+import { Personalization } from "../../ui/Personalization.tsx";
 import { Facts, Snippets } from "./common.tsx";
 import { ConnectAgents } from "./Connect.tsx";
 import { HealthChecklist } from "./Health.tsx";
@@ -10,17 +12,28 @@ import { TokensPanel } from "./Tokens.tsx";
 
 const SECTION: Record<string, string> = { repo: "#sz-repo", oauth: "#sz-oauth", index: "#sz-index", agents: "#sz-agents", party: "#sz-agents", tokens: "#sz-tokens" };
 
-/** Session Zero on the Worker: health from the Worker's point of view, connect snippets, and agent tokens. */
+/** Setup & health (Session Zero) on the Worker: health from the Worker's point of view, connect snippets, and agent tokens. */
 export function RemoteSetup({ session, status }: { session: SessionInfo; status: RemoteSetupStatus }) {
+  const { t, v, plain } = useTerms();
   const { repo, oauth, index } = status;
   return (
     <div className="stack sz">
       <header className="page-head">
         <div>
-          <div className="page-head__kicker">Session Zero{session.campaign ? ` · ${session.campaign}` : ""}</div>
+          <div className="page-head__kicker">
+            {t("sessionZero")}
+            {session.campaign ? ` · ${session.campaign}` : ""}
+          </div>
           <h1>Setup & health</h1>
           <p className="page-head__lede">
-            Your Worker's view of the campaign, and the keys to it. The vault folder, the curator and the nightly sleep live on your own machine: set those up with <code>hippo dashboard</code> there.
+            {v(
+              <>
+                Your Worker's view of your memory, and the keys to it. The vault folder, the AI model and the nightly update live on your own machine: set those up with <code>hippo dashboard</code> there.
+              </>,
+              <>
+                Your Worker's view of the campaign, and the keys to it. The vault folder, the curator and the nightly sleep live on your own machine: set those up with <code>hippo dashboard</code> there.
+              </>,
+            )}
           </p>
         </div>
         <span className="chip sz-where" title="This dashboard is served by your Cloudflare Worker.">
@@ -28,7 +41,7 @@ export function RemoteSetup({ session, status }: { session: SessionInfo; status:
         </span>
       </header>
 
-      {repo.private === false && <PublicRepoAlarm name={repo.name} />}
+      {repo.private === false && <PublicRepoAlarm name={repo.name} plain={plain} />}
 
       {status.items.length > 0 && <HealthChecklist items={status.items} linkFor={(id) => SECTION[id]} />}
 
@@ -69,7 +82,7 @@ export function RemoteSetup({ session, status }: { session: SessionInfo; status:
           <div className="stack sz-tight">
             <Facts
               rows={[
-                ["Entities", index.entities === undefined ? <span className="muted">not built yet</span> : index.entities.toLocaleString("en")],
+                [v("Records", "Entities"), index.entities === undefined ? <span className="muted">not built yet</span> : index.entities.toLocaleString("en")],
                 ["Recall", index.embedder ? <>semantic, with <span className="mono">{index.embedder}</span></> : "keywords only"],
               ]}
             />
@@ -90,24 +103,33 @@ export function RemoteSetup({ session, status }: { session: SessionInfo; status:
 
       <Panel title="Connect agents" icon="link" id="sz-agents">
         <p className="small">
-          Agents on other machines connect over HTTP with their own token (mint one below). Apps that add MCP servers as connectors sign in with OAuth instead, choosing the agent they act as.
+          Agents on other machines connect over HTTP with their own token ({v("create one below", "mint one below")}). Apps that add MCP servers as connectors sign in with OAuth instead, choosing the agent they act as.
         </p>
-        <ConnectAgents agents={status.agents} emptyHint="Add a party note in party/ for each agent; its snippets appear here." />
+        <ConnectAgents
+          agents={status.agents}
+          emptyHint={v(
+            <>
+              Add a note in <code>party/</code> for each agent; its snippets appear here.
+            </>,
+            "Add a party note in party/ for each agent; its snippets appear here.",
+          )}
+        />
       </Panel>
 
       <TokensPanel agents={status.agents} />
+      <Personalization />
     </div>
   );
 }
 
-function PublicRepoAlarm({ name }: { name: string }) {
+function PublicRepoAlarm({ name, plain }: { name: string; plain: boolean }) {
   return (
     <div className="callout callout--danger sz-loud" role="alert">
       <Icon name="warn" />
       <div className="stack sz-tight">
         <strong>The vault repository {name} is PUBLIC.</strong>
         <span>
-          Anyone can read your campaign: notes, inbox and chronicle. Make it private now (on GitHub: the repository → Settings → General → Danger Zone → Change visibility), then assume anything already pushed may have been seen.
+          Anyone can read {plain ? "your memory: notes, inbox and timeline" : "your campaign: notes, inbox and chronicle"}. Make it private now (on GitHub: the repository → Settings → General → Danger Zone → Change visibility), then assume anything already pushed may have been seen.
         </span>
       </div>
     </div>

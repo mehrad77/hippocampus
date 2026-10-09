@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "../styles/lore.css";
 import { useResource } from "../lib/cache.ts";
 import { plural } from "../lib/format.ts";
+import { useTerms, type Voice } from "../lib/prefs.ts";
 import { param } from "../lib/routes.ts";
 import type { ChronicleEntryView, ChroniclePage, Ref } from "../lib/types.ts";
 import { TypeDot } from "../ui/EntityLink.tsx";
 import { Icon } from "../ui/Icon.tsx";
-import { AgentLink, SlugLink, useRefs } from "../ui/lore/bits.tsx";
+import { AgentLink, SlugLink, useKindLabel, useRefs } from "../ui/lore/bits.tsx";
 import { PageGate } from "../ui/PageGate.tsx";
 import { Empty, Skeleton, SkeletonPanel } from "../ui/Parts.tsx";
 import { RichText } from "../ui/RichText.tsx";
@@ -34,7 +35,13 @@ function localToday(offsetDays = 0): string {
 const hashId = () => decodeURIComponent(location.hash.slice(1));
 const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+/** "3 events" / "3 entries": what one chronicle line is called in the reader's voice. */
+const count = (n: number, { v }: Voice) => v(plural(n, "event"), plural(n, "entry", "entries"));
+
 function Chronicle() {
+  const voice = useTerms();
+  const { t, v } = voice;
+  const kindLabel = useKindLabel();
   const [month, setMonth] = useState<string | undefined>(() => {
     const m = param("month");
     return m && MONTH.test(m) ? m : undefined;
@@ -133,14 +140,14 @@ function Chronicle() {
     <div className="stack" style={{ ["--gap" as string]: "20px" }}>
       <header className="page-head">
         <div>
-          <div className="page-head__kicker">The chronicle</div>
+          <div className="page-head__kicker">{v(t("chronicle"), "The chronicle")}</div>
           <h1>{monthLabel(data.month)}</h1>
           <p className="page-head__lede">
             {entries.length
-              ? `${plural(entries.length, "entry", "entries")} from ${plural(facets.agents.length, "agent")} over ${plural(data.days.length, "day")}. Newest first.`
+              ? `${count(entries.length, voice)} from ${plural(facets.agents.length, "agent")} over ${plural(data.days.length, "day")}. Newest first.`
               : loadingMonth
-                ? "Unrolling the scroll…"
-                : "Nothing was chronicled this month."}
+                ? v("Loading…", "Unrolling the scroll…")
+                : v("Nothing was recorded this month.", "Nothing was chronicled this month.")}
           </p>
         </div>
         {data.months.length > 0 && (
@@ -168,7 +175,7 @@ function Chronicle() {
 
       {fresh && entries.length > 0 && (
         <section className="panel panel--quiet codex-filters" aria-label="Month at a glance and filters">
-          <MonthStrip month={fresh.month} days={days} />
+          <MonthStrip month={fresh.month} days={days} voice={voice} />
           <div className="chron-filters">
             <div className="chron-filters__row" role="group" aria-label="Filter by agent">
               <span className="chron-filters__label" aria-hidden>
@@ -188,7 +195,7 @@ function Chronicle() {
                 </span>
                 {facets.kinds.map(([k, n]) => (
                   <button key={k} type="button" className="chip" aria-pressed={kinds.has(k)} onClick={() => toggle(kinds, k, setKinds)}>
-                    {k} <span className="chip__count">{n}</span>
+                    {kindLabel(k)} <span className="chip__count">{n}</span>
                   </button>
                 ))}
               </div>
@@ -197,7 +204,7 @@ function Chronicle() {
           {(agents.size > 0 || kinds.size > 0) && (
             <div className="result-line" aria-live="polite">
               <span>
-                {shownCount} of {plural(entries.length, "entry", "entries")}
+                {shownCount} of {count(entries.length, voice)}
               </span>
               <button
                 type="button"
@@ -222,8 +229,8 @@ function Chronicle() {
       ) : loadingMonth ? (
         <SkeletonPanel lines={8} />
       ) : !data.months.length ? (
-        <Empty icon="chronicle" title="The chronicle is blank">
-          Episodes are written here, day by day, each time the curator sleeps and consolidates the inbox.
+        <Empty icon="chronicle" title={v("The timeline is empty", "The chronicle is blank")}>
+          {v("Notes from your agents appear here, day by day, after each nightly update processes the inbox.", "Episodes are written here, day by day, each time the curator sleeps and consolidates the inbox.")}
         </Empty>
       ) : !entries.length ? (
         <Empty icon="chronicle" title={`Nothing in ${monthLabel(data.month)}`}>
@@ -236,7 +243,7 @@ function Chronicle() {
           )}
         </Empty>
       ) : !days.length ? (
-        <Empty icon="chronicle" title="No entry matches these filters" />
+        <Empty icon="chronicle" title={v("No events match these filters", "No entry matches these filters")} />
       ) : (
         <div className="chron-days">
           {days.map((d) => (
@@ -245,12 +252,12 @@ function Chronicle() {
                 <h2 id={`h-${d.date}`}>{dayLabel(d.date)}</h2>
                 <span className="muted">
                   {d.date === localToday() ? "today · " : d.date === localToday(-1) ? "yesterday · " : ""}
-                  {plural(d.entries.length, "entry", "entries")}
+                  {count(d.entries.length, voice)}
                 </span>
               </div>
               <ol className="timeline">
                 {d.entries.map((e) => (
-                  <Entry key={e.id} e={e} refs={refs} target={e.id === target} />
+                  <Entry key={e.id} e={e} refs={refs} target={e.id === target} voice={voice} kindLabel={kindLabel} />
                 ))}
               </ol>
             </section>
@@ -261,7 +268,7 @@ function Chronicle() {
   );
 }
 
-function Entry({ e, refs, target }: { e: ChronicleEntryView; refs: Map<string, Ref>; target: boolean }) {
+function Entry({ e, refs, target, voice: { v }, kindLabel }: { e: ChronicleEntryView; refs: Map<string, Ref>; target: boolean; voice: Voice; kindLabel: (kind: string) => string }) {
   return (
     <li id={e.id} className={`timeline__item kind--${e.kind} chron-entry${target ? " is-target" : ""}`} aria-current={target ? "true" : undefined}>
       <div className="timeline__meta">
@@ -269,10 +276,10 @@ function Entry({ e, refs, target }: { e: ChronicleEntryView; refs: Map<string, R
           {e.time}
         </time>
         <AgentLink agent={e.agent} refs={refs} />
-        <span className="chip">{e.kind}</span>
-        <a className="chron-entry__perma" href={`#${e.id}`} title="Link to this entry">
+        <span className="chip">{kindLabel(e.kind)}</span>
+        <a className="chron-entry__perma" href={`#${e.id}`} title={v("Link to this event", "Link to this entry")}>
           <Icon name="link" size={15} />
-          <span className="sr-only">Link to this entry</span>
+          <span className="sr-only">{v("Link to this event", "Link to this entry")}</span>
         </a>
       </div>
       <RichText text={e.text} />
@@ -281,7 +288,7 @@ function Entry({ e, refs, target }: { e: ChronicleEntryView; refs: Map<string, R
           <span className="muted" aria-hidden>
             ↳
           </span>
-          <span className="sr-only">Touched:</span>
+          <span className="sr-only">{v("Records mentioned:", "Touched:")}</span>
           {e.touched.map((t) => (
             <SlugLink key={t} slug={t} refs={refs} />
           ))}
@@ -292,19 +299,19 @@ function Entry({ e, refs, target }: { e: ChronicleEntryView; refs: Map<string, R
 }
 
 /** The month at a glance: one cell per day, warmer the busier; busy days link to their section. */
-function MonthStrip({ month, days }: { month: string; days: { date: string; entries: unknown[] }[] }) {
+function MonthStrip({ month, days, voice }: { month: string; days: { date: string; entries: unknown[] }[]; voice: Voice }) {
   const [y, m] = month.split("-").map(Number) as [number, number];
-  const count = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const total = new Date(Date.UTC(y, m, 0)).getUTCDate();
   const per = new Map(days.map((d) => [d.date, d.entries.length]));
   const max = Math.max(1, ...per.values());
   const today = localToday();
   return (
     <div>
-      <div className="month-strip" style={{ ["--days" as string]: count }} role="list" aria-label="Entries per day">
-        {Array.from({ length: count }, (_, i) => {
+      <div className="month-strip" style={{ ["--days" as string]: total }} role="list" aria-label={voice.v("Events per day", "Entries per day")}>
+        {Array.from({ length: total }, (_, i) => {
           const date = `${month}-${String(i + 1).padStart(2, "0")}`;
           const n = per.get(date) ?? 0;
-          const label = `${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })}: ${plural(n, "entry", "entries")}`;
+          const label = `${new Date(`${date}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })}: ${count(n, voice)}`;
           return (
             <span key={date} role="listitem" className="month-strip__cell">
               {n ? (
@@ -318,8 +325,8 @@ function MonthStrip({ month, days }: { month: string; days: { date: string; entr
       </div>
       <div className="month-strip__axis" aria-hidden>
         <span>1</span>
-        <span>{Math.ceil(count / 2)}</span>
-        <span>{count}</span>
+        <span>{Math.ceil(total / 2)}</span>
+        <span>{total}</span>
       </div>
     </div>
   );

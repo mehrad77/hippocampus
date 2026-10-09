@@ -3,6 +3,7 @@ import type { GitStatus } from "@hippocampus/dashboard";
 import { postJson } from "../../lib/api.ts";
 import { useResource } from "../../lib/cache.ts";
 import { plural } from "../../lib/format.ts";
+import { useTerms } from "../../lib/prefs.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { SkeletonPanel } from "../../ui/Parts.tsx";
 import { Effects, ErrorCallout, Facts, Field, SnippetBlock, Snippets, useAction } from "./common.tsx";
@@ -157,6 +158,7 @@ function SyncCommands({ git, dir }: { git: GitStatus; dir: string }) {
 
 /** Asks the server whether the remote repository is private. A public vault is the one loud alarm on this page. */
 function VisibilityCheck({ slug, gh, host }: { slug?: string; gh: boolean; host?: string }) {
+  const { v } = useTerms();
   const action = useAction();
   const [seen, setSeen] = useState<Visibility>();
   const check = async () => {
@@ -177,7 +179,7 @@ function VisibilityCheck({ slug, gh, host }: { slug?: string; gh: boolean; host?
           <div className="stack sz-tight">
             <strong>This repository is PUBLIC.</strong>
             <span>
-              Anyone can read your campaign: notes, inbox, chronicle. Make it private now, then assume anything already pushed may have been seen; change any password or account detail that reached the inbox in plain text.
+              Anyone can read {v("your memory: notes, inbox, timeline", "your campaign: notes, inbox, chronicle")}. Make it private now, then assume anything already pushed may have been seen; change any password or account detail that reached the inbox in plain text.
             </span>
             {gh && slug ? (
               <SnippetBlock snippet={{ label: "Make it private (GitHub CLI)", lang: "bash", code: `gh repo edit ${slug} --visibility private --accept-visibility-change-consequences` }} />

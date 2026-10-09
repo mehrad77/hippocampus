@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { postJson } from "../../lib/api.ts";
 import { useResource } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
+import { useTerms } from "../../lib/prefs.ts";
 import type { AgentConnect, MintedToken, TokenInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { CopyButton, Dialog, Empty, Panel, RelTime, SkeletonPanel } from "../../ui/Parts.tsx";
@@ -12,6 +13,7 @@ const OTHER = "__other__";
 
 /** Agent tokens on the Worker: list, mint (shown once), revoke. Only hashes are stored, so a token can't be shown twice. */
 export function TokensPanel({ agents }: { agents: readonly AgentConnect[] }) {
+  const { v } = useTerms();
   const tokens = useResource<{ tokens: TokenInfo[] }>("/setup/tokens");
   const [minting, setMinting] = useState(false);
   const [minted, setMinted] = useState<MintedToken>();
@@ -28,13 +30,13 @@ export function TokensPanel({ agents }: { agents: readonly AgentConnect[] }) {
       aside={
         !unsupported && (
           <button type="button" className="btn btn--primary btn--sm" onClick={() => setMinting(true)}>
-            <Icon name="plus" size={16} /> Mint a token
+            <Icon name="plus" size={16} /> {v("Create a token", "Mint a token")}
           </button>
         )
       }
     >
       <p className="small">
-        Each agent that reaches the Worker over MCP carries its own bearer token, with the scopes you choose. The Worker keeps only a hash of it, so a token is shown once, when it's minted. Revoking cuts that agent off at once.
+        Each agent that reaches the Worker over MCP carries its own bearer token, with the scopes you choose. The Worker keeps only a hash of it, so a token is shown once, when it's {v("created", "minted")}. Revoking cuts that agent off at once.
       </p>
       {tokens.error && !tokens.data ? (
         <ErrorCallout error={tokens.error} onRetry={unsupported ? undefined : () => void tokens.reload()} />
@@ -88,7 +90,7 @@ export function TokensPanel({ agents }: { agents: readonly AgentConnect[] }) {
         </div>
       ) : (
         <Empty icon="key" title="No tokens yet">
-          Mint one for each agent that should reach the Worker.
+          {v("Create one for each agent that should reach the Worker.", "Mint one for each agent that should reach the Worker.")}
         </Empty>
       )}
 
@@ -124,7 +126,7 @@ export function TokensPanel({ agents }: { agents: readonly AgentConnect[] }) {
       >
         {revoking && (
           <p>
-            <strong>{title(revoking.agent) ?? revoking.agent}</strong> (token <span className="mono">{shortId(revoking.id)}</span>, {revoking.scopes.join(", ")}) loses access to the Worker immediately. This can't be undone: mint a new token if the agent should come back.
+            <strong>{title(revoking.agent) ?? revoking.agent}</strong> (token <span className="mono">{shortId(revoking.id)}</span>, {revoking.scopes.join(", ")}) loses access to the Worker immediately. This can't be undone: {v("create", "mint")} a new token if the agent should come back.
           </p>
         )}
         {revoke.error !== undefined && <ErrorCallout error={revoke.error} />}
@@ -134,6 +136,7 @@ export function TokensPanel({ agents }: { agents: readonly AgentConnect[] }) {
 }
 
 function MintDialog({ open, agents, onClose, onMinted }: { open: boolean; agents: readonly AgentConnect[]; onClose: () => void; onMinted: (t: MintedToken) => void }) {
+  const { v } = useTerms();
   const [choice, setChoice] = useState(agents[0]?.agent ?? OTHER);
   const [other, setOther] = useState("");
   const [scopes, setScopes] = useState<string[]>(["read", "remember"]);
@@ -165,7 +168,7 @@ function MintDialog({ open, agents, onClose, onMinted }: { open: boolean; agents
       onClose={close}
       title={
         <span className="row">
-          <Icon name="key" /> Mint a token
+          <Icon name="key" /> {v("Create a token", "Mint a token")}
         </span>
       }
       footer={
@@ -174,7 +177,7 @@ function MintDialog({ open, agents, onClose, onMinted }: { open: boolean; agents
             Cancel
           </button>
           <button type="button" className="btn btn--primary" onClick={() => void submit()} disabled={action.busy}>
-            <Icon name="key" /> {action.busy ? "Minting…" : "Mint it"}
+            <Icon name="key" /> {action.busy ? v("Creating…", "Minting…") : v("Create it", "Mint it")}
           </button>
         </>
       }
@@ -187,7 +190,7 @@ function MintDialog({ open, agents, onClose, onMinted }: { open: boolean; agents
           void submit();
         }}
       >
-        <Field label="Agent" hint="The token files memories under this id.">
+        <Field label="Agent" hint={v("Notes sent with this token are filed under this id.", "The token files memories under this id.")}>
           {(f) => (
             <select id={f.id} className="select" value={choice} onChange={(e) => setChoice(e.target.value)} aria-describedby={f.describedBy}>
               {agents.map((a) => (
@@ -205,7 +208,9 @@ function MintDialog({ open, agents, onClose, onMinted }: { open: boolean; agents
           </Field>
         )}
         {agent && !problem && !inParty && (
-          <p className="small sz-warn-text">“{agent}” has no party note yet, so its memories count as rumor until you add one.</p>
+          <p className="small sz-warn-text">
+            {v(`“${agent}” isn't set up as an agent yet, so what it reports stays unverified until you add it.`, `“${agent}” has no party note yet, so its memories count as rumor until you add one.`)}
+          </p>
         )}
         <fieldset className="sz-fieldset">
           <legend className="label">Scopes</legend>
@@ -220,9 +225,9 @@ function MintDialog({ open, agents, onClose, onMinted }: { open: boolean; agents
                   onChange={(e) => setScopes((xs) => (e.target.checked ? [...xs, s.id] : xs.filter((x) => x !== s.id)))}
                 />
                 <span>
-                  <strong>{s.label}</strong>
+                  <strong>{v(...s.label)}</strong>
                   {required && <span className="small muted"> (required)</span>}
-                  <span className="small muted"> · {s.help}</span>
+                  <span className="small muted"> · {v(...s.help)}</span>
                 </span>
               </label>
             );
@@ -240,6 +245,7 @@ function MintDialog({ open, agents, onClose, onMinted }: { open: boolean; agents
  * Escape doesn't close it: losing the token means minting another, so only the explicit button does.
  */
 function TokenReveal({ token, onClose }: { token?: MintedToken; onClose: () => void }) {
+  const { v } = useTerms();
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
@@ -262,7 +268,7 @@ function TokenReveal({ token, onClose }: { token?: MintedToken; onClose: () => v
             <div className="callout callout--warn" role="note">
               <Icon name="lock" />
               <div>
-                <strong>You won't see this token again.</strong> Copy it into the agent's settings now. The Worker keeps only its hash; if it's lost, revoke it and mint another.
+                <strong>You won't see this token again.</strong> Copy it into the agent's settings now. The Worker keeps only its hash; if it's lost, revoke it and {v("create", "mint")} another.
               </div>
             </div>
             <Facts

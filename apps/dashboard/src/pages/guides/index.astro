@@ -1,18 +1,11 @@
 ---
-import { getCollection, type CollectionEntry } from "astro:content";
+import { getCollection } from "astro:content";
 import Shell from "../../layouts/Shell.astro";
 import "../../styles/guides.css";
 import NavIcon from "../../ui/NavIcon.astro";
+import Term from "../../ui/Term.astro";
+import { SECTIONS, plainSection } from "../../components/guides/sections.ts";
 import { href } from "../../lib/routes.ts";
-
-type Section = CollectionEntry<"guides">["data"]["section"];
-
-const SECTIONS: { name: Section; blurb: string }[] = [
-  { name: "Basics", blurb: "What Hippocampus is, and the rules every fact plays by." },
-  { name: "The table", blurb: "Quests, the party and its lanes, and the secrets you keep." },
-  { name: "Running it", blurb: "Connecting agents, the nightly sleep, and the dashboard." },
-  { name: "Under the hood", blurb: "The command line, and how your memory stays yours." },
-];
 
 const guides = (await getCollection("guides")).sort((a, b) => a.data.order - b.data.order);
 const first = guides[0];
@@ -22,11 +15,17 @@ const first = guides[0];
     <header class="guide-hero panel">
       <span class="guide-hero__seal" aria-hidden="true"><NavIcon name="d20" size={44} /></span>
       <div class="guide-hero__text">
-        <p class="page-head__kicker">Guides</p>
-        <h1>The Player's Handbook</h1>
+        <p class="page-head__kicker"><Term k="guides" /></p>
+        <h1><Term k="handbook" /></h1>
         <p class="guide-hero__lede">
-          Your agents get <code>HANDBOOK.md</code>. This one is for you: how a party of agents shares one memory, why some
-          facts are canon and others only rumor, and where your word comes in.
+          <span class="lbl-plain">
+            Your agents read <code>HANDBOOK.md</code>. These guides are for you: how a team of agents shares one memory, why
+            some facts are confirmed and others unverified, and where your decisions come in.
+          </span>
+          <span class="lbl-codex">
+            Your agents get <code>HANDBOOK.md</code>. This one is for you: how a party of agents shares one memory, why some
+            facts are canon and others only rumor, and where your word comes in.
+          </span>
         </p>
         <div class="row guide-hero__actions">
           {first && (
@@ -47,8 +46,8 @@ const first = guides[0];
         <section class="guide-section" aria-labelledby={`section-${id}`}>
           <div class="ornament"><span>✦</span></div>
           <div class="guide-section__head">
-            <h2 id={`section-${id}`}>{section.name}</h2>
-            <p class="muted">{section.blurb}</p>
+            <h2 id={`section-${id}`}><Term plain={section.plain} codex={section.name} /></h2>
+            <p class="muted"><Term plain={section.blurb[0]} codex={section.blurb[1]} /></p>
           </div>
           <ul class="guide-cards">
             {items.map((g) => (
@@ -72,19 +71,24 @@ const first = guides[0];
       <div class="ornament"><span>✦</span></div>
       <div class="guide-section__head">
         <h2 id="reading-order">Reading order</h2>
-        <p class="muted">New to the table? Read the Basics first; the rest works in any order. Each guide links to the next.</p>
+        <p class="muted">
+          <Term
+            plain="New here? Read the Basics first; the rest works in any order. Each guide links to the next."
+            codex="New to the table? Read the Basics first; the rest works in any order. Each guide links to the next."
+          />
+        </p>
       </div>
       <ol class="guide-order panel panel--quiet">
         {guides.map((g) => (
           <li>
             <a href={href.guide(g.id)}>{g.data.title}</a>
-            <span class="muted small">{g.data.section}</span>
+            <span class="muted small"><Term plain={plainSection(g.data.section)} codex={g.data.section} /></span>
           </li>
         ))}
       </ol>
       <p class="guide-edition small">
         <NavIcon name="scroll" size={16} />
-        <span><strong>Edit-free:</strong> these guides ship with your version of Hippocampus, so they always match the tool you run. They describe the tool, never your vault.</span>
+        <span><strong><Term plain="Built in:" codex="Edit-free:" /></strong> these guides ship with your version of Hippocampus, so they always match the tool you run. They describe the tool, never your vault.</span>
       </p>
     </section>
   </div>

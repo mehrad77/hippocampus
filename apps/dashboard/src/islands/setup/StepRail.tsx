@@ -1,3 +1,4 @@
+import { useTerms } from "../../lib/prefs.ts";
 import type { SetupItem } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { StateBadge } from "./common.tsx";
@@ -5,10 +6,11 @@ import { STATE_META, STEPS, stepIndex, stepState, type StepId } from "./model.ts
 
 /** The steps as a numbered rail on wide screens; a compact stepper (count, jump menu, track) on phones. */
 export function StepRail({ current, items, hasVault }: { current: StepId; items: readonly SetupItem[]; hasVault: boolean }) {
+  const { t, v } = useTerms();
   const index = stepIndex(current);
   return (
     <>
-      <nav className="sz-rail" aria-label="Session Zero steps">
+      <nav className="sz-rail" aria-label={`${t("sessionZero")} steps`}>
         <ol className="sz-rail__list">
           {STEPS.map((step, i) => {
             const state = stepState(step.id, items, hasVault);
@@ -22,7 +24,7 @@ export function StepRail({ current, items, hasVault }: { current: StepId; items:
                   <span className="sz-rail__text">
                     <span className="sz-rail__title">
                       <span className="sr-only">Step {i + 1}: </span>
-                      {step.title}
+                      {v(...step.title)}
                     </span>
                     {state && <StateBadge state={state} compact />}
                   </span>
@@ -52,7 +54,7 @@ export function StepRail({ current, items, hasVault }: { current: StepId; items:
                 const state = stepState(step.id, items, hasVault);
                 return (
                   <option key={step.id} value={step.id}>
-                    {i + 1}. {step.title}
+                    {i + 1}. {v(...step.title)}
                     {state ? ` · ${STATE_META[state].word}` : ""}
                   </option>
                 );

@@ -2,8 +2,9 @@ import { useEffect } from "react";
 import { ApiError, postJson } from "../../lib/api.ts";
 import { invalidate, patch } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
+import { readPrefs } from "../../lib/prefs.ts";
 import type { Overview, QuestCard } from "../../lib/types.ts";
-import { editQuest, withQuest, type QuestEdit } from "./model.ts";
+import { changeLabel, editQuest, withQuest, type QuestEdit } from "./model.ts";
 
 /** The server's message, with plain advice for the one error a human can act on. */
 export function errorMessage(err: unknown): string {
@@ -68,7 +69,9 @@ function send(q: QuestRef, edit: QuestEdit, before: QuestCard | undefined): Prom
   const run = queue.then(async () => {
     try {
       const res = await postJson<{ quest: string; changes: string[] }>("/actions/quest", { quest: q.slug, ...edit });
-      toast(res.changes.length ? `${q.title}: ${res.changes.join(" · ")}` : `${q.title}: already like that, nothing changed.`, "ok");
+      // Read the look when the answer arrives: the reader may have switched it meanwhile.
+      const { look } = readPrefs();
+      toast(res.changes.length ? `${q.title}: ${res.changes.map((c) => changeLabel(c, look)).join(" · ")}` : `${q.title}: already like that, nothing changed.`, "ok");
       return true;
     } catch (err) {
       if (before) {

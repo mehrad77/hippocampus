@@ -2,9 +2,10 @@
 import Shell from "../layouts/Shell.astro";
 import "../styles/guides.css";
 import NavIcon from "../ui/NavIcon.astro";
+import Term from "../ui/Term.astro";
 import { href } from "../lib/routes.ts";
 ---
-<Shell title="Off the map" page="entity" description="There is no page at this address.">
+<Shell title="Page not found" titles={["Page not found", "Off the map"]} page="entity" description="There is no page at this address.">
   <div class="lost">
     <svg class="lost__map" viewBox="0 0 360 220" role="img" aria-labelledby="lost-title">
       <title id="lost-title">A torn map whose trail runs off the edge, marked “here be dragons”</title>
@@ -23,15 +24,15 @@ import { href } from "../lib/routes.ts";
       <text class="lost__dragons" x="208" y="190">here be dragons</text>
     </svg>
 
-    <p class="page-head__kicker">404 · Uncharted</p>
-    <h1>You've wandered off the map</h1>
+    <p class="page-head__kicker"><Term plain="404" codex="404 · Uncharted" /></p>
+    <h1><Term plain="Page not found" codex="You've wandered off the map" /></h1>
     <p class="lost__lede">
-      There's no page at this address. The trail ends here, but the Tavern is always open.
+      <Term plain="There's no page at this address." codex="There's no page at this address. The trail ends here, but the Tavern is always open." />
     </p>
     <div class="row lost__actions">
-      <a class="btn btn--primary" href={href.page("tavern")}><NavIcon name="tavern" /> Back to the Tavern</a>
-      <a class="btn" href={href.page("codex")}><NavIcon name="codex" /> Browse the Codex</a>
-      <a class="btn btn--ghost" href={href.page("guides")}><NavIcon name="guides" /> Read the guides</a>
+      <a class="btn btn--primary" href={href.page("tavern")}><NavIcon name="tavern" /> <Term plain="Back to Home" codex="Back to the Tavern" /></a>
+      <a class="btn" href={href.page("codex")}><NavIcon name="codex" /> <Term plain="Browse records" codex="Browse the Codex" /></a>
+      <a class="btn btn--ghost" href={href.page("guides")}><NavIcon name="guides" /> <Term plain="Open help" codex="Read the guides" /></a>
     </div>
     <p class="muted small">
       Followed a link to a note? It may have been renamed or merged since. Search for it with <kbd>⌘K</kbd>.
