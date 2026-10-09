@@ -202,14 +202,14 @@ seeds/             example campaigns (fictional)
 | Reconcile | ✅ | Pure function, table-tested |
 | Disputes + human rulings | ✅ | `ruling:` is applied on the next sleep |
 | Secrets | ✅ | age, one file per field; the curator needs only the public key |
-| Search | ✅ | In-memory MiniSearch with diacritic folding, rebuilt per request (small vaults, runs anywhere) |
+| Search | ✅ | `Searcher` port. CLI default: persistent SQLite FTS5 index (`packages/index`, `node:sqlite`, a cache in `~/.cache/hippocampus`) that syncs by content hash, with trigram typo fallback and a relations table. In-memory MiniSearch remains the fallback (`--no-index`) |
 | Curator pipeline | ✅ | mentions → resolve → claims → reconcile → apply → chronicle → summaries → review + handbook |
 | LLM adapter | ✅ | `prompt` structured mode (default for local servers) and `native` (hosted). Per-call timeout and token cap |
 | MCP (stdio + local HTTP) | ✅ | 8 tools + 2 resources |
 | `hippo sleep` with git | ✅ | pull --rebase --autostash → curate → stage own paths → commit → push |
 | GitHub API store | ✅ | `packages/store-github`: reads pinned to one commit, blob cache by sha, each flush is one commit via the Git Data API, rebases past unrelated pushes, `StoreConflictError` on same-file races. `hippo --github owner/repo` |
 | Distribution | ✅ | npm package (tsup bundle + template + seeds), vault format version + `hippo migrate`, privacy guard + pre-commit hook, CI for this repo and for vaults |
-| Persistent index, Worker, OAuth, embeddings | ⏳ | M3–M5 |
+| Worker (D1 index), OAuth, embeddings | ⏳ | M3–M5 |
 
 **Lessons from local models.** LM Studio with a reasoning model returned grammar-constrained JSON in `reasoning_content`, and constrained decoding suppressed its thinking, which made classification worse. Local providers therefore default to `prompt` mode:
 - The JSON Schema goes in the system prompt.

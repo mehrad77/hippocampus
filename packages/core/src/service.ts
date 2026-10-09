@@ -3,7 +3,7 @@ import { createEpisode, type NewEpisode } from "./episode.ts";
 import { HANDBOOK_PATH, renderHandbook, renderOnboarding } from "./handbook.ts";
 import { humanText } from "./markdown.ts";
 import { applyQuestUpdate, type QuestUpdate } from "./ops.ts";
-import { SearchIndex } from "./search.ts";
+import { miniSearcher, type SearcherFactory } from "./search.ts";
 import type { Clock, FactStatus } from "./schema.ts";
 import { StoreConflictError, type VaultStore } from "./store.ts";
 import { fold, isoDate, truncate } from "./text.ts";
@@ -66,13 +66,17 @@ function brief(e: Entity, factLimit = 8): EntityBrief {
 export class HippoService {
   constructor(
     readonly store: VaultStore,
-    private readonly opts: { now?: () => Date } = {},
+    private readonly opts: { now?: () => Date; searcher?: SearcherFactory } = {},
   ) {}
 
   /** Load fresh on every call so edits from Obsidian, git pulls and the curator are always visible. */
   async vault(): Promise<Vault> {
     await this.store.refresh?.();
     return Vault.load(this.store, this.opts);
+  }
+
+  private async searcher(vault: Vault) {
+    return (this.opts.searcher ?? miniSearcher)(vault);
   }
 
   async handbook(): Promise<string> {
@@ -95,9 +99,9 @@ export class HippoService {
 
   async recall(query: string, opts: { types?: string[]; limit?: number } = {}) {
     const vault = await this.vault();
-    const index = new SearchIndex(vault);
+    const index = await this.searcher(vault);
     const limit = opts.limit ?? 6;
-    const hits = index.search(query, { kind: "entity", types: opts.types, limit });
+    const hits = await index.search(query, { kind: "entity", types: opts.types, limit });
     const entities = hits.map((h) => vault.entities.get(h.id)!).filter(Boolean);
     const seen = new Set(entities.map((e) => e.slug));
     const related: { ref: string; title: string; via: string }[] = [];
@@ -108,8 +112,7 @@ export class HippoService {
         related.push({ ref: link(n.entity.slug), title: displayName(n.entity), via: `${n.dir === "out" ? `${e.slug} —${n.rel}→` : `←${n.rel}— ${e.slug}`}` });
       }
     }
-    const recent: EpisodeBrief[] = index
-      .search(query, { kind: "episode", limit: 5 })
+    const recent: EpisodeBrief[] = (await index.search(query, { kind: "episode", limit: 5 }))
       .map((h) => vault.episodes.find((ep) => ep.id === h.id)!)
       .filter(Boolean)
       .map((ep) => ({ id: ep.id, agent: ep.agent, kind: ep.kind, at: ep.at, text: truncate(ep.text, 300) }));
@@ -120,7 +123,7 @@ export class HippoService {
     const vault = await this.vault();
     const e = vault.resolve(ref);
     if (!e) {
-      const candidates = new SearchIndex(vault).search(unwrapLink(ref), { kind: "entity", limit: 5 }).map((h) => link(h.id));
+      const candidates = (await (await this.searcher(vault)).search(unwrapLink(ref), { kind: "entity", limit: 5 })).map((h) => link(h.id));
       throw new VaultError(`no entity "${ref}"${candidates.length ? `; did you mean ${candidates.join(", ")}?` : ""}`);
     }
     return {
@@ -176,12 +179,12 @@ export class HippoService {
   /** Archivist: the single canonical answer to a factual question, with status and provenance. */
   async askCanon(question: string) {
     const vault = await this.vault();
-    const index = new SearchIndex(vault);
+    const index = await this.searcher(vault);
     const terms = fold(question)
       .split(/[^\p{L}\p{N}]+/u)
       .filter((t) => t.length > 2);
     const answers: (FactView & { entity: string; score: number })[] = [];
-    for (const hit of index.search(question, { kind: "entity", limit: 5 })) {
+    for (const hit of await index.search(question, { kind: "entity", limit: 5 })) {
       const e = vault.entities.get(hit.id)!;
       for (const f of factViews(e)) {
         const hay = fold(`${f.field.replace(/_/g, " ")} ${f.value}`);

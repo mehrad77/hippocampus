@@ -1,4 +1,5 @@
 import { chmod, cp, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
@@ -18,10 +19,13 @@ import {
   renderHandbook,
   secretPath,
   vaultVersionStatus,
+  type SearcherFactory,
   type VaultStore,
 } from "@hippocampus/core";
 import { FsStore } from "@hippocampus/core/node";
 import { aiSdkLLM, commitMessage, llmConfigFromEnv, sleep, type SleepReport } from "@hippocampus/curator";
+import { HippoIndex } from "@hippocampus/index";
+import { nodeSqlite } from "@hippocampus/index/node";
 import { createHippoServer } from "@hippocampus/mcp";
 import { GitHubStore } from "@hippocampus/store-github";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -50,7 +54,8 @@ const program = new Command()
   .name("hippo")
   .description("Hippocampus: shared, curated memory for a party of agents (an Obsidian vault run like a TTRPG campaign wiki).")
   .option("-v, --vault <dir>", "vault directory", process.env.HIPPO_VAULT ?? ".")
-  .option("--github <owner/repo[#branch]>", "use the vault repo on GitHub directly, without a checkout (token from HIPPO_GITHUB_TOKEN)", process.env.HIPPO_GITHUB_REPO);
+  .option("--github <owner/repo[#branch]>", "use the vault repo on GitHub directly, without a checkout (token from HIPPO_GITHUB_TOKEN)", process.env.HIPPO_GITHUB_REPO)
+  .option("--no-index", "search in memory instead of the persistent index");
 
 const vaultDir = () => resolve(expandHome(program.opts<{ vault: string }>().vault));
 const github = () => program.opts<{ github?: string }>().github;
@@ -64,6 +69,18 @@ function openStore(): VaultStore {
   if (!token) throw new Error("--github needs a token in HIPPO_GITHUB_TOKEN (fine-grained, Contents: read and write on the vault repo)");
   const [name, branch] = repo.split("#");
   return new GitHubStore({ repo: name!, branch: branch || undefined, token, apiUrl: process.env.HIPPO_GITHUB_API_URL });
+}
+
+/** The search index is a cache outside the vault, one file per vault directory or repo. */
+function indexPath(): string {
+  const key = github() ? `github:${github()}` : vaultDir();
+  const cache = process.env.XDG_CACHE_HOME ? expandHome(process.env.XDG_CACHE_HOME) : join(homedir(), ".cache");
+  return join(cache, "hippocampus", `${createHash("sha1").update(key).digest("hex").slice(0, 16)}.sqlite`);
+}
+
+async function openSearcher(): Promise<SearcherFactory | undefined> {
+  if (!program.opts<{ index: boolean }>().index) return undefined;
+  return (await HippoIndex.open(nodeSqlite(indexPath()))).searcher;
 }
 
 function localOnly(command: string): void {
@@ -107,7 +124,7 @@ program
   .option("-a, --agent <id>", "bind this connection to an agent id", process.env.HIPPO_AGENT)
   .option("--http <port>", "serve streamable HTTP on 127.0.0.1:<port>/mcp instead of stdio (agent via ?agent=)")
   .action(async (opts: { agent?: string; http?: string }) => {
-    const service = new HippoService(openStore());
+    const service = new HippoService(openStore(), { searcher: await openSearcher() });
     if (!opts.http) {
       await createHippoServer({ service, agent: opts.agent }).connect(new StdioServerTransport());
       return;
@@ -150,6 +167,7 @@ program
     const report = await sleep({
       store,
       llm: aiSdkLLM(llmConfig),
+      searcher: await openSearcher(),
       limit: opts.limit ? Number(opts.limit) : undefined,
       dryRun: opts.dryRun,
       log: err,
@@ -231,6 +249,17 @@ program
     const agent = opts.agent ?? (await Vault.load(store)).config.human;
     const r = await new HippoService(store).remember(agent, { text: words.join(" "), kind: opts.kind, secret: opts.secret });
     err(`✓ ${r.path}`);
+  });
+
+program
+  .command("index")
+  .description("Rebuild the persistent search index from the vault (it's a cache; this is always safe).")
+  .action(async () => {
+    const index = await HippoIndex.open(nodeSqlite(indexPath()));
+    await index.rebuild();
+    const stats = await index.sync(await Vault.load(openStore()));
+    const { edges } = await index.counts();
+    err(`✓ indexed ${stats.added} docs and ${edges} relations in ${indexPath()}`);
   });
 
 const secrets = program.command("secrets").description("Manage age-encrypted secret facts.");

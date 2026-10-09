@@ -1,7 +1,7 @@
 import {
   HANDBOOK_PATH,
-  SearchIndex,
   Vault,
+  miniSearcher,
   activeQuests,
   addRelation,
   applyFact,
@@ -18,6 +18,7 @@ import {
   type Entity,
   type Episode,
   type FactResult,
+  type SearcherFactory,
   type VaultStore,
 } from "@hippocampus/core";
 import type { LLM } from "./llm.ts";
@@ -52,6 +53,8 @@ export interface SleepOptions {
   limit?: number;
   dryRun?: boolean;
   log?: (msg: string) => void;
+  /** Search used to match mentions to existing entities (defaults to in-memory MiniSearch). */
+  searcher?: SearcherFactory;
 }
 
 const REVIEW_PATH = "_hippo/review.md";
@@ -71,7 +74,7 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
   for (const ep of batch) {
     log(`… ${ep.id} (${ep.agent}): ${ep.text.slice(0, 70).replace(/\s+/g, " ")}`);
     try {
-      const r = await consolidate(vault, llm, ep);
+      const r = await consolidate(vault, llm, ep, opts.searcher ?? miniSearcher);
       report.consolidated.push(r);
       for (const slug of r.touched) evidence.set(slug, [...(evidence.get(slug) ?? []), ep.secret ? "(secret-bearing episode)" : ep.text]);
       log(`  ✓ touched ${r.touched.join(", ") || "nothing"}${r.created.length ? `; new: ${r.created.join(", ")}` : ""}`);
@@ -129,7 +132,7 @@ export function commitMessage(r: SleepReport): string {
   ].join("\n");
 }
 
-async function consolidate(vault: Vault, llm: LLM, ep: Episode): Promise<EpisodeReport> {
+async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher: SearcherFactory): Promise<EpisodeReport> {
   const report: EpisodeReport = { id: ep.id, agent: ep.agent, created: [], touched: [], facts: [], relations: [], quests: [] };
   const prov = { by: ep.agent, at: ep.at, src: [ep.id] };
   const entities = new Map<string, Entity>();
@@ -148,9 +151,9 @@ async function consolidate(vault: Vault, llm: LLM, ep: Episode): Promise<Episode
     if (!m.name.trim() || !vault.config.types[m.type]) continue;
     let e = [m.name, ...m.aliases].map((n) => vault.resolve(n)).find((x) => x && x.fm.type !== "party");
     if (!e) {
-      const index = new SearchIndex(vault);
-      const candidates = index
-        .search(m.name, { kind: "entity", limit: 5 })
+      // Built per mention: earlier mentions in this episode may have created entities.
+      const index = await searcher(vault);
+      const candidates = (await index.search(m.name, { kind: "entity", limit: 5 }))
         .map((h) => vault.entities.get(h.id)!)
         .filter((c) => c && c.fm.type !== "party");
       if (candidates.length) {

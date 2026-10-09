@@ -69,6 +69,8 @@ npx @mehrad77/hippocampus -v ~/vaults/my-campaign serve --http 8765
 
 Tools: `onboard`, `remember`, `recall`, `get`, `neighbors`, `ask_canon`, `briefing`, `update_quest`.
 
+Search uses a persistent index in `~/.cache/hippocampus/` (or `$XDG_CACHE_HOME`). It stays in step with the vault on its own, re-indexing only notes that changed. It's a cache: `hippo index` rebuilds it, deleting it is harmless, and `--no-index` searches in memory instead.
+
 **Without a checkout:** every command except `init` can work on the GitHub repo directly. Each write becomes one commit through the GitHub API. If someone pushed to the same file in the meantime, the write is refused instead of overwriting their change. Use a fine-grained token with **Contents: read and write** on the vault repo only:
 
 ```bash

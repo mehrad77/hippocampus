@@ -63,6 +63,9 @@ importers:
       '@hippocampus/curator':
         specifier: workspace:*
         version: link:../../packages/curator
+      '@hippocampus/index':
+        specifier: workspace:*
+        version: link:../../packages/index
       '@hippocampus/mcp':
         specifier: workspace:*
         version: link:../../packages/mcp
@@ -111,6 +114,12 @@ importers:
       zod:
         specifier: ^4.6.5
         version: 4.6.5
+
+  packages/index:
+    dependencies:
+      '@hippocampus/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/mcp:
     dependencies:
