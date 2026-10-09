@@ -283,13 +283,7 @@ pnpm exec wrangler d1 create hippocampus-registry
 pnpm exec wrangler kv namespace create OAUTH_KV
 ```
 
-The rate limiters' `namespace_id`s only need to be unique within your account. Then create the registry's tables:
-
-```bash
-pnpm exec wrangler d1 migrations apply REGISTRY --remote
-```
-
-Run that again after any upgrade that adds a file to `apps/worker/migrations/`.
+The rate limiters' `namespace_id`s only need to be unique within your account.
 
 **3. Set the secrets.** Each with `pnpm exec wrangler secret put <NAME>`:
 
@@ -303,11 +297,13 @@ Run that again after any upgrade that adds a file to `apps/worker/migrations/`.
 
 Until they're all set, the Worker answers with a page naming the missing ones (names only, never values).
 
-**4. Deploy.** `deploy` builds the dashboard first:
+**4. Deploy.** From the repository root. This builds the dashboard, applies the registry's migrations (`apps/worker/migrations/`), then deploys:
 
 ```bash
-pnpm --filter @hippocampus/worker deploy
+pnpm deploy:worker
 ```
+
+Run it again to upgrade. To serve a custom domain, add it to `wrangler.jsonc` as `"routes": [{ "pattern": "<your-host>", "custom_domain": true }]` with `"workers_dev": false`. The Worker answers on one origin only, the one in `HIPPO_PUBLIC_URL`.
 
 Sign in at your Worker's address. Admins are approved on sign-in and find an Admin page in their account menu, where they approve or deny the waitlist and see which vaults exist (names and states, never content).
 

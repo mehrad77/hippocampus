@@ -59,8 +59,10 @@ pnpm exec wrangler secret delete GITHUB_OAUTH_CLIENT_SECRET
 
 ## 4. Deploy
 
+From the repository root:
+
 ```bash
-pnpm --filter @hippocampus/worker deploy
+pnpm deploy:worker
 ```
 
 Open the Worker's address. If a setting is missing, it shows a page naming it.

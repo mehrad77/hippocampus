@@ -1,9 +1,13 @@
 {
-  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "hippocampus",
   "main": "src/worker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
+  // One origin only: sign-in, CSRF checks and the OAuth metadata all expect HIPPO_PUBLIC_URL, so no per-version
+  // preview URLs. A custom domain goes in `routes` (with `"workers_dev": false`); the official instance's is
+  // added at deploy time by scripts/deploy.mjs, so this file stays generic.
+  "preview_urls": false,
   // One Durable Object per vault, named by its id: the vault's single writer, cache, index and sleep runs.
   "durable_objects": {
     "bindings": [{ "name": "VAULT_HOST", "class_name": "VaultHost" }]
@@ -14,8 +18,8 @@
     { "tag": "v2", "deleted_classes": ["Scribe"], "new_sqlite_classes": ["VaultHost"] }
   ],
   // The registry: accounts, which repo is whose vault, hashed keys. Never vault content. Create it with
-  // `wrangler d1 create hippocampus-registry`, paste its id here, then apply the schema with
-  // `wrangler d1 migrations apply REGISTRY --remote` (and again after each upgrade that adds a migration).
+  // `wrangler d1 create hippocampus-registry` and paste its id here; `pnpm deploy:worker` applies the schema
+  // (`wrangler d1 migrations apply REGISTRY --remote`) before every deploy.
   // `wrangler dev` works with the placeholder; `pnpm dev` applies the migrations locally first.
   "d1_databases": [
     { "binding": "REGISTRY", "database_name": "hippocampus-registry", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
@@ -23,11 +27,12 @@
   // OAuth grants and clients, sign-in state and sessions. Create with `wrangler kv namespace create OAUTH_KV`.
   "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "11111111111111111111111111111111" }],
   // Per-key request limits. `namespace_id` is any positive integer, unique within your Cloudflare account.
+  // Registering an OAuth client writes to KV, which Workers Free caps at 1,000 writes a day.
   "ratelimits": [
     { "name": "RL_SIGNIN", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
     { "name": "RL_API", "namespace_id": "1002", "simple": { "limit": 120, "period": 60 } },
     { "name": "RL_MCP", "namespace_id": "1003", "simple": { "limit": 240, "period": 60 } },
-    { "name": "RL_REGISTER", "namespace_id": "1004", "simple": { "limit": 10, "period": 60 } }
+    { "name": "RL_REGISTER", "namespace_id": "1004", "simple": { "limit": 3, "period": 60 } }
   ],
   // Settings, each with `wrangler secret put NAME`, so none of them end up in this public repo. Until they're
   // all set, the Worker answers with a page naming the ones still missing.
@@ -45,7 +50,7 @@
   //   Repository permissions      Contents: read and write; Workflows: read and write; Metadata: read
   //   Events                      Installation repositories, Repository
   //   Where it can be installed   Any account, if people other than you will sign up
-  // The dashboard UI (`pnpm dev` and `pnpm deploy` build it first). Its pages and the sign-in routes run
+  // The dashboard UI (`pnpm dev` and `pnpm run deploy` build it first). Its pages and the sign-in routes run
   // through the Worker, which adds security headers and serves the API; hashed `_astro/*` files are served
   // straight from the asset store. No `not_found_handling`: a path that isn't a file must reach the Worker,
   // or /mcp, /authorize and the OAuth callbacks would get an asset 404 instead.
