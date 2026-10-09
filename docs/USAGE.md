@@ -155,6 +155,24 @@ claude mcp add --transport http hippocampus https://hippocampus.<your-subdomain>
 
 Revoke with `pnpm agent-token revoke <token> --remote`. For semantic recall, uncomment the `ai` binding in `wrangler.jsonc` and run `wrangler secret put HIPPO_EMBED_PROVIDER` with the value `workers-ai` (it uses `@cf/baai/bge-m3`), or point the `HIPPO_EMBED_*` settings at any OpenAI-compatible embeddings API. The Worker doesn't run `sleep`, so keep the nightly run (with a checkout or with `--github`). A cold start downloads the vault as one tarball, which fits the free plan's subrequest limit, but parsing a large vault on every request needs the paid plan's CPU time. OAuth for the Claude.ai and ChatGPT connectors comes later.
 
+**Connect Claude.ai or ChatGPT (OAuth).** Apps that add MCP servers as connectors sign in with OAuth instead of a token. The Worker is its own OAuth server: you approve each app on a consent page, choosing the agent it acts as and what it may do, then sign in with GitHub to prove you own the vault. To turn it on:
+
+1. Create a GitHub OAuth app (GitHub → Settings → Developer settings → OAuth Apps). Set its callback URL to `https://hippocampus.<your-subdomain>.workers.dev/oauth/github/callback`.
+2. Create the grant store, paste its id into `wrangler.jsonc` as `OAUTH_KV`, and set the settings as secrets:
+
+   ```bash
+   pnpm exec wrangler kv namespace create OAUTH_KV
+   ```
+
+   ```bash
+   pnpm exec wrangler secret put HIPPO_PUBLIC_URL
+   ```
+
+   Then `HIPPO_OWNERS` (your GitHub login; only these accounts can connect apps), `GITHUB_OAUTH_CLIENT_ID` and `GITHUB_OAUTH_CLIENT_SECRET` the same way, and redeploy.
+3. In the app, add a custom connector with the URL `https://hippocampus.<your-subdomain>.workers.dev/mcp`.
+
+Agent tokens keep working next to OAuth. A connection lasts 30 days from when you approve it (the app refreshes its access in between); connect again to renew or to change its permissions.
+
 For local development, copy `.dev.vars.example` to `.dev.vars` and run `pnpm --filter @hippocampus/worker dev`. Mint local tokens with `pnpm agent-token create <agent>` (no `--remote`).
 
 ## 9. Vault CI (optional)

@@ -2,4 +2,9 @@
 GITHUB_REPO=you/my-campaign
 GITHUB_TOKEN=github_pat_...
 # Point at a fake GitHub for offline development:
-# GITHUB_API_URL=http://127.0.0.1:8787
+# GITHUB_API_URL=http://127.0.0.1:8786
+# OAuth for connectors (off unless HIPPO_PUBLIC_URL is set):
+# HIPPO_PUBLIC_URL=http://127.0.0.1:8787
+# HIPPO_OWNERS=your-github-login
+# GITHUB_OAUTH_CLIENT_ID=
+# GITHUB_OAUTH_CLIENT_SECRET=

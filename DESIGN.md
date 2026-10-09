@@ -42,7 +42,7 @@ Hippocampus absorbs the Archivist's job (canonical facts, disputes). The Game Ma
      ▼                                            ▼
  ┌────────────── Cloudflare Worker ─────────────┐   writes only inbox/<agent>/*.md
  │ MCP server (stateless streamable HTTP)       │   + reads HANDBOOK.md & canon
- │ per-agent tokens/scopes (OAuth: M4)          │
+ │ OAuth (consent + GitHub) + agent tokens      │
  │ Durable Object "Scribe" = single git writer  │──► private GitHub repo (vault) ◄── the human, in Obsidian (obsidian-git)
  │ D1 index (FTS5 + links + claims)             │◄── push webhook → reindex
  │ Curator API (claim batch / apply patch)      │
@@ -211,7 +211,8 @@ seeds/             example campaigns (fictional)
 | Distribution | ✅ | npm package (tsup bundle + template + seeds), vault format version + `hippo migrate`, privacy guard + pre-commit hook, CI for this repo and for vaults |
 | Worker | ✅ | `apps/worker`: stateless MCP over `WebStandardStreamableHTTPServerTransport`; per-request `GitHubStore` with per-isolate blob and tree caches (tarball on cold start); D1 index; Scribe DO serializes commits on the writer's base commit; per-agent bearer tokens (hashed in KV) with `read`/`remember`/`quest` scopes |
 | Semantic recall | ✅ | `packages/embeddings`: `Embedder` adapters for OpenAI-compatible servers (LM Studio, Ollama, hosted) and Workers AI, opt-in via `HIPPO_EMBED_*`. The index stores one normalized vector per doc version and model, mirrored in memory, and embeds only what changed. Search fuses FTS and cosine hits with reciprocal rank fusion, then lets the top hits lift related candidates (never above themselves). Embedder failures fall back to keywords |
-| Push webhook reindex, OAuth | ⏳ | Every request syncs the index with the vault it loads, so a webhook only matters once reads stop loading the whole vault. OAuth is M4 |
+| OAuth for connectors | ✅ | `@cloudflare/workers-oauth-provider`: the Worker is authorization server and resource (RFC 9728 discovery, DCR, PKCE, refresh). `/authorize` shows a consent page (agent id and scopes per app; unframeable, browser-bound), then GitHub sign-in restricted to `HIPPO_OWNERS`. OAuth scopes come from the token, so refreshes can narrow them. Agent tokens are accepted through `resolveExternalToken` |
+| Push webhook reindex, CIMD | ⏳ | Every request syncs the index with the vault it loads, so a webhook only matters once reads stop loading the whole vault. Client ID Metadata Documents need `global_fetch_strictly_public`, which would block the local fake GitHub in `wrangler dev`; DCR covers today's connectors |
 
 **Lessons from local models.** LM Studio with a reasoning model returned grammar-constrained JSON in `reasoning_content`, and constrained decoding suppressed its thinking, which made classification worse. Local providers therefore default to `prompt` mode:
 - The JSON Schema goes in the system prompt.

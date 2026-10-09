@@ -27,7 +27,12 @@ export async function hashToken(token: string): Promise<string> {
 /** The grant for the request's bearer token, or undefined if it has none or an unknown one. */
 export async function authenticate(request: Request, tokens: TokenStore): Promise<Grant | undefined> {
   const token = /^Bearer\s+(\S+)$/i.exec(request.headers.get("authorization") ?? "")?.[1];
-  if (!token?.startsWith(TOKEN_PREFIX)) return undefined;
+  return token ? lookupToken(token, tokens) : undefined;
+}
+
+/** The grant for one of our own agent tokens. Anything else (an OAuth token, say) is undefined. */
+export async function lookupToken(token: string, tokens: TokenStore): Promise<Grant | undefined> {
+  if (!token.startsWith(TOKEN_PREFIX)) return undefined;
   const raw = (await tokens.get(await hashToken(token))) as Partial<Grant> | null;
   if (!raw?.agent) return undefined;
   const scopes = (raw.scopes ?? []).filter((s): s is Scope => (SCOPES as readonly string[]).includes(s));
