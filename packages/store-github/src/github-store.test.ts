@@ -4,7 +4,7 @@ import { storeContract } from "../../core/src/store.contract.ts";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
 import { MemoryBlobCache, gitBlobSha } from "./blob-cache.ts";
 import { FakeGitHub } from "./fake-github.ts";
-import { GitHubStore, SnapshotCache } from "./github-store.ts";
+import { EmptyRepositoryError, GitHubStore, SnapshotCache } from "./github-store.ts";
 
 const now = () => new Date("2026-09-27T21:00:00.000Z");
 
@@ -51,7 +51,7 @@ describe("GitHubStore", () => {
   it("reads its own commits without fetching them back", async () => {
     const { gh, store } = await setup();
     const r = await new HippoService(store, { now }).remember("campus-agent", { text: "Enrolment opens 2026-10-01" });
-    expect(gh.log()[0]!.message).toBe(`remember(campus-agent): ${r.id}`);
+    expect(gh.log()[0]!.message).toBe(`remember(campus-agent): ${r.id}\n\nHippo-Actor: agent:campus-agent`);
     const blobReads = gh.calls.filter((c) => c.startsWith("GET git/blobs/")).length;
     expect(await store.read(r.path)).toContain("Enrolment opens");
     expect(gh.calls.filter((c) => c.startsWith("GET git/blobs/")).length).toBe(blobReads);
@@ -133,10 +133,10 @@ describe("GitHubStore", () => {
     expect(() => new GitHubStore({ repo: "not a repo", token: "t" })).toThrow(/owner\/name/);
   });
 
-  it("reports the repo's visibility, default branch and pinned commit", async () => {
+  it("reports the repo's id, visibility, default branch and pinned commit", async () => {
     const { gh, store } = await setup();
     const head = gh.refs.get("main")!;
-    expect(await store.info()).toEqual({ name: gh.repo, private: true, defaultBranch: "main", branch: "main", head });
+    expect(await store.info()).toEqual({ id: gh.at(gh.repo).id, fullName: gh.repo, private: true, defaultBranch: "main", branch: "main", empty: false, head });
     expect(gh.calls).toContain("GET ");
     gh.isPrivate = false;
     await gh.push({ "notes/lisbon.md": "---\ntype: place\ntitle: Lisbon\n---\n" });
@@ -224,5 +224,191 @@ describe("GitHubStore per-request stores", () => {
     await b.refresh();
     expect(await a.read("characters/joao-silva.md")).toBeUndefined();
     expect(await b.read("characters/joao-silva.md")).toContain("João");
+  });
+});
+
+/** A GitHub App installation token provider over the fake, counting how often it was asked to refresh. */
+function installationToken(gh: FakeGitHub, installation: number, body: Record<string, unknown> = {}) {
+  let current: string | undefined;
+  const provider = async (opts?: { refresh?: boolean }) => {
+    if (opts?.refresh) provider.refreshes++;
+    if (!current || opts?.refresh) {
+      const res = await gh.fetch(`https://api.github.com/app/installations/${installation}/access_tokens`, { method: "POST", headers: { authorization: "Bearer app.jwt" }, body: JSON.stringify(body) });
+      current = ((await res.json()) as { token: string }).token;
+    }
+    return current;
+  };
+  provider.refreshes = 0;
+  return provider;
+}
+
+describe("GitHubStore tokens", () => {
+  it("mints a fresh token once when the current one has expired", async () => {
+    const { gh } = await setup();
+    gh.requireAuth = true;
+    let clock = new Date("2026-10-09T12:00:00Z");
+    gh.now = () => clock;
+    const installation = gh.addInstallation({ account: { id: 1, login: "player", type: "User" }, repos: [gh.repo] });
+    const token = installationToken(gh, installation.id);
+    const store = new GitHubStore({ repo: gh.repo, token, fetch: gh.fetch });
+    await store.list();
+    expect(token.refreshes).toBe(0);
+    // Installation tokens last an hour.
+    clock = new Date("2026-10-09T13:30:00Z");
+    await store.refresh();
+    await new HippoService(store, { now }).remember("home-finder", { text: "Viewing on Friday" });
+    expect(token.refreshes).toBe(1);
+    expect(gh.log()[0]!.message).toMatch(/^remember\(home-finder\)/);
+  });
+
+  it("gives up after one refresh", async () => {
+    const { gh } = await setup();
+    gh.requireAuth = true;
+    const asked: (boolean | undefined)[] = [];
+    const store = new GitHubStore({ repo: gh.repo, fetch: gh.fetch, token: async (o) => (asked.push(o?.refresh), "revoked") });
+    await expect(store.list()).rejects.toThrow(/rejected the token/);
+    expect(asked).toEqual([undefined, true]);
+  });
+
+  it("explains a rejected token without assuming where it came from", async () => {
+    const { gh } = await setup();
+    gh.requireAuth = true;
+    const err = await new GitHubStore({ repo: gh.repo, token: "unknown", fetch: gh.fetch }).list().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VaultError);
+    expect((err as Error).message).toBe("GitHub rejected the token for player/vault (401).");
+    const hinted = new GitHubStore({ repo: gh.repo, token: "unknown", fetch: gh.fetch, hint: { auth: "Check HIPPO_GITHUB_TOKEN." } });
+    await expect(hinted.list()).rejects.toThrow("GitHub rejected the token for player/vault (401). Check HIPPO_GITHUB_TOKEN.");
+  });
+
+  it("says which permission a read-only token lacks", async () => {
+    const { gh } = await setup();
+    gh.requireAuth = true;
+    gh.tokens.set("read-only", { repos: [gh.repo], permissions: { contents: "read" } });
+    const store = new GitHubStore({ repo: gh.repo, token: "read-only", fetch: gh.fetch });
+    expect(await store.list()).toContain("party/home-finder.md");
+    await expect(store.apply([{ path: "inbox/home-finder/x.md", content: "x" }], { message: "x" })).rejects.toThrow(/needs Contents read and write on player\/vault/);
+  });
+
+  it("can't see a repo outside the token's reach", async () => {
+    const { gh } = await setup();
+    gh.requireAuth = true;
+    gh.tokens.set("elsewhere", { repos: ["player/other"] });
+    await expect(new GitHubStore({ repo: gh.repo, token: "elsewhere", fetch: gh.fetch }).info()).rejects.toThrow(/can't find player\/vault \(404\)/);
+  });
+});
+
+const TEMPLATE = {
+  "README.md": "# Vault\n",
+  "_hippo/config.yaml": "version: 1\ncampaign: lisbon-arc\nhuman: player\n",
+  "party/residency-agent.md": "---\ntype: party\ntitle: Residency Agent\n---\n",
+  ".github/workflows/vault.yml": "name: vault\non: push\n",
+};
+
+describe("GitHubStore on an empty repo", () => {
+  it("reports it as empty, and refuses reads with a typed error", async () => {
+    const gh = await FakeGitHub.create({}, { empty: true });
+    const store = new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch });
+    expect(await store.info()).toEqual({ id: gh.at(gh.repo).id, fullName: gh.repo, private: true, defaultBranch: "main", branch: "main", empty: true, head: undefined });
+    const err = await store.list().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(EmptyRepositoryError);
+    expect(err).toBeInstanceOf(VaultError);
+    await expect(store.apply([{ path: "a.md", content: "a" }], { message: "x" })).rejects.toBeInstanceOf(EmptyRepositoryError);
+  });
+
+  it("initializes it with README.md through the Contents API, then everything else in one commit", async () => {
+    const gh = await FakeGitHub.create({}, { empty: true });
+    const store = new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch });
+    await store.initialize(TEMPLATE, { message: "chore: start the vault", author: { name: "Hippocampus", email: "hippo@example.com" } });
+    expect(gh.files()).toEqual(TEMPLATE);
+    const [rest, first] = gh.log();
+    expect(gh.log()).toHaveLength(2);
+    expect(gh.trees.get(first!.tree)!.has("README.md")).toBe(true);
+    expect(gh.trees.get(first!.tree)!.size).toBe(1);
+    expect(rest!.author).toEqual({ name: "Hippocampus", email: "hippo@example.com" });
+    expect(gh.calls).toContain("PUT contents/README.md");
+    expect(await store.read("_hippo/config.yaml")).toContain("lisbon-arc");
+    expect((await store.info()).empty).toBe(false);
+  });
+
+  it("starts from the first file when there's no README", async () => {
+    const gh = await FakeGitHub.create({}, { empty: true });
+    const { "README.md": _, ...files } = TEMPLATE;
+    await new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch }).initialize(files, { message: "init" });
+    expect(gh.calls).toContain("PUT contents/_hippo/config.yaml");
+    expect(gh.files()).toEqual(files);
+  });
+
+  it("initializes a repo created with a README as one commit", async () => {
+    const gh = await FakeGitHub.create({ "README.md": "# My vault\n" });
+    const store = new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch });
+    await store.initialize(TEMPLATE, { message: "chore: start the vault" });
+    expect(gh.files()).toEqual(TEMPLATE);
+    expect(gh.log().map((c) => c.message)).toEqual(["chore: start the vault", "init"]);
+    expect(gh.calls.some((c) => c.startsWith("PUT contents/"))).toBe(false);
+  });
+
+  it("initializes through a narrowed installation token that may write workflows", async () => {
+    const gh = await FakeGitHub.create({}, { empty: true });
+    await gh.addRepo({ fullName: "player/notes" });
+    gh.requireAuth = true;
+    const installation = gh.addInstallation({ account: { id: 1, login: "player", type: "User" }, repos: [gh.repo, "player/notes"] });
+    const token = installationToken(gh, installation.id, { repository_ids: [gh.at(gh.repo).id], permissions: { contents: "write", workflows: "write" } });
+    await new GitHubStore({ repo: gh.repo, token, fetch: gh.fetch }).initialize(TEMPLATE, { message: "init" });
+    expect(gh.files()).toEqual(TEMPLATE);
+    await expect(new GitHubStore({ repo: "player/notes", token, fetch: gh.fetch }).list()).rejects.toThrow(/can't find branch/);
+  });
+});
+
+describe("GitHubStore persist filter", () => {
+  /** A cache that remembers every sha it was handed, standing in for a durable one. */
+  function durable() {
+    const cache = new MemoryBlobCache();
+    const shas = new Set<string>();
+    const put = cache.put.bind(cache);
+    cache.put = async (sha, content) => {
+      shas.add(sha);
+      await put(sha, content);
+    };
+    return { cache, shas };
+  }
+
+  const inbox = {
+    "inbox/residency-agent/2026-09-27T140300-a1b2c3.md": "---\nagent: residency-agent\n---\nPassport number is on file\n",
+    "inbox/home-finder/2026-09-28T090000-d4e5f6.md": "---\nagent: home-finder\n---\nViewing on Friday\n",
+  };
+  const persist = (path: string) => !path.startsWith("inbox/");
+
+  async function inboxShas(gh: FakeGitHub) {
+    return new Set([...gh.at(gh.repo).tree()].filter(([p]) => p.startsWith("inbox/")).map(([, f]) => f.sha));
+  }
+
+  for (const [how, preloadThreshold] of [
+    ["from a tarball", 0],
+    ["blob by blob", 1000],
+  ] as const) {
+    it(`keeps inbox blobs out of the durable cache when loading ${how}`, async () => {
+      const { gh } = await setup({ ...Object.fromEntries(fixtureStore().files), ...inbox });
+      const { cache, shas } = durable();
+      const store = new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch, cache, persist, preloadThreshold });
+      const vault = await Vault.load(store);
+      expect(vault.episodes.length).toBe(2);
+      expect(shas.size).toBeGreaterThan(0);
+      for (const sha of await inboxShas(gh)) expect(shas.has(sha)).toBe(false);
+      // Still cached, just not durably: a second load fetches nothing.
+      const before = gh.calls.length;
+      await Vault.load(store);
+      expect(gh.calls.slice(before)).toEqual([]);
+    });
+  }
+
+  it("keeps episodes it writes out of the durable cache", async () => {
+    const { gh } = await setup();
+    const { cache, shas } = durable();
+    const transientCache = new MemoryBlobCache();
+    const store = new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch, cache, persist, transientCache });
+    const r = await new HippoService(store, { now }).remember("residency-agent", { text: "Appointment at the agency on Tuesday" });
+    const sha = await gitBlobSha(gh.files()[r.path]!);
+    expect(shas.has(sha)).toBe(false);
+    expect(await transientCache.get(sha)).toContain("Appointment at the agency");
   });
 });

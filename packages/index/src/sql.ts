@@ -14,3 +14,6 @@ export interface SqlDriver {
   batch(statements: SqlStatement[]): Promise<void>;
   close?(): void;
 }
+
+/** Cloudflare's SQL APIs (D1, Durable Objects) bind BLOBs from ArrayBuffers, not views. */
+export const blobAsBuffer = (v: SqlValue): SqlValue | ArrayBuffer => (v instanceof Uint8Array ? (v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength) as ArrayBuffer) : v);

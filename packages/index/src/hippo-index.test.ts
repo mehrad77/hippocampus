@@ -2,20 +2,32 @@ import { HippoService, SearchIndex, Vault, type MemoryStore } from "@hippocampus
 import { describe, expect, it } from "vitest";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
 import { d1 } from "./d1.ts";
+import { doSql } from "./do-sql.ts";
 import { HippoIndex, INDEX_SCHEMA_VERSION } from "./hippo-index.ts";
 import { nodeSqlite } from "./node.ts";
 import { extra } from "./__fixtures__/vault.ts";
-import type { SqlValue } from "./sql.ts";
+import type { SqlDriver, SqlValue } from "./sql.ts";
+import { nodeSqlStorage } from "./testing.ts";
 
 const now = () => new Date("2026-09-27T21:00:00.000Z");
 
-async function setup(files: Record<string, string> = extra) {
+async function setupOn(db: SqlDriver, files: Record<string, string> = extra) {
   const store = fixtureStore(files);
-  const index = await HippoIndex.open(nodeSqlite(":memory:"));
+  const index = await HippoIndex.open(db);
   return { store, index, vault: await Vault.load(store, { now }) };
 }
 
-describe("HippoIndex", () => {
+const setup = (files?: Record<string, string>) => setupOn(nodeSqlite(":memory:"), files);
+
+// The same suite on each SQL the index runs on: FTS5 and trigram tokenizers included.
+const drivers: [string, () => SqlDriver][] = [
+  ["node:sqlite", () => nodeSqlite(":memory:")],
+  ["a Durable Object's SQL", () => doSql(nodeSqlStorage())],
+];
+
+describe.each(drivers)("HippoIndex on %s", (_, open) => {
+  const setup = (files?: Record<string, string>) => setupOn(open(), files);
+
   it("finds the same top hit as the in-memory index", async () => {
     const { index, vault } = await setup();
     await index.sync(vault);
@@ -96,7 +108,7 @@ describe("HippoIndex", () => {
   });
 
   it("rebuilds from scratch when the schema version changes", async () => {
-    const db = nodeSqlite(":memory:");
+    const db = open();
     const { vault } = await setup();
     await (await HippoIndex.open(db)).sync(vault);
     await db.batch([{ sql: "UPDATE meta SET value = '0' WHERE key = 'schema'" }]);
@@ -146,5 +158,28 @@ describe("d1 driver", () => {
     expect((await index.search("npc 42", { limit: 1 }))[0]?.id).toBe("npc-42");
     expect(Math.max(...fake.batches)).toBeLessThanOrEqual(500);
     expect(fake.batches.length).toBeGreaterThan(2);
+  });
+});
+
+describe("doSql driver", () => {
+  it("runs a batch as one transaction", async () => {
+    const db = doSql(nodeSqlStorage());
+    await db.batch([{ sql: "CREATE TABLE t (id TEXT PRIMARY KEY)" }]);
+    const insert = (id: string) => ({ sql: "INSERT INTO t (id) VALUES (?)", params: [id] });
+    await expect(db.batch([insert("lisbon"), insert("lisbon")])).rejects.toThrow(/UNIQUE/);
+    expect(await db.all("SELECT id FROM t")).toEqual([]);
+    await db.batch([insert("lisbon"), insert("porto")]);
+    expect(await db.all("SELECT id FROM t ORDER BY id")).toEqual([{ id: "lisbon" }, { id: "porto" }]);
+  });
+
+  it("binds and returns BLOBs as ArrayBuffers, like a Durable Object", async () => {
+    const storage = nodeSqlStorage();
+    const db = doSql(storage);
+    await db.batch([{ sql: "CREATE TABLE b (v BLOB)" }, { sql: "INSERT INTO b (v) VALUES (?)", params: [new Uint8Array([1, 2, 3]).subarray(1)] }]);
+    const [row] = await db.all<{ v: unknown }>("SELECT v FROM b");
+    expect(row!.v).toBeInstanceOf(ArrayBuffer);
+    expect([...new Uint8Array(row!.v as ArrayBuffer)]).toEqual([2, 3]);
+    expect(() => storage.sql.exec("INSERT INTO b (v) VALUES (?)", new Uint8Array([1]))).toThrow(/ArrayBuffer/);
+    expect(() => storage.sql.exec("BEGIN")).toThrow(/transactionSync/);
   });
 });
