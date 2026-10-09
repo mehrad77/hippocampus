@@ -1,5 +1,6 @@
 import {
   HANDBOOK_PATH,
+  REVIEW_PATH,
   Vault,
   miniSearcher,
   activeQuests,
@@ -7,14 +8,14 @@ import {
   applyFact,
   applyQuestUpdate,
   applyRulings,
-  displayName,
-  isSecretRef,
+  findings,
   link,
   normalizeName,
   redact,
   renderDoc,
   renderHandbook,
   setSummary,
+  viewContext,
   type Entity,
   type Episode,
   type FactResult,
@@ -56,8 +57,6 @@ export interface SleepOptions {
   /** Search used to match mentions to existing entities (defaults to in-memory MiniSearch). */
   searcher?: SearcherFactory;
 }
-
-const REVIEW_PATH = "_hippo/review.md";
 
 /** One consolidation pass: inbox episodes → canon, like sleep turning episodic into semantic memory. */
 export async function sleep(opts: SleepOptions): Promise<SleepReport> {
@@ -248,21 +247,13 @@ function looksLikeIdentifier(v: string): boolean {
 
 function renderReview(vault: Vault, report: SleepReport): string {
   const now = vault.nowIso();
-  const staleBefore = new Date(Date.parse(now) - vault.config.curator.stale_after_days * 86400_000).toISOString();
-  const stale: string[] = [];
-  const rumors: string[] = [];
-  for (const e of vault.entities.values()) {
-    for (const [k, f] of Object.entries(e.fm.facts)) {
-      const v = isSecretRef(f.value) ? "🔒" : String(f.value);
-      if (f.status === "rumor") rumors.push(`- ${link(e.slug)} · **${k}** = ${v} (${f.by})`);
-      if (f.status === "canon" && f.at && f.at < staleBefore) stale.push(`- ${link(e.slug)} · **${k}** = ${v} (last seen ${f.at.slice(0, 10)})`);
-    }
-  }
-  const disputes = vault.openDisputes().map((d) => `- ${link(d.slug)} — ${d.fm.entity} · ${d.fm.field}: ${d.fm.claims.map((c) => `${c.value} (${c.by ?? "human"})`).join(" vs ")}`);
+  const found = findings(viewContext(vault));
+  const v = (f: { value: string | null; secret: boolean }) => (f.secret ? "🔒" : f.value);
+  const rumors = found.rumors.map((f) => `- ${link(f.ref.slug)} · **${f.field}** = ${v(f)} (${f.by})`);
+  const stale = found.stale.map((f) => `- ${link(f.ref.slug)} · **${f.field}** = ${v(f)} (last seen ${f.at!.slice(0, 10)})`);
+  const disputes = found.disputes.map((d) => `- ${link(d.slug)} — ${link(d.entity.slug)} · ${d.field}: ${d.claims.map((c) => `${v(c)} (${c.by})`).join(" vs ")}`);
   const failed = report.failed.map((f) => `- \`${f.path}\` — ${f.error.slice(0, 160)}`);
-  const orphans = [...vault.entities.values()]
-    .filter((e) => e.fm.type !== "party" && !e.fm.relations.length && !vault.neighbors(e.slug).length)
-    .map((e) => `- ${link(e.slug)} (${e.fm.type}: ${displayName(e)})`);
+  const orphans = found.orphans.map((r) => `- ${link(r.slug)} (${r.type}: ${r.title})`);
   const section = (title: string, items: string[]) => `## ${title}\n\n${items.length ? items.join("\n") : "- (none)"}\n`;
   return renderDoc(
     { type: "review", generated: now },
