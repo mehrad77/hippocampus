@@ -7,7 +7,7 @@ import { addPartyMember, applyQuestUpdate, applyRuling, assertAgentId, isSecretF
 import { miniSearcher, type SearcherFactory } from "./search.ts";
 import type { Clock, FactStatus, FactValue } from "./schema.ts";
 import { StoreConflictError, type VaultStore } from "./store.ts";
-import { fold, isoDate, truncate } from "./text.ts";
+import { fold, isoDate, localParts, truncate } from "./text.ts";
 import { ACTOR_TRAILER, actorTrailer, withTrailers } from "./trailers.ts";
 import { Vault, VaultError } from "./vault.ts";
 import {
@@ -74,10 +74,10 @@ export interface EpisodeBrief {
 
 export interface ChronicleEntry extends EpisodeBrief {}
 
-function factViews(e: Entity, limit = Infinity): FactView[] {
+function factViews(e: Entity, human: string, limit = Infinity): FactView[] {
   return Object.entries(e.fm.facts)
     .slice(0, limit)
-    .map(([field, f]) => ({ field, value: formatValue(f.value), status: f.status, by: f.by ?? "human", at: f.at }));
+    .map(([field, f]) => ({ field, value: formatValue(f.value), status: f.status, by: f.by ?? human, at: f.at }));
 }
 
 /** Episode text limit: a memory is one concrete thing, and every byte goes through the curator's prompts. */
@@ -120,8 +120,8 @@ function checkIntroduction(input: NewIntroduction): void {
   }
 }
 
-function brief(e: Entity, factLimit = 8): EntityBrief {
-  return { ref: link(e.slug), type: e.fm.type, title: displayName(e), summary: truncate(getSummary(e), 400), facts: factViews(e, factLimit) };
+function brief(e: Entity, human: string, factLimit = 8): EntityBrief {
+  return { ref: link(e.slug), type: e.fm.type, title: displayName(e), summary: truncate(getSummary(e), 400), facts: factViews(e, human, factLimit) };
 }
 
 /** The operations agents perform on memory. Transport-agnostic: used by the MCP server and CLI. */
@@ -201,7 +201,7 @@ export class HippoService {
       .map((h) => vault.episodes.find((ep) => ep.id === h.id)!)
       .filter(Boolean)
       .map((ep) => ({ id: ep.id, agent: ep.agent, kind: ep.kind, at: ep.at, text: truncate(ep.text, 300) }));
-    return { entities: entities.map((e) => brief(e)), related: related.slice(0, 10), pending: recent };
+    return { entities: entities.map((e) => brief(e, vault.config.human)), related: related.slice(0, 10), pending: recent };
   }
 
   async get(ref: string): Promise<EntityView> {
@@ -209,7 +209,7 @@ export class HippoService {
     const e = vault.resolve(ref);
     if (!e) throw new VaultError(`no entity "${ref}"${await this.suggest(vault, ref)}`);
     return {
-      ...brief(e, Infinity),
+      ...brief(e, vault.config.human, Infinity),
       summary: getSummary(e),
       path: e.path,
       aliases: e.fm.aliases,
@@ -268,7 +268,7 @@ export class HippoService {
     const answers: (FactView & { entity: string; score: number })[] = [];
     for (const hit of await index.search(question, { kind: "entity", limit: 5 })) {
       const e = vault.entities.get(hit.id)!;
-      for (const f of factViews(e)) {
+      for (const f of factViews(e, vault.config.human)) {
         const hay = fold(`${f.field.replace(/_/g, " ")} ${f.value}`);
         const overlap = terms.filter((t) => hay.includes(t)).length;
         answers.push({ ...f, entity: link(e.slug), score: hit.score * (1 + overlap) });
@@ -288,9 +288,12 @@ export class HippoService {
   async briefing(opts: { since?: string; horizonDays?: number } = {}) {
     const vault = await this.vault();
     const now = this.opts.now?.() ?? new Date();
-    const since = opts.since ? isoDate(opts.since) : isoDate(new Date(now.getTime() - 7 * 86400_000));
-    const horizon = isoDate(new Date(now.getTime() + (opts.horizonDays ?? 30) * 86400_000));
-    const today = isoDate(now);
+    // Days are the vault's local days, so an evening in Lisbon isn't "tomorrow" in UTC.
+    const tz = vault.config.timezone;
+    const localDay = (d: Date) => localParts(d.toISOString(), tz).date;
+    const since = opts.since ? isoDate(opts.since) : localDay(new Date(now.getTime() - 7 * 86400_000));
+    const horizon = localDay(new Date(now.getTime() + (opts.horizonDays ?? 30) * 86400_000));
+    const today = localDay(now);
 
     const chronicle: ChronicleEntry[] = [];
     for (const path of await this.store.list(vault.config.folders.chronicle)) {

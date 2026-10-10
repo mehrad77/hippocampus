@@ -34,7 +34,8 @@ export function sameValue(a: FactValue, b: FactValue): boolean {
   return norm(a) === norm(b);
 }
 
-const RANK: Record<Authority, number> = { none: 0, authority: 1, human: 2 };
+export const AUTHORITY_RANK: Record<Authority, number> = { none: 0, authority: 1, human: 2 };
+const RANK = AUTHORITY_RANK;
 
 /**
  * Archivist's rules, as a pure function. Precedence: human > lane authority > corroboration > recency.
@@ -49,6 +50,9 @@ const RANK: Record<Authority, number> = { none: 0, authority: 1, human: 2 };
  * | differs, same author, newer  | replace (self-correction)          |
  * | existing disputed            | replace | add claim | add claim   |
  */
+/** Prior values kept per fact. */
+export const MAX_WAS = 5;
+
 export function reconcileFact(input: ReconcileInput): Decision {
   const { existing, incoming, incomingAuthority, existingAuthority, canonThreshold } = input;
   const trusted = incomingAuthority !== "none";
@@ -62,7 +66,7 @@ export function reconcileFact(input: ReconcileInput): Decision {
         by: incoming.by,
         at: incoming.at,
         src: [...incoming.src],
-        ...(existing ? { was: [...(existing.was ?? []), prior(existing)] } : {}),
+        ...(existing ? { was: [...(existing.was ?? []), prior(existing)].slice(-MAX_WAS) } : {}),
       },
     };
   }
@@ -134,7 +138,7 @@ function replace(existing: Fact, incoming: IncomingFact, status: Fact["status"],
       by: incoming.by,
       at: incoming.at,
       src: [...incoming.src],
-      was: [...(existing.was ?? []), prior(existing)].slice(-5),
+      was: [...(existing.was ?? []), prior(existing)].slice(-MAX_WAS),
     },
   };
 }

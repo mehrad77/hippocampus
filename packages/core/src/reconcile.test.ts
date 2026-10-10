@@ -68,4 +68,16 @@ describe("reconcileFact", () => {
     const d = run({ existing: fact("a", "campus-agent", "disputed"), incoming: { value: "d", by: "job-scout", at: at2, src: [] } });
     expect(d.action).toBe("dispute");
   });
+
+  it("caps the history when a retconned fact is recreated", () => {
+    const was = Array.from({ length: 5 }, (_, i) => ({ value: `old-${i}`, by: "residency-agent", at: at1 }));
+    const d = run({
+      existing: { ...fact("gone", "residency-agent", "retconned"), was },
+      incoming: { value: "new", by: "residency-agent", at: at2, src: ["ep-2"] },
+      incomingAuthority: "authority",
+    });
+    expect(d.action).toBe("create");
+    expect(d.fact.was).toHaveLength(5);
+    expect(d.fact.was?.at(-1)?.value).toBe("gone");
+  });
 });

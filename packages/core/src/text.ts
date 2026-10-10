@@ -27,9 +27,9 @@ export function slugify(input: string): string {
 
 /** snake_case field names for facts. */
 export function toFieldName(input: string): string {
+  // Split camelCase before folding: `fold` lowercases, which would hide the boundaries.
   return (
-    fold(input)
-      .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    fold(input.replace(/([a-z0-9])([A-Z])/g, "$1_$2"))
       .replace(/[^a-z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "") || "note"
   );

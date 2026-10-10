@@ -1,4 +1,4 @@
-import { HippoService, Vault, displayName, type SearcherFactory } from "@hippocampus/core";
+import { CONFIG_PATH, HippoService, Vault, displayName, parseConfig, type SearcherFactory } from "@hippocampus/core";
 import { SleepRelay, type RunStore } from "@hippocampus/curator/relay";
 import { createDashboardApi, errorResponse, json, serviceSource, type DashboardSource, type ErrorReport } from "@hippocampus/dashboard";
 import { HippoIndex, doSql, type DurableSqlLike, type SqlStorageLike } from "@hippocampus/index";
@@ -176,6 +176,9 @@ export class VaultRuntime {
   private readonly clock: () => Date;
   private index?: Promise<HippoIndex>;
   private gcScheduled = false;
+  /** Where the vault keeps unconsolidated episodes (`folders.inbox`); they stay out of storage at rest. */
+  private inboxPrefix = "inbox/";
+  private inboxKnown?: Promise<void>;
 
   constructor(private readonly d: VaultRuntimeDeps) {
     this.meta = d.meta;
@@ -190,6 +193,7 @@ export class VaultRuntime {
     this.writer = new ScribeQueue(this.github());
     this.relay = new SleepRelay({
       open: async (at) => {
+        await this.learnInbox();
         const store = this.store(CURATOR);
         return { vault: await Vault.load(store, { now: () => at }), store };
       },
@@ -208,7 +212,7 @@ export class VaultRuntime {
       fetch: this.d.fetch,
       cache: this.blobs,
       // Episodes can hold secrets in plain text until sleep encrypts them: they stay out of storage at rest.
-      persist: (path) => !path.startsWith("inbox/"),
+      persist: (path) => !path.startsWith(this.inboxPrefix),
       transientCache: this.transient,
       snapshots: this.snapshots,
     });
@@ -229,6 +233,22 @@ export class VaultRuntime {
       throw err;
     });
     return this.index;
+  }
+
+  /**
+   * Learns the vault's inbox folder before any request reads from it. Memoized; a failed read
+   * (a missing or broken config) keeps the default and is retried by the next request.
+   */
+  private learnInbox(): Promise<void> {
+    this.inboxKnown ??= this.github()
+      .read(CONFIG_PATH)
+      .then((raw) => {
+        this.inboxPrefix = `${parseConfig(raw ?? undefined).folders.inbox.replace(/\/+$/, "")}/`;
+      })
+      .catch(() => {
+        this.inboxKnown = undefined;
+      });
+    return this.inboxKnown;
   }
 
   private serviceOver(store: SizeGuarded): HippoService {
@@ -275,6 +295,7 @@ export class VaultRuntime {
     if (request.method !== "POST") return json(405, { error: "Method not allowed", code: "METHOD" }, { allow: "POST" });
     try {
       await this.keepAlarm();
+      await this.learnInbox();
       const store = this.store(grantPrincipal(grant));
       const server = createHippoServer({
         service: this.serviceOver(store),
@@ -302,6 +323,7 @@ export class VaultRuntime {
     const started = Date.now();
     try {
       await this.keepAlarm();
+      await this.learnInbox();
       const repo = this.meta.fullName;
       const url = `${(this.d.webUrl ?? "https://github.com").replace(/\/$/, "")}/${repo}`;
       const source = serviceSource(this.service(), { mode: "worker", vault: { kind: "github", repo, branch: this.meta.branch, url } }, { curator: this.curator });
@@ -320,6 +342,7 @@ export class VaultRuntime {
 
   /** The party's agents, for the OAuth consent page. */
   async party(): Promise<{ id: string; title: string }[]> {
+    await this.learnInbox();
     const vault = await this.service().vault();
     return [...vault.entities.values()]
       .filter((e) => e.fm.type === "party")
@@ -329,6 +352,7 @@ export class VaultRuntime {
 
   /** Seats an agent, as the human (the consent page's "new agent"). */
   async addParty(input: { id: string; title: string; lane?: string; authority?: string[] }, via: string): Promise<{ slug: string }> {
+    await this.learnInbox();
     const { slug } = await this.service().addPartyMember({ id: input.id, title: input.title, lane: input.lane, authority: input.authority }, { via });
     return { slug };
   }

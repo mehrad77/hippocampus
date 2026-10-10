@@ -257,6 +257,29 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
     if (l.typeOf(c.path)) await auditNote(c.path, was.get(c.path), c.content);
   }
 
+  // The ciphertext of a human-held secret changes only with the human's own episode: the note's ref string
+  // stays the same, so the fact check above can't see an overwritten value.
+  for (const c of changes) {
+    if (!("content" in c) || op(c) !== "modify" || !under(c.path, l.secrets) || !c.path.endsWith(".age")) continue;
+    const [slug, ...rest] = c.path.slice(l.secrets.length + 1, -".age".length).split("/");
+    const field = rest.join("/");
+    if (!slug || !field) continue;
+    let held = false;
+    let covered = false;
+    for (const def of Object.values(config.types)) {
+      const notePath = `${def.folder}/${slug}.md`;
+      const old = await before.read(notePath);
+      if (old === undefined) continue;
+      const prev = parseNote(notePath, old)?.fm.facts[field];
+      held = !!prev && isSecretRef(prev.value) && isHumanId(config, prev.by);
+      const change = changes.find((x) => x.path === notePath && "content" in x);
+      const now = change && "content" in change ? parseNote(notePath, change.content)?.fm.facts[field] : undefined;
+      covered = !!now && isHumanId(config, now.by) && now.src.some((id) => humanEpisodes.has(id));
+      break;
+    }
+    if (held && !covered) flag(c.path, `human secret changed: ${field}`);
+  }
+
   // Never lose a memory: a consolidated episode leaves the inbox only once the chronicle cites it.
   let missing = removed.filter((r) => !changes.some((c) => "content" in c && under(c.path, l.chronicle) && cites(c.content, r.id)));
   if (missing.length) {

@@ -1,5 +1,5 @@
 import { getObjectives, setObjectives, type Entity } from "./entity.ts";
-import { reconcileFact, type Decision } from "./reconcile.ts";
+import { AUTHORITY_RANK, MAX_WAS, reconcileFact, type Decision } from "./reconcile.ts";
 import { QuestStatus, type Clock, type FactValue } from "./schema.ts";
 import { encryptSecret, isSecretRef, secretPath, secretRef } from "./secrets.ts";
 import { normalizeName, toFieldName } from "./text.ts";
@@ -35,7 +35,13 @@ export async function applyFact(
   const incomingAuthority = vault.authorityOf(prov.by, entity);
 
   if (secret) {
-    // Ciphertext can't be compared, so secrets are last-writer-wins among trusted sources.
+    // Ciphertext can't be compared, so secrets are last-writer-wins among equals, but a lower-ranked
+    // source never replaces what a higher-ranked one stored (an agent can't overwrite the human's).
+    const held = entity.fm.facts[field];
+    if (held && isSecretRef(held.value) && AUTHORITY_RANK[incomingAuthority] < AUTHORITY_RANK[vault.authorityOf(held.by, entity)]) {
+      vault.warnings.push(`secret ${entity.slug}.${field} not replaced: ${prov.by} outranked by ${held.by ?? "the human"}`);
+      return { entity: entity.slug, field, decision: "keep", reason: `${held.by ?? "the human"} outranks ${prov.by}`, secret };
+    }
     const ref = secretRef(entity.slug, field);
     const recipient = vault.config.secrets.recipient;
     if (!recipient) {
@@ -196,7 +202,7 @@ export function applyRuling(vault: Vault, d: Dispute, value: FactValue, by = vau
     by,
     at: vault.nowIso(),
     src: [...new Set(d.fm.claims.flatMap((c) => c.src))],
-    was: existing ? [...(existing.was ?? []), { value: existing.value, by: existing.by, at: existing.at }].slice(-5) : undefined,
+    was: existing ? [...(existing.was ?? []), { value: existing.value, by: existing.by, at: existing.at }].slice(-MAX_WAS) : undefined,
   };
   vault.touch(entity, by);
   vault.resolveDispute(d);

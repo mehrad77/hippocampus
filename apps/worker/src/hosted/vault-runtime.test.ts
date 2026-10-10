@@ -49,7 +49,7 @@ function objectStorage() {
   });
 }
 
-async function setup(o: { quotas?: Partial<Quotas>; storage?: ReturnType<typeof objectStorage> } = {}) {
+async function setup(o: { quotas?: Partial<Quotas>; storage?: ReturnType<typeof objectStorage>; edit?: (files: Record<string, string>) => void } = {}) {
   let t = START;
   const clock = () => new Date(t);
   const github = await hostedGitHub(keys);
@@ -58,6 +58,7 @@ async function setup(o: { quotas?: Partial<Quotas>; storage?: ReturnType<typeof 
   const files = await buildVaultFiles(TEMPLATE, { seed: SEEDS["example-relocation"], now: clock() });
   // job-scout hasn't joined yet, so it can introduce itself.
   delete files["party/job-scout.md"];
+  o.edit?.(files);
   const repo = gh.at("player/vault");
   await repo.push(files, "main", "chore: initialize vault [skip ci]\n\nHippo-Actor: bootstrap");
   const installation = gh.addInstallation({ account: { id: 4242, login: "player", type: "User" }, repos: ["player/vault"] });
@@ -266,6 +267,21 @@ describe("VaultRuntime: storage", () => {
     expect(inbox.length).toBe(2);
     for (const [, content] of inbox) expect(stored.has(await gitBlobSha(content))).toBe(false);
     expect(stored.has(await gitBlobSha(repo.files()["party/home-finder.md"]!))).toBe(true);
+  });
+
+  it("keeps a renamed inbox folder out of the object's SQLite too", async () => {
+    const { repo, connect, api, storage } = await setup({
+      edit: (files) => {
+        files["_hippo/config.yaml"] += "\nfolders:\n  inbox: memos\n";
+      },
+    });
+    await (await connect(bound("home-finder"))).call("remember", { text: "Viewing in Alfama on Friday at 18:00." });
+    expect((await api("GET", "overview")).status).toBe(200);
+
+    const stored = new Set((storage.sql.exec("SELECT sha FROM blobs").toArray() as { sha: string }[]).map((r) => r.sha));
+    const memos = Object.entries(repo.files()).filter(([p]) => p.startsWith("memos/") && p.endsWith(".md") && !p.endsWith("README.md"));
+    expect(memos.length).toBeGreaterThan(0);
+    for (const [, content] of memos) expect(stored.has(await gitBlobSha(content))).toBe(false);
   });
 
   it("reuses the stored installation token across restarts, and mints anew after a 401", async () => {

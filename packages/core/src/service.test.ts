@@ -143,6 +143,27 @@ describe("Vault", () => {
   });
 });
 
+describe("secret facts and authority", () => {
+  it("never lets a lower-ranked source replace a higher-ranked one's secret", async () => {
+    const { identity, recipient } = await generateKeyPair();
+    const store = fixtureStore({ "items/passport.md": "---\ntype: item\ntitle: Passport\ntags: [residency]\n---\n" });
+    await store.write("_hippo/config.yaml", `${(await store.read("_hippo/config.yaml"))!}secrets:\n  recipient: ${recipient}\n`);
+    const v = await Vault.load(store, { now });
+    const passport = v.resolve("passport")!;
+    // The human's value first, then an agent without authority over the passport's tags.
+    await applyFact(v, passport, "number", "U12345678", { by: "player", at: "2026-09-10T00:00:00Z", src: ["ep-a"] });
+    const r = await applyFact(v, passport, "number", "X99999999", { by: "campus-agent", at: "2026-09-11T00:00:00Z", src: ["ep-b"] });
+    await v.flush();
+    expect(r.decision).toBe("keep");
+    expect(v.warnings.join(" ")).toContain("not replaced");
+    expect(await decryptSecret(identity, (await store.read("secrets/passport/number.age"))!)).toBe("U12345678");
+    // An equal-ranked source still replaces it (last writer wins among equals).
+    await applyFact(v, passport, "number", "U87654321", { by: "player", at: "2026-09-12T00:00:00Z", src: ["ep-c"] });
+    await v.flush();
+    expect(await decryptSecret(identity, (await store.read("secrets/passport/number.age"))!)).toBe("U87654321");
+  });
+});
+
 describe("HippoService", () => {
   it("remember → recall shows pending episodes (read-your-writes)", async () => {
     const svc = new HippoService(fixtureStore(), { now });
@@ -286,6 +307,15 @@ describe("HippoService", () => {
   it("briefing lists upcoming dates", async () => {
     const svc = new HippoService(fixtureStore(), { now });
     const b = await svc.briefing({ horizonDays: 90 });
+    expect(b.upcoming).toEqual([{ what: "deadline", date: "2026-11-30", ref: "[[residence-permit]]" }]);
+  });
+
+  it("briefing counts days in the vault's timezone, not UTC", async () => {
+    const store = fixtureStore();
+    await store.write("_hippo/config.yaml", ((await store.read("_hippo/config.yaml")) ?? "") + "\ntimezone: Pacific/Auckland\n");
+    // 12:00 UTC on 29 Nov is already 30 Nov in Auckland, so the deadline is today, not tomorrow.
+    const svc = new HippoService(store, { now: () => new Date("2026-11-29T12:00:00.000Z") });
+    const b = await svc.briefing({ horizonDays: 0 });
     expect(b.upcoming).toEqual([{ what: "deadline", date: "2026-11-30", ref: "[[residence-permit]]" }]);
   });
 

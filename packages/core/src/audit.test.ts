@@ -198,6 +198,19 @@ describe("auditChanges", () => {
       expect(await auditChanges({ before: s, changes, actor: curator })).toEqual([{ path: "locations/alfama-flat.md", rule: "human fact changed: rent" }]);
     });
 
+    it("keeps the ciphertext of a human-held secret unless the human's own episode says otherwise", async () => {
+      const age = (body: string) => ({ path: "secrets/passport/number.age", content: `-----BEGIN AGE ENCRYPTED FILE-----\n${body}\n-----END AGE ENCRYPTED FILE-----\n` });
+      const held = (by: string, src = "[]") => note(`type: item\ntitle: Passport\nfacts:\n  number:\n    value: secret://passport/number\n    by: ${by}\n    src: ${src}`);
+      const s = fixtureStore({ "items/passport.md": held("player"), [age("old").path]: age("old").content });
+      const changed = { path: "items/passport.md", content: held("player", "[ep-new]") };
+      // The note's ref is unchanged, so only the ciphertext change reveals the overwrite.
+      expect(await audit([age("new")], curator, [], s)).toEqual([{ path: age("new").path, rule: "human secret changed: number" }]);
+      expect(await audit([age("new"), { ...changed, content: held("residency-agent", "[ep-new]") }], curator, [], s)).toContainEqual({ path: age("new").path, rule: "human secret changed: number" });
+      // An agent's own secret can be replaced by the curator as before.
+      const agents = fixtureStore({ "items/passport.md": held("residency-agent"), [age("old").path]: age("old").content });
+      expect(await audit([age("new")], curator, [], agents)).toEqual([]);
+    });
+
     it("writes secret fields only as secret:// refs backed by age files", async () => {
       const passport = (fact: string) => ({ path: "items/passport.md", content: note(`type: item\ntitle: Passport\nfacts:\n${fact}`) });
       const ref = "  number:\n    value: secret://passport/number\n    by: residency-agent";
