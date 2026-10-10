@@ -35,6 +35,35 @@ export const QUOTAS: Quotas = {
   sleepRunsPerDay: MAX_SLEEP_RUNS_PER_DAY,
 };
 
+const QUOTA_KEYS = Object.keys(QUOTAS) as (keyof Quotas)[];
+/** Past this an override is a typo, not a plan. */
+const MAX_OVERRIDE = 1_000_000;
+
+/** An admin's overrides of the limits, checked: whole numbers for the limits named, nothing else. `null` or nothing means none. */
+export function quotaOverrides(input: unknown): Partial<Quotas> {
+  if (input === undefined || input === null) return {};
+  if (typeof input !== "object" || Array.isArray(input)) throw new HttpError(400, `quotas: an object of limits (${QUOTA_KEYS.join(", ")}), or null`, "INVALID");
+  const out: Partial<Quotas> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (!QUOTA_KEYS.includes(key as keyof Quotas)) throw new HttpError(400, `quotas: unknown limit ${key}; choose from ${QUOTA_KEYS.join(", ")}`, "INVALID");
+    if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > MAX_OVERRIDE)
+      throw new HttpError(400, `quotas.${key}: a whole number from 0 to ${MAX_OVERRIDE}`, "INVALID");
+    out[key as keyof Quotas] = value as number;
+  }
+  return out;
+}
+
+/** Overrides as the registry stored them. Anything that doesn't check out is ignored, so a bad row never breaks a vault's reads. */
+export function storedQuotas(raw: string | null | undefined): Partial<Quotas> | undefined {
+  if (!raw) return undefined;
+  try {
+    const out = quotaOverrides(JSON.parse(raw));
+    return Object.keys(out).length ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const utcDay = (d: Date) => d.toISOString().slice(0, 10);
 
 /** Counts per kind for the current UTC day, in the vault's own SQLite. Only today's rows are kept. */

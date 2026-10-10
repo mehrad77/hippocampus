@@ -12,7 +12,7 @@ import { VAULT_PERMISSIONS } from "./bootstrap.ts";
 import { cappedEmbedder, type HostedEmbedding } from "./embed-cap.ts";
 import type { InstallationToken, Narrowing, Permissions } from "./github-app.ts";
 import { logEvent } from "./limits.ts";
-import { DailyCounter, QUOTAS, limitRuns, sizeGuard, type Quotas, type SizeGuarded } from "./quotas.ts";
+import { DailyCounter, QUOTAS, limitRuns, quotaOverrides, sizeGuard, type Quotas, type SizeGuarded } from "./quotas.ts";
 import { SqlRunStore, onPut } from "./run-store.ts";
 
 // One hosted vault, served from its own Durable Object. Everything here is plain TypeScript over
@@ -26,6 +26,8 @@ export interface VaultMeta {
   branch: string;
   repoId: number;
   installationId: number;
+  /** An admin's overrides of the hosted limits for this vault; absent means the defaults. */
+  quotas?: Partial<Quotas>;
 }
 
 /** What an authenticated MCP caller may do, from its key or OAuth grant. */
@@ -179,7 +181,8 @@ export class VaultRuntime {
     this.meta = d.meta;
     this.clock = d.clock ?? (() => new Date());
     const now = () => this.clock().getTime();
-    this.quotas = { ...QUOTAS, ...d.quotas };
+    // The vault's own overrides win over the test-only deps, which win over the defaults.
+    this.quotas = { ...QUOTAS, ...d.quotas, ...d.meta.quotas };
     this.blobs = new SqliteBlobCache(d.storage.sql, { now });
     this.counter = new DailyCounter(d.storage.sql, this.clock);
     const { installationId, repoId } = d.meta;
@@ -356,7 +359,15 @@ function checkMeta(m: VaultMeta): VaultMeta {
   if (typeof m.fullName !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(m.fullName)) throw new Error("configure: fullName must look like owner/name");
   if (typeof m.branch !== "string" || !m.branch.trim()) throw new Error("configure: branch is required");
   if (!id(m.repoId) || !id(m.installationId)) throw new Error("configure: repoId and installationId must be positive integers");
-  return { vaultId: m.vaultId, fullName: m.fullName, branch: m.branch.trim(), repoId: m.repoId, installationId: m.installationId };
+  const quotas = quotaOverrides(m.quotas);
+  return {
+    vaultId: m.vaultId,
+    fullName: m.fullName,
+    branch: m.branch.trim(),
+    repoId: m.repoId,
+    installationId: m.installationId,
+    ...(Object.keys(quotas).length ? { quotas } : {}),
+  };
 }
 
 const sameMeta = (a: VaultMeta, b: VaultMeta) => JSON.stringify(checkMeta(a)) === JSON.stringify(checkMeta(b));

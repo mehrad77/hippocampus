@@ -15,6 +15,7 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
   - Keys of three kinds: agent (any agent, which names itself), single-agent (bound, with chosen scopes) and curator. OAuth connectors pick a party member or seat a new agent on the consent page.
   - Webhooks that disconnect a vault when the app is uninstalled or suspended, the repo leaves the installation or is deleted, or the repo goes public; reconnecting is automatic once it's undone.
   - Per-vault quotas, rate limits, a connected-apps list, account deletion, and a draft privacy page for operators to complete.
+  - Admins can override one vault's limits (`POST /dashboard/api/admin/vaults/quotas`, e.g. `sleepRunsPerDay`); `null` restores the defaults. Overrides are stored on the vault's registry row (`0002_vault_quotas.sql`), so no vault format change.
   - An optional Actions curator: a `sleep.yml` workflow in the vault repo that runs Claude nightly through MCP with a curator key.
 - **Agent-run sleep:** `SleepRelay` lets any agent with the `curate` scope run sleep by answering the curator's questions over MCP (`sleep_start`, `sleep_answer`, `sleep_skip`, `sleep_status`, `sleep_abort`, and the `sleep` prompt). Runs are leased, one at a time per vault, and replayed when the vault moves underneath. `hippo serve` offers it too.
 - **A Claude Code plugin** (`plugins/hippocampus`, marketplace in `.claude-plugin/`): the MCP server from `HIPPO_MCP_URL` and `HIPPO_KEY`, and the skills `/hippocampus:memory` and `/hippocampus:sleep`.

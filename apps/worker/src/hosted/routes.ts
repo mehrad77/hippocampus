@@ -62,8 +62,8 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
   const registry = new Registry(deps.registry, now);
   const app = new GitHubApp({ appId: settings.appId, privateKey: settings.privateKey, apiUrl: apiUrlOf(settings), fetch: deps.fetch, now });
   const sessions = createSessions({ settings, kv, registry, app, fetch: deps.fetch, now });
-  const admin = adminRoutes({ registry, admins: settings.admins });
   const hooks = deps.hooks ?? {};
+  const admin = adminRoutes({ registry, admins: settings.admins, onVaultChanged: hooks.onVaultChanged });
 
   const memo = new WeakMap<Request, Promise<Caller | undefined>>();
   const who = (request: Request): Promise<Caller | undefined> => {
