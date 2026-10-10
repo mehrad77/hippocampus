@@ -134,6 +134,7 @@ describe("validation", () => {
   it("rewords core's quest change notes for the plain look", () => {
     expect(changeLabel("clock Lease signing 3/4")).toBe("Lease signing 3/4");
     expect(changeLabel("status → dormant")).toBe("status → On hold");
+    expect(changeLabel("status dormant")).toBe("status → On hold");
     expect(changeLabel("✓ Shortlist listings")).toBe("✓ Shortlist listings");
     expect(changeLabel("clock Lease signing 3/4", "codex")).toBe("clock Lease signing 3/4");
     expect(changeLabel("status → dormant", "codex")).toBe("status → dormant");

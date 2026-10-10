@@ -5,7 +5,7 @@ import { basename, displayName, formatValue, parseEntity, renderEntity, type Ent
 import { parseEpisode, renderEpisode, type Episode } from "./episode.ts";
 import { isIntroductionPath, parseIntroduction, renderIntroduction, type Introduction } from "./introduction.ts";
 import { parseDoc, renderDoc } from "./markdown.ts";
-import { DisputeFrontmatter, type Capability, type Claim, type HippoConfig, type HumanDef } from "./schema.ts";
+import { DisputeFrontmatter, EntityFrontmatter, type Capability, type Claim, type HippoConfig, type HumanDef } from "./schema.ts";
 import { sameValue } from "./reconcile.ts";
 import { loadSchema, type SchemaRegistry } from "./schema-registry.ts";
 import { isSecretRef } from "./secrets.ts";
@@ -68,6 +68,8 @@ export class Vault {
   private readonly pendingFiles = new Map<string, string>();
   private readonly removals = new Set<string>();
   private readonly now: () => Date;
+  /** Template notes by type name, read once at load (`createEntity` stays synchronous). */
+  private readonly templates = new Map<string, string>();
 
   private constructor(
     readonly store: VaultStore,
@@ -85,6 +87,12 @@ export class Vault {
     const schema = await loadSchema(store, config);
     const vault = new Vault(store, config, schema, opts);
     vault.warnings.push(...schema.warnings);
+    for (const t of schema.types()) {
+      if (!t.template) continue;
+      const raw = await store.read(t.template);
+      if (raw === undefined) vault.warnings.push(`type "${t.name}": template ${t.template} not found; new notes start blank`);
+      else vault.templates.set(t.name, raw);
+    }
     await vault.reload();
     return vault;
   }
@@ -269,23 +277,32 @@ export class Vault {
     return slug;
   }
 
+  /**
+   * A new note of `type`. It starts from the type's template when it has one: the template's
+   * frontmatter fills in defaults, and its body (`{{title}}` and `{{date}}` filled in) becomes the
+   * note's. Otherwise the body is a `## Notes` heading.
+   */
   createEntity(input: { type: string; title: string; aliases?: string[]; tags?: string[]; by?: string; slug?: string }): Entity {
     const slug = input.slug && !this.entities.has(input.slug) ? input.slug : this.uniqueSlug(input.title);
     const aliases = [...new Set([input.title, ...(input.aliases ?? [])])].filter((a) => a && a !== slug);
-    const e: Entity = {
-      slug,
-      path: `${this.folderFor(input.type)}/${slug}.md`,
-      fm: {
-        id: undefined,
-        type: input.type,
-        title: input.title,
-        aliases,
-        tags: [...new Set(input.tags ?? [])],
-        relations: [],
-        facts: {},
-      },
-      body: "\n## Notes\n",
-    };
+    const path = `${this.folderFor(input.type)}/${slug}.md`;
+    const own = { type: input.type, title: input.title, aliases, tags: [...new Set(input.tags ?? [])] };
+    const e: Entity = { slug, path, fm: { id: undefined, ...own, relations: [], facts: {} }, body: "\n## Notes\n" };
+    const template = this.templates.get(input.type);
+    if (template !== undefined) {
+      const fill = (text: string) => text.replace(/\{\{\s*title\s*\}\}/g, input.title).replace(/\{\{\s*date\s*\}\}/g, localParts(this.nowIso(), this.config.timezone).date);
+      const { data, body } = parseDoc(template);
+      const defaults: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(data)) {
+        if (v === null || v === "" || (Array.isArray(v) && !v.length) || k === "id") continue;
+        defaults[k] = typeof v === "string" ? fill(v) : v;
+      }
+      const tags = [...new Set([...own.tags, ...(Array.isArray(defaults.tags) ? defaults.tags.map(String) : [])])];
+      const parsed = EntityFrontmatter.safeParse({ ...defaults, ...own, tags });
+      if (parsed.success) e.fm = { ...parsed.data, id: undefined };
+      else this.warnings.push(`template for "${input.type}" has invalid frontmatter; ${slug} starts without its defaults`);
+      e.body = fill(body).trim() ? `\n${fill(body).replace(/^\n+/, "")}` : e.body;
+    }
     this.entities.set(slug, e);
     this.indexEntity(e);
     this.touch(e, input.by);
@@ -557,7 +574,7 @@ export class Vault {
     for (const path of this.dirty) {
       const e = byPath.get(path);
       if (e) {
-        out.push({ path, content: renderEntity(e) });
+        out.push({ path, content: renderEntity(e, { goal: this.schema.has(e.fm.type, "goal") }) });
         continue;
       }
       const d = disputesByPath.get(path);

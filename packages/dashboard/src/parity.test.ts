@@ -97,13 +97,13 @@ describe("MCP source parity", () => {
 
     expect(await remote.quest!("residence-permit", { reopen: ["health insurance"], clock: { name: "Paperwork", tick: 1 } })).toEqual({
       quest: "[[residence-permit]]",
-      changes: ["○ Get health insurance", "clock Paperwork 3/6"],
+      changes: ["○ Get health insurance", "progress 3/6"],
     });
     expect(await store.read("quests/residence-permit.md")).toContain("updated_by: residency-agent");
 
     const err = await remote.quest!("no-such-quest", { status: "done" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(HttpError);
-    expect(err).toMatchObject({ status: 400, code: "VAULT", message: 'no quest "no-such-quest"' });
+    expect(err).toMatchObject({ status: 400, code: "VAULT", message: 'no goal "no-such-quest"' });
   });
 
   it("serves the API over MCP", async () => {

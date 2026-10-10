@@ -1,5 +1,6 @@
-import { getRegion, humanText, parseChecklist, parseDoc, renderChecklist, renderDoc, setRegion, removeRegion, type ChecklistItem } from "./markdown.ts";
-import { EntityFrontmatter, type Clock, type DecisionEntry, type Fact, type FactValue, type Guideline, type QuestionEntry, type Stats } from "./schema.ts";
+import { GOAL_KEYS, goalProps, renderProgress } from "./goal.ts";
+import { getRegion, humanText, parseDoc, renderDoc, setRegion, removeRegion } from "./markdown.ts";
+import { EntityFrontmatter, type DecisionEntry, type Fact, type FactValue, type Guideline, type QuestionEntry, type Stats } from "./schema.ts";
 import { parseFactKey } from "./text.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
@@ -33,7 +34,12 @@ const KEY_ORDER = [
   "tags",
   "status",
   "owner",
+  "counterparty",
+  "due",
   "deadline",
+  "progress",
+  "repeat",
+  "last_done",
   "lane",
   "authority",
   "host",
@@ -143,12 +149,6 @@ function renderRelations(e: Entity): string {
   return e.fm.relations.map((r) => `- ${r.rel}:: ${link(unwrapLink(r.target))}`).join("\n");
 }
 
-export function renderClock(c: Clock): string {
-  const filled = Math.min(c.filled, c.segments);
-  const bar = "■".repeat(filled) + "□".repeat(c.segments - filled);
-  return `- ⏱ **${c.name}** ${bar} ${filled}/${c.segments}${c.deadline ? ` · due ${c.deadline}` : ""}`;
-}
-
 const by = (who: string | undefined) => (who ? link(who) : "human");
 const day = (at: string | undefined) => at?.slice(0, 10) ?? "";
 
@@ -187,12 +187,21 @@ function renderStats(st: Stats): string {
 
 const hasStats = (st: Stats | undefined): st is Stats => !!st && (!!st.first_met || !!st.last_contact || Object.keys(st.counts).length > 0);
 
-/** Regenerate derived regions (facts, relations, clocks, managed memory) and serialize. Human prose is untouched. */
-export function renderEntity(e: Entity): string {
+const hasGoalProps = (e: Entity) => GOAL_KEYS.some((k) => k !== "status" && k !== "owner" && (e.fm as Record<string, unknown>)[k] !== undefined);
+
+/**
+ * Regenerate derived regions (facts, relations, progress, managed memory) and serialize. Human prose
+ * is untouched. `goal` says whether the note's type has the goal capability (the vault knows; without
+ * it, a note with goal props counts). A v1 `clocks` region is left as it is for the migration.
+ */
+export function renderEntity(e: Entity, opts: { goal?: boolean } = {}): string {
   let body = e.body;
   body = Object.keys(e.fm.facts).length ? setRegion(body, "facts", renderFacts(e.fm.facts)) : removeRegion(body, "facts");
   body = e.fm.relations.length ? setRegion(body, "relations", renderRelations(e)) : removeRegion(body, "relations");
-  body = e.fm.clocks?.length ? setRegion(body, "clocks", e.fm.clocks.map(renderClock).join("\n")) : removeRegion(body, "clocks");
+  if (opts.goal ?? hasGoalProps(e)) {
+    const line = renderProgress(goalProps(e));
+    body = line ? setRegion(body, "progress", line) : removeRegion(body, "progress");
+  }
   body = e.fm.guidelines?.length ? setRegion(body, "guidelines", renderGuidelines(e.fm.guidelines)) : removeRegion(body, "guidelines");
   body = e.fm.decisions?.length ? setRegion(body, "decisions", renderDecisions(e.fm.decisions)) : removeRegion(body, "decisions");
   body = e.fm.questions?.length ? setRegion(body, "questions", renderQuestions(e.fm.questions)) : removeRegion(body, "questions");
@@ -217,16 +226,6 @@ export function getSummary(e: Entity): string {
 
 export function setSummary(e: Entity, text: string): void {
   e.body = setRegion(e.body, "summary", text.trim());
-}
-
-// Quest objectives live in the body as a checklist so they can be ticked in Obsidian directly.
-export function getObjectives(e: Entity): ChecklistItem[] {
-  const region = getRegion(e.body, "objectives");
-  return region === undefined ? [] : parseChecklist(region);
-}
-
-export function setObjectives(e: Entity, items: ChecklistItem[]): void {
-  e.body = setRegion(e.body, "objectives", renderChecklist(items));
 }
 
 export function relationTargets(e: Entity): string[] {

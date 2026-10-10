@@ -73,16 +73,7 @@ export const Relation = z.object({
 });
 export type Relation = z.infer<typeof Relation>;
 
-export const Clock = z.object({
-  name: z.string(),
-  segments: z.number().int().positive().default(6),
-  filled: z.number().int().nonnegative().default(0),
-  deadline: opt(z.coerce.string()),
-});
-export type Clock = z.infer<typeof Clock>;
-
-export const QuestStatus = z.enum(["active", "blocked", "done", "failed", "dormant"]);
-export type QuestStatus = z.infer<typeof QuestStatus>;
+// Goal props (status, owner, due, progress, repeat) and their v1 forms live in goal.ts, actor props in actor.ts.
 
 const stringList = z.preprocess((v) => (v == null ? [] : Array.isArray(v) ? v : [v]), z.array(z.coerce.string()));
 
@@ -162,12 +153,10 @@ export const EntityFrontmatter = z.looseObject({
   decisions: opt(z.array(DecisionEntry)),
   questions: opt(z.array(QuestionEntry)),
   stats: opt(Stats),
-  // quest
+  // Goal and actor props are parsed on demand (goal.ts, actor.ts); these stay typed for display.
+  // v1 `deadline` and `clocks` stay in the loose rest until the migration converts them.
   status: opt(z.coerce.string()),
   owner: opt(z.coerce.string()),
-  deadline: opt(z.coerce.string()),
-  clocks: opt(z.array(Clock)),
-  // party
   lane: opt(z.coerce.string()),
   authority: opt(stringList),
   host: opt(z.coerce.string()),

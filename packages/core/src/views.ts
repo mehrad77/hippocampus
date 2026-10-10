@@ -1,11 +1,13 @@
-import { basename, displayName, getObjectives, getSummary, type Entity } from "./entity.ts";
+import { actorProps } from "./actor.ts";
+import { basename, displayName, getSummary, type Entity } from "./entity.ts";
+import { getObjectives, goalProps, goalState, legacyClocks, nextDue, type Clock, type GoalState, type Progress, type Repeat } from "./goal.ts";
 import type { Episode } from "./episode.ts";
 import { humanText, parseDoc } from "./markdown.ts";
 import { CURRENT_VAULT_VERSION, vaultVersionStatus } from "./migrations.ts";
 import { isSecretField } from "./ops.ts";
-import { FactStatus, type Clock, type EpisodeKind, type Fact, type FactValue } from "./schema.ts";
+import { FactStatus, type EpisodeKind, type Fact, type FactValue } from "./schema.ts";
 import { isSecretRef } from "./secrets.ts";
-import { fromLocal, localParts } from "./text.ts";
+import { fromLocal, localParts, parseFactKey } from "./text.ts";
 import type { Authority, Dispute, Vault } from "./vault.ts";
 
 /** Authority as the dashboard shows it: any human is "human", whether or not the domain is theirs. */
@@ -57,6 +59,7 @@ export interface EntityCard extends Ref {
   status?: string;
 }
 
+/** @deprecated A v1 clock, or a goal's progress drawn as one, until the dashboard shows progress. */
 export interface ClockView {
   name: string;
   segments: number;
@@ -65,14 +68,34 @@ export interface ClockView {
   daysLeft?: number;
 }
 
-export interface QuestCard extends EntityCard {
+/** A goal as the dashboard shows it. New fields are optional while older cards (and clients) lack them. */
+export interface GoalCard extends EntityCard {
+  /** The core state (`status` says the same, for older clients). */
+  state?: GoalState;
+  /** The status as written: a core state or a word of the type's vocabulary. */
+  word?: string;
   owner?: Ref;
-  deadline?: string;
+  counterparty?: Ref;
+  /** ISO date (v1: `deadline`). */
+  due?: string;
+  /** When it's next due: `due`, or for a repeat after the last contact, that contact plus the interval. */
+  nextDue?: string;
+  /** Days from today to `nextDue`. */
   daysLeft?: number;
+  progress?: Progress;
+  repeat?: Repeat;
+  lastDone?: string;
   objectives: { text: string; done: boolean }[];
+  /** @deprecated Same as `due`. */
+  deadline?: string;
+  /** @deprecated The goal's progress as a clock, then any other v1 clocks. */
   clocks: ClockView[];
+  /** The arc it belongs to. */
   campaign?: Ref;
 }
+
+/** @deprecated v1 name of `GoalCard`. */
+export type QuestCard = GoalCard;
 
 export interface ClaimView extends Shown {
   by: string;
@@ -198,7 +221,7 @@ export interface Overview {
     quests: Record<string, number>;
   };
   attention: Attention;
-  quests: QuestCard[];
+  quests: GoalCard[];
   upcoming: Upcoming[];
   party: PartyMember[];
   inbox: EpisodeView[];
@@ -226,7 +249,7 @@ export interface EntityDetail {
   facts: FactDetail[];
   relations: { rel: string; dir: "out" | "in"; ref: Ref }[];
   disputes: DisputeView[];
-  quest?: QuestCard;
+  quest?: GoalCard;
   party?: PartyMember;
   mentions: ChronicleEntryView[];
   pending: EpisodeView[];
@@ -346,23 +369,43 @@ export function entityCard(ctx: ViewContext, e: Entity): EntityCard {
   };
 }
 
+const daysTo = (ctx: ViewContext, day: string | undefined) => (day && ISO_DAY.test(day) ? daysBetween(ctx.today, day) : undefined);
+
 function clockView(ctx: ViewContext, c: Clock): ClockView {
-  return { name: c.name, segments: c.segments, filled: Math.min(c.filled, c.segments), deadline: c.deadline, daysLeft: c.deadline && ISO_DAY.test(c.deadline) ? daysBetween(ctx.today, c.deadline) : undefined };
+  return { name: c.name, segments: c.segments, filled: Math.min(c.filled, c.segments), deadline: c.deadline, daysLeft: daysTo(ctx, c.deadline) };
 }
 
-export function questCard(ctx: ViewContext, q: Entity): QuestCard {
-  const campaign = (ctx.rel.out.get(q.slug) ?? []).map((r) => ctx.vault.entities.get(r.slug)!).find((e) => e && ctx.vault.schema.has(e.fm.type, "arc"));
+export function goalCard(ctx: ViewContext, q: Entity): GoalCard {
+  const { vault } = ctx;
+  const p = goalProps(q);
+  const campaign = (ctx.rel.out.get(q.slug) ?? []).map((r) => vault.entities.get(r.slug)!).find((e) => e && vault.schema.has(e.fm.type, "arc"));
+  const state = goalState(p.status, vault.schema.type(q.fm.type)?.statuses);
+  const next = nextDue(q, vault);
+  // Until the dashboard draws progress, it shows as the goal's first clock (named after a v1 clock it came from).
+  const [first, ...rest] = legacyClocks(q);
+  const progressClock = p.progress ? [{ name: first?.name ?? "Progress", segments: p.progress.total, filled: Math.min(p.progress.done, p.progress.total) }] : [];
   return {
     ...entityCard(ctx, q),
-    status: q.fm.status ?? "active",
-    owner: q.fm.owner ? refFor(ctx.vault, q.fm.owner, ctx.vault.schema.defaultTypeFor("actor")) : undefined,
-    deadline: q.fm.deadline,
-    daysLeft: q.fm.deadline && ISO_DAY.test(q.fm.deadline) ? daysBetween(ctx.today, q.fm.deadline) : undefined,
+    status: state,
+    state,
+    word: p.status ?? "active",
+    owner: p.owner ? refFor(vault, p.owner, vault.schema.defaultTypeFor("actor")) : undefined,
+    counterparty: p.counterparty ? refFor(vault, p.counterparty) : undefined,
+    due: p.due,
+    nextDue: next,
+    daysLeft: daysTo(ctx, next),
+    progress: p.progress,
+    repeat: p.repeat,
+    lastDone: p.last_done,
     objectives: getObjectives(q),
-    clocks: (q.fm.clocks ?? []).map((c) => clockView(ctx, c)),
+    deadline: p.due,
+    clocks: [...progressClock, ...(p.progress && first ? rest : [first, ...rest].filter((c): c is Clock => !!c))].map((c) => clockView(ctx, c)),
     campaign: campaign ? refOf(campaign) : undefined,
   };
 }
+
+/** @deprecated Use `goalCard`. */
+export const questCard = goalCard;
 
 export function factDetail(ctx: ViewContext, e: Entity, field: string, f: Fact): FactDetail {
   const dispute = ctx.vault.disputes.get(ctx.vault.disputeSlug(e.slug, field));
@@ -488,22 +531,49 @@ export function findings(ctx: ViewContext): Pick<Attention, "disputes" | "rumors
   return { disputes: ctx.vault.openDisputes().map((d) => disputeView(ctx, d)), rumors, stale, orphans };
 }
 
-/** Deadlines, clock deadlines and date-like facts between `today` and `horizon` (inclusive), soonest first. */
+/** The next time a yearly date (a birthday) comes round, on or after `today`. Feb 29 falls on Feb 28 in other years. */
+export function nextYearly(date: string, today: string): string {
+  const [, m, d] = date.slice(0, 10).split("-");
+  const on = (year: number) => {
+    const last = new Date(Date.UTC(year, Number(m), 0)).getUTCDate();
+    return `${year}-${m}-${String(Math.min(Number(d), last)).padStart(2, "0")}`;
+  };
+  const year = Number(today.slice(0, 4));
+  const thisYear = on(year);
+  return thisYear >= today.slice(0, 10) ? thisYear : on(year + 1);
+}
+
+/**
+ * What's due between `today` and `horizon` (inclusive), soonest first: open goals (their next due
+ * date), v1 clock deadlines, and date facts. A fact counts when its field is declared a `date` (a
+ * `recurs: yearly` one at its next occurrence); an undeclared field only when its name looks like a date.
+ */
 export function upcomingDates(vault: Vault, today: string, horizon: string): { what: string; date: string; slug: string }[] {
   const out: { what: string; date: string; slug: string }[] = [];
+  const within = (d: string) => ISO_DAY.test(d) && d.slice(0, 10) >= today && d.slice(0, 10) <= horizon;
   for (const e of vault.entities.values()) {
-    if (e.fm.deadline && e.fm.deadline >= today && e.fm.deadline <= horizon) out.push({ what: "deadline", date: e.fm.deadline, slug: e.slug });
-    for (const c of e.fm.clocks ?? []) if (c.deadline && c.deadline >= today && c.deadline <= horizon) out.push({ what: `clock ${c.name} ${c.filled}/${c.segments}`, date: c.deadline, slug: e.slug });
+    if (vault.schema.has(e.fm.type, "goal")) {
+      const state = goalState(e.fm.status, vault.schema.type(e.fm.type)?.statuses);
+      const due = nextDue(e, vault);
+      if (due && state !== "done" && state !== "failed" && within(due)) out.push({ what: "due", date: due.slice(0, 10), slug: e.slug });
+      for (const c of legacyClocks(e)) if (c.deadline && within(c.deadline)) out.push({ what: `clock ${c.name} ${c.filled}/${c.segments}`, date: c.deadline, slug: e.slug });
+    }
     for (const [field, f] of Object.entries(e.fm.facts)) {
-      if (isConfidentialField(vault, e, field, f)) continue;
+      if (f.status === "retconned" || isConfidentialField(vault, e, field, f)) continue;
       const v = String(f.value);
-      if (DATEISH.test(field) && ISO_DAY.test(v) && v.slice(0, 10) >= today && v.slice(0, 10) <= horizon) out.push({ what: `${field} (${f.status})`, date: v, slug: e.slug });
+      if (!ISO_DAY.test(v)) continue;
+      const def = vault.schema.fieldDef(e.fm.type, field);
+      if (def ? def.kind !== "date" : !DATEISH.test(parseFactKey(field).field)) continue;
+      const date = def?.recurs === "yearly" ? nextYearly(v, today) : v.slice(0, 10);
+      if (within(date)) out.push({ what: `${field} (${f.status})`, date, slug: e.slug });
     }
   }
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 
 // ── Party ────────────────────────────────────────────────────────────────────────
+
+const actorFields = ({ lane, authority, host }: ReturnType<typeof actorProps>) => ({ lane, authority, host });
 
 function partyMembers(ctx: ViewContext, chronicle30d: ChronicleEntryView[]): PartyMember[] {
   const { vault } = ctx;
@@ -517,15 +587,17 @@ function partyMembers(ctx: ViewContext, chronicle30d: ChronicleEntryView[]): Par
   for (const c of chronicle30d) seen(c.agent, c.at);
   for (const e of vault.entities.values()) for (const f of Object.values(e.fm.facts)) seen(f.by, f.at);
   const quests = vault.withCapability("goal");
+  const owned = (q: Entity) => {
+    const owner = goalProps(q).owner;
+    return owner ? vault.resolve(owner)?.slug : undefined;
+  };
   return vault.withCapability("actor").map((p) => ({
     ...refOf(p),
-    lane: p.fm.lane,
-    authority: p.fm.authority ?? [],
-    host: p.fm.host,
+    ...actorFields(actorProps(p)),
     lastSeen: lastSeen.get(p.slug),
     pending: vault.episodes.filter((ep) => ep.agent === p.slug).length,
     chronicled30d: chronicle30d.filter((c) => c.agent === p.slug).length,
-    owns: quests.filter((q) => q.fm.owner && vault.resolve(q.fm.owner)?.slug === p.slug).map(refOf),
+    owns: quests.filter((q) => owned(q) === p.slug).map(refOf),
   }));
 }
 
@@ -559,7 +631,10 @@ export async function overview(vault: Vault): Promise<Overview> {
   for (const e of vault.entities.values()) {
     byType[e.fm.type] = (byType[e.fm.type] ?? 0) + 1;
     for (const f of Object.values(e.fm.facts)) facts[f.status]++;
-    if (vault.schema.has(e.fm.type, "goal")) questCounts[e.fm.status ?? "active"] = (questCounts[e.fm.status ?? "active"] ?? 0) + 1;
+    if (vault.schema.has(e.fm.type, "goal")) {
+      const state = goalState(e.fm.status, vault.schema.type(e.fm.type)?.statuses);
+      questCounts[state] = (questCounts[state] ?? 0) + 1;
+    }
   }
 
   const activity: ActivityDay[] = [];
@@ -585,7 +660,7 @@ export async function overview(vault: Vault): Promise<Overview> {
     version: { vault: config.version, tool: CURRENT_VAULT_VERSION, status: vaultVersionStatus(config) },
     counts: { entities: vault.entities.size, byType, facts, inbox: vault.episodes.length, disputes: vault.openDisputes().length, quests: questCounts },
     attention: { ...findings(ctx), waiting: inbox.filter((e) => e.waitedThroughSleep), unknownAgents: unknown, introductions: introductions(vault) },
-    quests: vault.withCapability("goal").map((q) => questCard(ctx, q)),
+    quests: vault.withCapability("goal").map((q) => goalCard(ctx, q)),
     upcoming: upcomingDates(vault, ctx.today, horizon).map((u) => ({ what: u.what, date: u.date, daysLeft: daysBetween(ctx.today, u.date), ref: refOf(vault.entities.get(u.slug)!) })),
     party: partyMembers(ctx, chronicle30d),
     inbox: [...inbox].reverse().slice(0, 200),
@@ -631,7 +706,7 @@ export async function entityDetail(vault: Vault, e: Entity): Promise<EntityDetai
     facts: Object.entries(e.fm.facts).map(([field, f]) => factDetail(ctx, e, field, f)),
     relations,
     disputes: [...vault.disputes.values()].filter((d) => vault.resolve(d.fm.entity)?.slug === e.slug).map((d) => disputeView(ctx, d)),
-    quest: vault.schema.has(e.fm.type, "goal") ? questCard(ctx, e) : undefined,
+    quest: vault.schema.has(e.fm.type, "goal") ? goalCard(ctx, e) : undefined,
     party: isParty ? partyMembers(ctx, chronicle.filter((c) => c.day >= addDays(ctx.today, -29))).find((p) => p.slug === e.slug) : undefined,
     mentions: chronicle.filter((c) => c.touched.includes(e.slug) || (isParty && c.agent === e.slug)).reverse().slice(0, 50),
     pending: vault.episodes.filter(aboutMe).map((ep) => episodeView(ep, lastSleep)),
@@ -647,7 +722,8 @@ export function graph(vault: Vault): Graph {
   const edges = [...ctx.rel.out.entries()].flatMap(([from, rs]) => rs.map((r) => ({ from, rel: r.rel, to: r.slug })));
   // Quest ownership isn't a relation in the notes, but it's how the party connects to the story.
   for (const q of vault.withCapability("goal")) {
-    const owner = q.fm.owner ? vault.resolve(q.fm.owner) : undefined;
+    const ref = goalProps(q).owner;
+    const owner = ref ? vault.resolve(ref) : undefined;
     if (owner && owner.slug !== q.slug) edges.push({ from: owner.slug, rel: "leads", to: q.slug });
   }
   return { nodes, edges };

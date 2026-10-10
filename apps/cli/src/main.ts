@@ -219,7 +219,7 @@ program
 
 program
   .command("fmt")
-  .description("Re-render every note (normalize frontmatter, regenerate facts/relations/clocks regions).")
+  .description("Re-render every note (normalize frontmatter, regenerate facts, relations, progress and managed regions).")
   .action(async () => {
     const vault = await Vault.load(openStore());
     for (const e of vault.entities.values()) vault.markDirty(e);

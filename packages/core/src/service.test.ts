@@ -281,33 +281,55 @@ describe("HippoService", () => {
     expect(messages.map((m) => m.split("\n\n"))).toEqual([
       [expect.stringMatching(/^remember\(residency-agent\): ep-\w+$/), "Hippo-Actor: agent:residency-agent"],
       [expect.stringMatching(/^remember\(player\): ep-\w+$/), "Hippo-Actor: human"],
-      ["quest(residence-permit): ✓ Get health insurance", "Hippo-Actor: agent:residency-agent"],
-      ["quest(residence-permit): ○ Get health insurance", "Hippo-Actor: human"],
+      ["goal(residence-permit): ✓ Get health insurance", "Hippo-Actor: agent:residency-agent"],
+      ["goal(residence-permit): ○ Get health insurance", "Hippo-Actor: human"],
       ["introduce(job-scout): Job Scout", "Hippo-Actor: agent:job-scout"],
       ["party(player): approve job-scout", "Hippo-Actor: human"],
       ["party(player): add archivist", "Hippo-Actor: human"],
     ]);
   });
 
-  it("update_quest ticks objectives and clocks", async () => {
+  it("update_quest ticks objectives, and its clock moves the goal's progress", async () => {
     const store = fixtureStore();
     const svc = new HippoService(store, { now });
     const r = await svc.updateQuest("residency-agent", "Residence permit 2026", { complete: ["health insurance"], add: ["Pay card fee"], clock: { name: "Paperwork", segments: 4, tick: 1 } });
-    expect(r.changes).toEqual(["✓ Get health insurance", "+ Pay card fee", "clock Paperwork 1/4"]);
+    expect(r.changes).toEqual(["✓ Get health insurance", "+ Pay card fee", "progress 1/4"]);
     const quest = await svc.get("residence-permit");
     expect(quest.objectives).toEqual([
       { text: "Get health insurance", done: true },
       { text: "Book agency appointment", done: false },
       { text: "Pay card fee", done: false },
     ]);
-    expect(await store.read("quests/residence-permit.md")).toContain("⏱ **Paperwork** ■□□□ 1/4");
+    expect(await store.read("quests/residence-permit.md")).toContain("▰▱▱▱ 1/4 · due 2026-11-30");
     expect(await store.read("HANDBOOK.md")).toContain("1/3 objectives");
+  });
+
+  it("update_goal records progress, due date and repeat; get and the goal card show them", async () => {
+    const store = fixtureStore();
+    const svc = new HippoService(store, { now });
+    const r = await svc.updateGoal("residency-agent", "residence-permit", { progress: { total: 3, tick: 1 }, due: "2026-12-01", repeat: { every: "1y" }, counterparty: "LMA" });
+    expect(r).toEqual({ goal: "[[residence-permit]]", changes: ["due 2026-12-01", "counterparty [[migration-agency]]", "repeat every 1y", "progress 1/3"] });
+    expect(await svc.get("residence-permit")).toMatchObject({
+      status: "active",
+      state: "active",
+      due: "2026-12-01",
+      next_due: "2026-12-01",
+      deadline: "2026-12-01",
+      progress: { done: 1, total: 3 },
+      repeat: { every: "1y" },
+      counterparty: "[[migration-agency]]",
+    });
+    const card = (await svc.overview()).quests[0]!;
+    expect(card).toMatchObject({ state: "active", word: "active", due: "2026-12-01", nextDue: "2026-12-01", daysLeft: 65, progress: { done: 1, total: 3 }, counterparty: { slug: "migration-agency" } });
+    expect(card.clocks).toEqual([{ name: "Progress", segments: 3, filled: 1, deadline: undefined, daysLeft: undefined }]);
+    expect(await store.read("quests/residence-permit.md")).toContain("▰▱▱ 1/3 · due 2026-12-01 · repeats every 1y");
+    await expect(svc.updateGoal("residency-agent", "migration-agency", { status: "done" })).rejects.toThrow(/no goal "migration-agency"/);
   });
 
   it("briefing lists upcoming dates", async () => {
     const svc = new HippoService(fixtureStore(), { now });
     const b = await svc.briefing({ horizonDays: 90 });
-    expect(b.upcoming).toEqual([{ what: "deadline", date: "2026-11-30", ref: "[[residence-permit]]" }]);
+    expect(b.upcoming).toEqual([{ what: "due", date: "2026-11-30", ref: "[[residence-permit]]" }]);
   });
 
   it("briefing counts days in the vault's timezone, not UTC", async () => {
@@ -316,7 +338,7 @@ describe("HippoService", () => {
     // 12:00 UTC on 29 Nov is already 30 Nov in Auckland, so the deadline is today, not tomorrow.
     const svc = new HippoService(store, { now: () => new Date("2026-11-29T12:00:00.000Z") });
     const b = await svc.briefing({ horizonDays: 0 });
-    expect(b.upcoming).toEqual([{ what: "deadline", date: "2026-11-30", ref: "[[residence-permit]]" }]);
+    expect(b.upcoming).toEqual([{ what: "due", date: "2026-11-30", ref: "[[residence-permit]]" }]);
   });
 
   it("neighbors walks typed edges both directions", async () => {

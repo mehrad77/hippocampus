@@ -116,13 +116,13 @@ describe("dashboard API: actions", () => {
     expect(await post("actions/rule", { dispute: "dispute-migration-agency-office-address", claim: 0 })).toMatchObject({ status: 400, body: { code: "VAULT" } });
   });
 
-  it("quest: ticks a clock and reopens an objective", async () => {
+  it("quest: a clock tick moves the goal's progress, and reopens an objective", async () => {
     const { post, store } = harness();
     const r = await post("actions/quest", { quest: "residence-permit", reopen: ["health insurance"], clock: { name: "Paperwork", tick: 1 } });
-    expect(r).toMatchObject({ status: 200, body: { quest: "[[residence-permit]]", changes: ["○ Get health insurance", "clock Paperwork 3/6"] } });
+    expect(r).toMatchObject({ status: 200, body: { quest: "[[residence-permit]]", changes: ["○ Get health insurance", "progress 3/6"] } });
     const raw = (await store.read("quests/residence-permit.md"))!;
     expect(raw).toContain("- [ ] Get health insurance");
-    expect(parseDoc(raw).data).toMatchObject({ clocks: [{ name: "Paperwork", segments: 6, filled: 3 }], updated_by: "player" });
+    expect(parseDoc(raw).data).toMatchObject({ progress: { done: 3, total: 6 }, updated_by: "player" });
   });
 
   it("remember: writes an episode to the human's inbox", async () => {
@@ -296,14 +296,14 @@ describe("dashboard API: hosted", () => {
     const { get, post } = harness({
       source: (full) => ({
         ...full,
-        remember: () => Promise.reject(new AuditError([{ path: "factions/migration-agency.md", rule: "agents may only edit quest notes" }])),
+        remember: () => Promise.reject(new AuditError([{ path: "factions/migration-agency.md", rule: "agents may only edit goal notes" }])),
         overview: () => Promise.reject(new Error("could not parse: Lisbon Migration office")),
       }),
       report: (err) => reported.push(err),
     });
     expect(await post("actions/remember", { text: "x" })).toMatchObject({
       status: 409,
-      body: { code: "AUDIT", violations: [{ path: "factions/migration-agency.md", rule: "agents may only edit quest notes" }] },
+      body: { code: "AUDIT", violations: [{ path: "factions/migration-agency.md", rule: "agents may only edit goal notes" }] },
     });
     const failed = await get("overview");
     expect(failed).toMatchObject({ status: 500, body: { code: "INTERNAL" } });

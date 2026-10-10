@@ -90,7 +90,7 @@ describe("dashboard views", () => {
     const quest = o.quests[0]!;
     expect(quest).toMatchObject({ slug: "residence-permit", owner: { slug: "residency-agent", type: "party" }, deadline: "2026-11-30", daysLeft: 64, degree: 1 });
     expect(quest.objectives).toHaveLength(2);
-    expect(o.upcoming).toEqual([{ what: "deadline", date: "2026-11-30", daysLeft: 64, ref: { slug: "residence-permit", title: "Residence permit 2026", type: "quest" } }]);
+    expect(o.upcoming).toEqual([{ what: "due", date: "2026-11-30", daysLeft: 64, ref: { slug: "residence-permit", title: "Residence permit 2026", type: "quest" } }]);
     const agent = o.party.find((p) => p.slug === "residency-agent")!;
     expect(agent).toMatchObject({ pending: 2, chronicled30d: 1, lastSeen: "2026-09-26T10:00:00.000Z", owns: [{ slug: "residence-permit" }] });
     expect(o.chronicle.map((c) => c.id)).toEqual(["ep-01AAA", "ep-01BBB"]);
@@ -208,15 +208,15 @@ describe("human actions", () => {
     await expect(svc.addPartyMember({ id: "archivist", title: "x", authority: ["magic"] })).rejects.toThrow(/unknown domain magic/);
   });
 
-  it("reopens objectives and keeps clocks within their segments", async () => {
+  it("reopens objectives and keeps progress within its total (through the v1 clock shim)", async () => {
     const v = await Vault.load(fixtureStore(), { now });
     const quest = v.resolve("residence-permit")!;
     applyQuestUpdate(v, quest, { complete: ["insurance"], clock: { name: "Paperwork", segments: 6, filled: 5 } }, "player");
     expect(applyQuestUpdate(v, quest, { reopen: ["health insurance", "nonexistent"], clock: { name: "paperwork", segments: 4 } }, "player")).toEqual([
       "○ Get health insurance",
-      "clock Paperwork 4/4",
+      "progress 4/4",
     ]);
-    expect(quest.fm.clocks).toEqual([{ name: "Paperwork", segments: 4, filled: 4 }]);
+    expect(quest.fm.progress).toEqual({ done: 4, total: 4 });
     expect(quest.fm.updated_by).toBe("player");
   });
 });

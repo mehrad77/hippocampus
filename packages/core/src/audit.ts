@@ -1,9 +1,10 @@
 import { CONFIG_PATH, CURATOR_RULES_PATH, parseConfig } from "./config.ts";
-import { parseEntity, type Entity } from "./entity.ts";
+import { basename, parseEntity, type Entity } from "./entity.ts";
 import { parseEpisode } from "./episode.ts";
+import { GOAL_KEYS, LEGACY_GOAL_KEYS } from "./goal.ts";
 import { HANDBOOK_PATH } from "./handbook.ts";
 import { isIntroductionPath } from "./introduction.ts";
-import { humanText, parseDoc } from "./markdown.ts";
+import { getRegion, humanText, parseDoc } from "./markdown.ts";
 import { AGENT_ID, RESERVED_AGENT_IDS } from "./ops.ts";
 import { DisputeFrontmatter, type HippoConfig } from "./schema.ts";
 import { loadSchema, schemaFolder, type SchemaRegistry } from "./schema-registry.ts";
@@ -14,8 +15,11 @@ import { VaultError } from "./vault.ts";
 import { REVIEW_PATH } from "./views.ts";
 import { unwrapLink } from "./wikilink.ts";
 
-/** Who commits a change set. An agent's `scopes` are its connection's (absent means all, as for local MCP). */
-export type Actor = { kind: "agent"; id: string; scopes?: string[] } | { kind: "curator" } | { kind: "human" } | { kind: "bootstrap" };
+/**
+ * Who commits a change set. An agent's `scopes` are its connection's (absent means all, as for local
+ * MCP). `migration` rewrites the vault's format: it moves and reshapes notes, never their memory.
+ */
+export type Actor = { kind: "agent"; id: string; scopes?: string[] } | { kind: "curator" } | { kind: "human" } | { kind: "bootstrap" } | { kind: "migration" };
 
 /** A broken rule. Only the path and the rule, never content: violations end up in logs and errors. */
 export interface Violation {
@@ -67,11 +71,26 @@ interface Layout {
 }
 
 const PROTECTED = new Set([CONFIG_PATH, CURATOR_RULES_PATH, "AGENTS.md", "CLAUDE.md"]);
+/** The tool's scaffolding a migration may add or rewrite, besides schema notes. */
+const SCAFFOLD = ["_hippo/templates", "_hippo/dashboards"];
+/** What an agent with the goal scope may change in a goal note's frontmatter. */
+const GOAL_EDITABLE = new Set<string>([...GOAL_KEYS, ...LEGACY_GOAL_KEYS, "updated", "updated_by"]);
+/** Regions drawn from frontmatter (checked there), and the ones goal edits own. Any other region (the summary) must stay. */
+const DERIVED_REGIONS = new Set(["facts", "relations", "guidelines", "decisions", "questions", "stats", "clocks", "progress", "objectives"]);
 const AGE_ARMOR = "-----BEGIN AGE ENCRYPTED FILE-----";
 
 const under = (path: string, folder: string) => path.startsWith(`${folder}/`);
 const dirname = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("/")));
 const squash = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/** JSON with object keys sorted, so equal values compare equal whatever their key order. */
+function canonical(v: unknown): string {
+  return JSON.stringify(v, (_k, x: unknown) =>
+    x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b))) : x,
+  );
+}
+
+const regionNames = (body: string) => [...body.matchAll(/%% hippo:begin ([\w-]+) %%/g)].map((m) => m[1]!);
 const cites = (chronicle: string, id: string) => chronicle.includes(`^${id}\n`) || chronicle.trimEnd().endsWith(`^${id}`);
 
 /**
@@ -127,8 +146,8 @@ function agentPath(path: string, op: Op, id: string, can: (scope: string) => boo
   if (op === "add" && can("remember") && dirname(path) === `${l.inbox}/${id}` && path.endsWith(".md")) return undefined;
   // A new introduction replaces the agent's earlier one; it was never a memory, so nothing is lost.
   if (op === "remove" && can("remember") && dirname(path) === `${l.inbox}/${id}` && isIntroductionPath(path)) return undefined;
-  // The scope keeps its wire name, `quest`; what it allows is editing notes of a goal type.
-  if (op !== "remove" && can("quest") && (path === HANDBOOK_PATH || (op === "modify" && l.schema.has(l.typeOf(path), "goal")))) return undefined;
+  // The scope's wire name is still `quest` (`goal` arrives alongside); it allows editing notes of a goal type.
+  if (op !== "remove" && (can("quest") || can("goal")) && (path === HANDBOOK_PATH || (op === "modify" && l.schema.has(l.typeOf(path), "goal")))) return undefined;
   return op === "add" ? "agents only add episodes to their own inbox folder" : `agents may not ${op} this file`;
 }
 
@@ -148,9 +167,11 @@ function dispute(raw: string | undefined) {
 
 /**
  * Check a change set against what its actor may do, before it's committed. The human (and vault
- * bootstrap) may change anything. Agents only add episodes to their own inbox folder (and edit quests
- * with the `quest` scope). The curator writes canon, but never the human's prose, facts, config or
- * party, never drops a memory, and never writes a secret in plain text. `forbidden` values (≥3
+ * bootstrap) may change anything. Agents only add episodes to their own inbox folder (and edit goal
+ * props with the goal scope). The curator writes canon, but never the human's prose, facts, config or
+ * party, never drops a memory, never writes a secret in plain text, and never repeats a confidential
+ * value where everyone reads (summaries, names, the chronicle). A migration only reshapes: config,
+ * schema, scaffolding, and notes moved or rewritten with the same memory. `forbidden` values (≥3
  * characters, case-sensitive) may not newly appear in anything written, whoever writes it.
  */
 export async function auditChanges(i: { before: VaultStore; changes: Change[]; actor: Actor; forbidden?: string[] }): Promise<Violation[]> {
@@ -185,6 +206,11 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
   const after = overlayStore(before, i.changes);
   const op = (c: Change): Op => ("remove" in c ? "remove" : was.get(c.path) === undefined ? "add" : "modify");
 
+  if (actor.kind === "migration") {
+    await auditMigration({ l, after, changes, was, op, flag });
+    return out;
+  }
+
   if (actor.kind === "agent" && (!AGENT_ID.test(actor.id) || (RESERVED_AGENT_IDS as readonly string[]).includes(actor.id) || isHumanId(config, actor.id))) {
     for (const c of changes) flag(c.path, "not an agent id");
     return out;
@@ -207,12 +233,14 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
     const [b, a] = [dispute(was.get(c.path)), dispute(c.content)];
     if (b?.status === "open" && a?.status === "resolved" && b.ruling !== undefined && b.ruling !== "") rulings.set(`${unwrapLink(b.entity)}.${b.field}`, String(b.ruling));
   }
-  const removed: { path: string; id: string; agent: string }[] = [];
+  const removed: { path: string; id: string; agent: string; confidential?: string }[] = [];
   for (const c of changes) {
     if (!("remove" in c) || !under(c.path, l.inbox) || isIntroductionPath(c.path)) continue;
     try {
       const ep = parseEpisode(c.path, was.get(c.path)!, l.inbox, new Date(0).toISOString());
-      removed.push({ path: c.path, id: ep.id, agent: ep.agent });
+      // Enough of a confidential episode's text to recognize it if it shows up in the chronicle.
+      const snippet = ep.confidential ? ep.text.trim().split("\n")[0]!.trim().slice(0, 40) : "";
+      removed.push({ path: c.path, id: ep.id, agent: ep.agent, ...(snippet.length >= 3 ? { confidential: snippet } : {}) });
     } catch {
       flag(c.path, "removed an unreadable episode");
     }
@@ -226,7 +254,10 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
     if (oldRaw !== undefined && !b) return flag(path, "overwrites an unreadable note");
     if (actor.kind === "curator" && (l.schema.has(a.fm.type, "actor") || l.schema.has(b?.fm.type, "actor"))) flag(path, "party note");
     if (b) {
-      if (actor.kind === "agent" && !l.schema.has(b.fm.type, "goal")) flag(path, "agents may only edit quest notes");
+      if (actor.kind === "agent") {
+        if (!l.schema.has(b.fm.type, "goal")) flag(path, "agents may only edit goal notes");
+        else auditGoalEdit(path, b, a, flag);
+      }
       const folderType = l.typeOf(path);
       if ((b.fm.type || folderType) !== (a.fm.type || folderType)) flag(path, "entity type changed");
       if ((b.fm.id ?? "") !== (a.fm.id ?? "")) flag(path, "entity id changed");
@@ -299,6 +330,8 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
     if (held && !covered) flag(c.path, `human secret changed: ${field}`);
   }
 
+  auditConfidential({ l, changes, was, removed, flag });
+
   // Never lose a memory: a consolidated episode leaves the inbox only once the chronicle cites it.
   let missing = removed.filter((r) => !changes.some((c) => "content" in c && under(c.path, l.chronicle) && cites(c.content, r.id)));
   if (missing.length) {
@@ -310,4 +343,138 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
   }
   for (const r of missing) flag(r.path, "removed episode not in the chronicle");
   return out;
+}
+
+type Flag = (path: string, rule: string) => void;
+
+/**
+ * An agent with the goal scope changes goal props (status, progress, due…), objectives and the
+ * progress line, never a goal's facts, relations, names, tags or summary.
+ */
+function auditGoalEdit(path: string, b: Entity, a: Entity, flag: Flag): void {
+  const [before, after] = [b.fm as Record<string, unknown>, a.fm as Record<string, unknown>];
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    // Type and id have their own rules.
+    if (GOAL_EDITABLE.has(key) || key === "type" || key === "id") continue;
+    if (canonical(before[key]) !== canonical(after[key])) flag(path, `agents may only change goal props: ${key}`);
+  }
+  for (const name of new Set([...regionNames(b.body), ...regionNames(a.body)])) {
+    if (DERIVED_REGIONS.has(name)) continue;
+    if ((getRegion(b.body, name) ?? "").trim() !== (getRegion(a.body, name) ?? "").trim()) flag(path, `agents may only change goal props: ${name}`);
+  }
+}
+
+/** A fact's value is confidential when the fact says so, or its field is confidential or an identity key. */
+function confidentialValues(l: Layout, e: Entity | undefined): string[] {
+  if (!e) return [];
+  const out: string[] = [];
+  for (const [field, f] of Object.entries(e.fm.facts)) {
+    const def = l.schema.fieldDef(e.fm.type, field);
+    if (!f.confidential && !def?.confidential && !def?.identity_key) continue;
+    for (const v of [f.value, ...(f.was ?? []).map((w) => w.value)]) {
+      const text = String(v).trim();
+      if (!isSecretRef(v) && text.length >= 3) out.push(text);
+    }
+  }
+  return out;
+}
+
+/**
+ * Confidential values of the notes this change set touches must not newly appear in a note's summary,
+ * title or aliases, or in the chronicle; nor may a consolidated confidential episode's text.
+ */
+function auditConfidential(i: {
+  l: Layout;
+  changes: Change[];
+  was: Map<string, string | undefined>;
+  removed: { confidential?: string }[];
+  flag: Flag;
+}): void {
+  const { l, changes, was, flag } = i;
+  const notes = changes.filter((c) => l.typeOf(c.path)).map((c) => {
+    const old = was.get(c.path);
+    return { path: c.path, b: old === undefined ? undefined : parseNote(c.path, old), a: "content" in c ? parseNote(c.path, c.content) : undefined };
+  });
+  const values = [...new Set(notes.flatMap((n) => [...confidentialValues(l, n.b), ...confidentialValues(l, n.a)]))];
+  const grew = (now: string, then: string, vs: string[]) => vs.some((v) => occurrences(now, v) > occurrences(then, v));
+  if (values.length) {
+    for (const { path, b, a } of notes) {
+      if (!a) continue;
+      const summary = (e: Entity | undefined) => (e ? (getRegion(e.body, "summary") ?? "") : "");
+      const names = (e: Entity | undefined) => (e ? [e.fm.title ?? "", ...e.fm.aliases].join("\n") : "");
+      if (grew(summary(a), summary(b), values)) flag(path, "confidential value in a summary");
+      if (grew(names(a), names(b), values)) flag(path, "confidential value in a title or alias");
+    }
+  }
+  const episodes = i.removed.flatMap((r) => (r.confidential ? [r.confidential] : []));
+  for (const c of changes) {
+    if (!("content" in c) || !under(c.path, l.chronicle)) continue;
+    const then = was.get(c.path) ?? "";
+    if (values.length && grew(c.content, then, values)) flag(c.path, "confidential value in the chronicle");
+    if (episodes.some((t) => c.content.split(t).length > then.split(t).length)) flag(c.path, "confidential episode in the chronicle");
+  }
+}
+
+/**
+ * A format migration only reshapes. It may rewrite the config, add or rewrite schema notes, templates,
+ * dashboards and the handbook, and move or rewrite entity notes: a note removed from one type folder
+ * comes back under another with the same name, and every note keeps its human prose, facts,
+ * relations, id, names, tags, summary and managed memory. Its type and goal props (v1 `deadline`,
+ * `clocks`) may change. Nothing else: not the inbox, chronicle, disputes, secrets, CI or guardrails.
+ */
+async function auditMigration(i: { l: Layout; after: VaultStore; changes: Change[]; was: Map<string, string | undefined>; op: (c: Change) => Op; flag: Flag }): Promise<void> {
+  const { l, changes, was, op, flag } = i;
+  // Folders as the migrated tree defines them: notes move into the new type folders.
+  const la = await loadLayout(i.after, parseConfig(await i.after.read(CONFIG_PATH)));
+  const memory = [l.inbox, l.chronicle, l.disputes, l.secrets, la.inbox, la.chronicle, la.disputes, la.secrets];
+  const isNote = (path: string) => path.endsWith(".md") && !memory.some((f) => under(path, f)) && !!(l.typeOf(path) || la.typeOf(path));
+  const typeFolder = (path: string) => [...l.schema.folders(), ...la.schema.folders()].some((t) => dirname(path) === t.folder);
+  const scaffold = (path: string) => [l.schemaDir, la.schemaDir, ...SCAFFOLD].some((f) => under(path, f));
+
+  const pairs: { path: string; old: string; raw: string }[] = [];
+  const removed = new Map<string, { path: string; old: string }>();
+  const added = new Map<string, { path: string; raw: string }>();
+  for (const c of changes) {
+    const o = op(c);
+    if (badPath(c.path)) flag(c.path, "path not normalized");
+    else if (c.path === CONFIG_PATH || c.path === HANDBOOK_PATH || scaffold(c.path)) {
+      if (o === "remove") flag(c.path, "a migration may not remove this file");
+    } else if (o === "add" && basename(c.path) === ".gitkeep" && typeFolder(c.path)) {
+      // An empty type folder kept in git.
+    } else if (isNote(c.path)) {
+      const key = basename(c.path);
+      if (o === "modify" && "content" in c) pairs.push({ path: c.path, old: was.get(c.path)!, raw: c.content });
+      else if (o === "remove") {
+        if (removed.has(key)) flag(c.path, "duplicate note name");
+        else removed.set(key, { path: c.path, old: was.get(c.path)! });
+      } else if ("content" in c) {
+        if (added.has(key)) flag(c.path, "duplicate note name");
+        else added.set(key, { path: c.path, raw: c.content });
+      }
+    } else flag(c.path, "a migration may not change this file");
+  }
+  for (const [key, r] of removed) {
+    const a = added.get(key);
+    if (!a) flag(r.path, "note removed by a migration");
+    else pairs.push({ path: a.path, old: r.old, raw: a.raw });
+    added.delete(key);
+  }
+  for (const a of added.values()) flag(a.path, "note added by a migration");
+
+  const reshaped = new Set<string>(["type", "updated", "updated_by", ...GOAL_KEYS, ...LEGACY_GOAL_KEYS]);
+  for (const { path, old, raw } of pairs) {
+    const [b, a] = [parseNote(path, old), parseNote(path, raw)];
+    if (!b || !a) {
+      flag(path, "unreadable note");
+      continue;
+    }
+    if (squash(humanText(b.body)) !== squash(humanText(a.body))) flag(path, "human prose changed");
+    if ((b.fm.id ?? "") !== (a.fm.id ?? "")) flag(path, "entity id changed");
+    if ((getRegion(b.body, "summary") ?? "").trim() !== (getRegion(a.body, "summary") ?? "").trim()) flag(path, "summary changed");
+    const [fb, fa] = [b.fm as Record<string, unknown>, a.fm as Record<string, unknown>];
+    for (const key of new Set([...Object.keys(fb), ...Object.keys(fa)])) {
+      if (reshaped.has(key) || key === "id") continue;
+      if (canonical(fb[key]) !== canonical(fa[key])) flag(path, key === "facts" || key === "relations" ? `${key} changed` : `frontmatter changed: ${key}`);
+    }
+  }
 }

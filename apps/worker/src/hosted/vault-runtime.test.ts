@@ -242,7 +242,7 @@ describe("VaultRuntime: writes are audited", () => {
 
     const err = await store.apply!([{ path: note, content: "---\ntype: faction\n---\n# Gone\n" }], forged("agent:residency-agent")).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AuditError);
-    expect((err as AuditError).violations).toContainEqual({ path: note, rule: "agents may only edit quest notes" });
+    expect((err as AuditError).violations).toContainEqual({ path: note, rule: "agents may only edit goal notes" });
 
     // Claims the principal can't make: another agent, the human, the curator, or none at all.
     for (const meta of [forged("agent:home-finder"), forged("human"), forged("curator"), { message: "chore: tidy up" }]) {

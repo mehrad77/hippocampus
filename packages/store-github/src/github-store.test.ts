@@ -42,7 +42,7 @@ describe("GitHubStore", () => {
     await service.updateQuest("residency-agent", "residence-permit", { complete: ["Book agency appointment"] });
     const [commit, parent] = gh.log();
     expect(parent!.message).toBe("init");
-    expect(commit!.message).toMatch(/^quest\(residence-permit\): /);
+    expect(commit!.message).toMatch(/^goal\(residence-permit\): /);
     const files = gh.files();
     expect(files["quests/residence-permit.md"]).toContain("- [x] Book agency appointment");
     expect(files["HANDBOOK.md"]).toBeDefined();

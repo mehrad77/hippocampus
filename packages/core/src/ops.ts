@@ -1,9 +1,10 @@
-import { getObjectives, setObjectives, type Entity } from "./entity.ts";
+import type { Entity } from "./entity.ts";
 import { canonicalRelation } from "./config.ts";
 import { AUTHORITY_RANK, capWas, priorOf, reconcileFact, sameValue, type Decision } from "./reconcile.ts";
-import { QuestStatus, type Clock, type FactValue } from "./schema.ts";
+import { applyGoalUpdate, goalProps, type Clock, type GoalUpdate } from "./goal.ts";
+import type { FactValue } from "./schema.ts";
 import { encryptSecret, isSecretRef, secretPath, secretRef } from "./secrets.ts";
-import { factKey, hash, normalizeName, normalizeScope, parseFactKey, slugify, toFieldName } from "./text.ts";
+import { factKey, hash, normalizeScope, parseFactKey, slugify, toFieldName } from "./text.ts";
 import { VaultError, type Dispute, type Vault } from "./vault.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
@@ -193,91 +194,36 @@ export function addRelation(vault: Vault, from: Entity, rel: string, to: Entity,
   return true;
 }
 
+/** @deprecated v1 shape of `GoalUpdate`: a named clock and a `deadline`. */
 export interface QuestUpdate {
   status?: string;
   complete?: string[];
   /** Objectives to mark not done again (fuzzy-matched; unknown ones are ignored). */
   reopen?: string[];
   add?: string[];
+  /** A goal has one progress now: any clock name updates it (`segments` → total, `filled` → done). */
   clock?: Partial<Clock> & { name: string; tick?: number };
   deadline?: string;
   owner?: string;
 }
 
-export function applyQuestUpdate(vault: Vault, quest: Entity, update: QuestUpdate, by: string): string[] {
-  const changes: string[] = [];
-  if (update.status) {
-    const status = QuestStatus.safeParse(update.status.toLowerCase());
-    if (status.success && quest.fm.status !== status.data) {
-      quest.fm.status = status.data;
-      changes.push(`status → ${status.data}`);
-    }
+/** The v1 update in goal terms: a clock becomes `progress`, a deadline (the update's, else the clock's) `due`. */
+export function questToGoalUpdate(goal: Entity, update: QuestUpdate): GoalUpdate {
+  const { clock, deadline, ...rest } = update;
+  const out: GoalUpdate = { ...rest };
+  if (clock) {
+    // A clock new to the goal started at 6 segments; keep that default for callers that don't say.
+    const total = clock.segments ?? (goalProps(goal).progress ? undefined : 6);
+    out.progress = { total, done: clock.filled, tick: clock.tick };
   }
-  if (update.deadline) {
-    quest.fm.deadline = update.deadline;
-    changes.push(`deadline → ${update.deadline}`);
-  }
-  if (update.owner) {
-    const owner = vault.resolve(update.owner);
-    quest.fm.owner = link(owner?.slug ?? unwrapLink(update.owner));
-    changes.push(`owner → ${quest.fm.owner}`);
-  }
-  const objectives = getObjectives(quest);
-  let touchedObjectives = false;
-  for (const text of update.complete ?? []) {
-    const target = matchObjective(objectives, text);
-    if (target && !target.done) {
-      target.done = true;
-      touchedObjectives = true;
-      changes.push(`✓ ${target.text}`);
-    } else if (!target) {
-      objectives.push({ text, done: true });
-      touchedObjectives = true;
-      changes.push(`✓ ${text} (new)`);
-    }
-  }
-  for (const text of update.reopen ?? []) {
-    const target = matchObjective(objectives, text);
-    if (target?.done) {
-      target.done = false;
-      touchedObjectives = true;
-      changes.push(`○ ${target.text}`);
-    }
-  }
-  for (const text of update.add ?? []) {
-    if (!matchObjective(objectives, text)) {
-      objectives.push({ text, done: false });
-      touchedObjectives = true;
-      changes.push(`+ ${text}`);
-    }
-  }
-  if (touchedObjectives) setObjectives(quest, objectives);
-  if (update.clock) {
-    const clocks = (quest.fm.clocks ??= []);
-    const key = normalizeName(update.clock.name);
-    let c = clocks.find((x) => normalizeName(x.name) === key);
-    if (!c) {
-      c = { name: update.clock.name, segments: update.clock.segments ?? 6, filled: 0 };
-      clocks.push(c);
-    }
-    if (update.clock.segments) c.segments = update.clock.segments;
-    if (update.clock.filled !== undefined) c.filled = update.clock.filled;
-    if (update.clock.tick) c.filled = Math.max(0, Math.min(c.segments, c.filled + update.clock.tick));
-    if (update.clock.deadline) c.deadline = update.clock.deadline;
-    // Shrinking `segments` or an explicit `filled` must not leave a clock overfull.
-    c.filled = Math.max(0, Math.min(c.segments, c.filled));
-    changes.push(`clock ${c.name} ${c.filled}/${c.segments}`);
-  }
-  if (changes.length) vault.touch(quest, by);
-  return changes;
+  const due = deadline ?? clock?.deadline;
+  if (due) out.due = due;
+  return out;
 }
 
-function matchObjective<T extends { text: string }>(items: T[], text: string): T | undefined {
-  const key = normalizeName(text);
-  return (
-    items.find((i) => normalizeName(i.text) === key) ??
-    items.find((i) => normalizeName(i.text).includes(key) || key.includes(normalizeName(i.text)))
-  );
+/** @deprecated Use `applyGoalUpdate`. */
+export function applyQuestUpdate(vault: Vault, quest: Entity, update: QuestUpdate, by: string): string[] {
+  return applyGoalUpdate(vault, quest, questToGoalUpdate(quest, update), by);
 }
 
 /**

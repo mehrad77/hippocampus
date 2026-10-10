@@ -30,12 +30,12 @@ export function questStatusWord(status: QuestStatus, look: Look = "plain"): stri
   return look === "codex" ? status : QUEST_WORD[status];
 }
 
-/** One of core's quest change notes (`clock Paperwork 3/6`, `status → dormant`) in the reader's words. */
+/** One of core's goal change notes (`progress 3/6`, `status dormant`; older cores: `clock Paperwork 3/6`, `status → dormant`) in the reader's words. */
 export function changeLabel(change: string, look: Look = "plain"): string {
   if (look === "codex") return change;
   const clock = /^clock (.+ \d+\/\d+)$/.exec(change);
   if (clock) return clock[1]!;
-  const status = /^status → (\S+)$/.exec(change);
+  const status = /^status (?:→ )?(\S+)$/.exec(change);
   if (status && isQuestStatus(status[1])) return `status → ${questStatusWord(status[1])}`;
   return change;
 }

@@ -1,21 +1,27 @@
-import { displayName, getObjectives, type Entity } from "./entity.ts";
+import { actorProps } from "./actor.ts";
+import { displayName, type Entity } from "./entity.ts";
+import { getObjectives, goalProps, goalStateOf, nextDue } from "./goal.ts";
 import { assertAgentId } from "./ops.ts";
 import type { Vault } from "./vault.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
 export const HANDBOOK_PATH = "HANDBOOK.md";
 
-function questLine(q: Entity): string {
+function questLine(vault: Vault, q: Entity): string {
+  const p = goalProps(q);
   const objectives = getObjectives(q);
   const done = objectives.filter((o) => o.done).length;
-  const owner = q.fm.owner ? ` · owner ${link(unwrapLink(q.fm.owner))}` : "";
-  const progress = objectives.length ? ` · ${done}/${objectives.length} objectives` : "";
-  const deadline = q.fm.deadline ? ` · due ${q.fm.deadline}` : "";
-  return `- ${link(q.slug)} — ${q.fm.status ?? "active"}${owner}${progress}${deadline}`;
+  const owner = p.owner ? ` · owner ${link(unwrapLink(p.owner))}` : "";
+  const steps = objectives.length ? ` · ${done}/${objectives.length} objectives` : "";
+  const progress = p.progress ? ` · progress ${Math.min(p.progress.done, p.progress.total)}/${p.progress.total}` : "";
+  const due = nextDue(q, vault);
+  const repeat = p.repeat?.every ? ` · repeats every ${p.repeat.every}` : "";
+  return `- ${link(q.slug)} — ${p.status ?? "active"}${owner}${steps}${progress}${due ? ` · due ${due}` : ""}${repeat}`;
 }
 
+/** Goals not done or failed (through each type's status vocabulary). */
 export function activeQuests(vault: Vault): Entity[] {
-  return vault.withCapability("goal").filter((q) => !["done", "failed"].includes(q.fm.status ?? "active"));
+  return vault.withCapability("goal").filter((q) => !["done", "failed"].includes(goalStateOf(vault, q)));
 }
 
 /** The Player's Handbook: everything an agent needs to read and write this vault correctly. */
@@ -28,9 +34,12 @@ export function renderHandbook(vault: Vault): string {
     .map((t) => `| \`${t.name}\` | \`${t.folder}/\` | ${t.description} |`)
     .join("\n");
   const partyRows = party
-    .map((p) => `| \`${p.slug}\` | ${displayName(p)} | ${p.fm.lane ?? ""} | ${(p.fm.authority ?? []).join(", ")} |`)
+    .map((p) => {
+      const a = actorProps(p);
+      return `| \`${p.slug}\` | ${displayName(p)} | ${a.lane ?? ""} | ${a.authority.join(", ")} |`;
+    })
     .join("\n");
-  const quests = activeQuests(vault).map((q) => questLine(q)).join("\n") || "- (none)";
+  const quests = activeQuests(vault).map((q) => questLine(vault, q)).join("\n") || "- (none)";
   const kinds = vault.schema.kinds();
   const kindNames = kinds.map((k) => k.name).join(" | ");
   const kindList = kinds.map((k) => `\`${k.name}\``).join(" | ");
@@ -75,7 +84,7 @@ Writing tips, so the curator gets it right:
 - Exact values: ISO dates (\`2026-10-14\`), amounts with currency (\`4,500 TRY\`), full IDs, emails, and phone numbers.
 - Say *how you know* ("confirmed by email from …", "seen on the permit portal") when it matters.
 - Corrections are just new memories ("appointment moved to …"). Don't try to change old ones.
-- Quest progress: \`update_quest\` records objectives, clocks and status directly. Story beats for the game master: \`kind: beat\`.
+- Quest progress: \`update_quest\` records objectives, progress, due dates and status directly. Story beats for the game master: \`kind: beat\`.
 
 ## 👋 Introduce yourself
 
@@ -161,7 +170,7 @@ ${(err as Error).message}. Pick your own id (lowercase letters, digits and dashe
 **Authority domains:** ${(me.fm.authority ?? []).join(", ") || "(none, so your facts start as rumors)"}
 
 **Your quests:**
-${mine.map((q) => questLine(q)).join("\n") || "- (none)"}
+${mine.map((q) => questLine(vault, q)).join("\n") || "- (none)"}
 `;
   }
   const intro = vault.introductionOf(id);

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { fixtureStore } from "../../../packages/core/src/__fixtures__/vault.ts";
+import { GOAL_TYPE_NOTE, MIGRATED_QUEST, V2_CONFIG, fixtureStore } from "../../../packages/core/src/__fixtures__/vault.ts";
 import { auditHistory } from "./audit.ts";
 import { CatFile, Git, GitTreeStore } from "./git.ts";
 
@@ -88,6 +88,33 @@ describe("auditHistory", () => {
     expect(r.violations).toContainEqual({ sha: odd, path: "(commit)", rule: "unknown Hippo-Actor trailer" });
     // Never file content.
     expect(JSON.stringify(r)).not.toContain("Rewritten");
+  });
+
+  it("audits each commit against the layout of its own time, across a v1 → v2 migration", async () => {
+    const QUEST = "quests/residence-permit.md";
+    const GOAL = "goals/residence-permit.md";
+    commit("init", "bootstrap");
+    // v1: the goal type is the inline `quest`, in quests/.
+    write({ [QUEST]: (fixtureStore().files.get(QUEST) ?? "").replace("- [ ] Get health insurance", "- [x] Get health insurance") });
+    commit("goal(residence-permit): ✓ Get health insurance", "agent:residency-agent");
+    // The migration: config, a goal type note, the quest moved to goals/.
+    write({ "_hippo/config.yaml": V2_CONFIG, "_hippo/schema/types/goal.md": GOAL_TYPE_NOTE, [GOAL]: MIGRATED_QUEST.replace("- [ ] Get health insurance", "- [x] Get health insurance") });
+    rmSync(join(dir, QUEST));
+    const migration = commit("chore: migrate vault to v2", "migration");
+    // v2: the goal type comes from the schema note, in goals/.
+    write({ [GOAL]: MIGRATED_QUEST.replace("- [ ] Get health insurance", "- [x] Get health insurance").replace("- [ ] Book agency appointment", "- [x] Book agency appointment") });
+    commit("goal(residence-permit): ✓ Book agency appointment", "agent:residency-agent");
+    // A note outside any goal folder is still off limits to an agent.
+    write({ [AGENCY]: (fixtureStore().files.get(AGENCY) ?? "").replace("tags: [residency]", "tags: [residency, housing]") });
+    const bad = commit("goal(migration-agency): retag", "agent:residency-agent");
+
+    const r = await auditHistory(new Git(dir), { since: "1 hour ago" });
+    expect(r.audited).toBe(5);
+    expect(r.violations).toEqual([
+      { sha: bad, path: AGENCY, rule: "agents may not modify this file" },
+      { sha: bad, path: AGENCY, rule: "agents may only edit goal notes" },
+    ]);
+    expect(r.violations.some((v) => v.sha === migration)).toBe(false);
   });
 
   it("skips merge commits with a note", async () => {

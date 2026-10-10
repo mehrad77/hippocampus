@@ -167,7 +167,7 @@ describe("capabilities, not type names", () => {
     const service = new HippoService(store());
     const { changes } = await service.updateQuest("residency-agent", "residence-permit", { complete: ["Book agency appointment"] });
     expect(changes).toEqual(["✓ Book agency appointment"]);
-    await expect(service.updateQuest("residency-agent", "lisbon", { status: "done" })).rejects.toThrow(/no quest/);
+    await expect(service.updateQuest("residency-agent", "lisbon", { status: "done" })).rejects.toThrow(/no goal/);
   });
 
   it("audits against the schema of the tree being changed", async () => {

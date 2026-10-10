@@ -1,12 +1,13 @@
-import { displayName, formatValue, getObjectives, getSummary, type Entity } from "./entity.ts";
+import { displayName, formatValue, getSummary, type Entity } from "./entity.ts";
+import { applyGoalUpdate, getObjectives, goalProps, goalStateOf, legacyClocks, nextDue, type Clock, type GoalState, type GoalUpdate, type Progress, type Repeat } from "./goal.ts";
 import { createEpisode, type NewEpisode } from "./episode.ts";
 import { HANDBOOK_PATH, renderHandbook, renderOnboarding } from "./handbook.ts";
 import { validateEpisode } from "./kinds.ts";
 import { INTRODUCTION_LIMITS, createIntroduction, type NewIntroduction } from "./introduction.ts";
 import { humanText } from "./markdown.ts";
-import { addPartyMember, applyQuestUpdate, applyRuling, assertAgentId, isSecretField, retractFact, type NewPartyMember, type QuestUpdate } from "./ops.ts";
+import { addPartyMember, applyRuling, assertAgentId, isSecretField, questToGoalUpdate, retractFact, type NewPartyMember, type QuestUpdate } from "./ops.ts";
 import { miniSearcher, type SearcherFactory } from "./search.ts";
-import type { Clock, FactStatus, FactValue } from "./schema.ts";
+import type { FactStatus, FactValue } from "./schema.ts";
 import { StoreConflictError, type VaultStore } from "./store.ts";
 import { fold, isoDate, localParts, truncate } from "./text.ts";
 import { ACTOR_TRAILER, actorTrailer, withTrailers } from "./trailers.ts";
@@ -57,9 +58,20 @@ export interface EntityView extends EntityBrief {
   aliases: string[];
   tags: string[];
   status?: string;
+  /** Goals: the core state behind `status`. */
+  state?: GoalState;
   owner?: string;
+  counterparty?: string;
+  due?: string;
+  /** Goals: when it's next due (a repeat after the last contact counts from that contact). */
+  next_due?: string;
+  progress?: Progress;
+  repeat?: Repeat;
+  last_done?: string;
+  /** @deprecated Same as `due`. */
   deadline?: string;
   objectives?: { text: string; done: boolean }[];
+  /** @deprecated v1 clocks, until the migration turns them into progress and objectives. */
   clocks?: Clock[];
   relations: { rel: string; dir: "out" | "in"; ref: string; title: string }[];
   disputes: string[];
@@ -234,6 +246,9 @@ export class HippoService {
     const vault = await this.vault();
     const e = vault.resolve(ref);
     if (!e) throw new VaultError(`no entity "${ref}"${await this.suggest(vault, ref)}`);
+    const goal = vault.schema.has(e.fm.type, "goal");
+    const p = goal ? goalProps(e) : undefined;
+    const clocks = goal ? legacyClocks(e) : [];
     return {
       ...brief(vault, e, Infinity),
       summary: getSummary(e),
@@ -241,10 +256,21 @@ export class HippoService {
       aliases: e.fm.aliases,
       tags: e.fm.tags,
       status: e.fm.status,
+      ...(p
+        ? {
+            state: goalStateOf(vault, e),
+            counterparty: p.counterparty,
+            due: p.due,
+            next_due: nextDue(e, vault),
+            progress: p.progress,
+            repeat: p.repeat,
+            last_done: p.last_done,
+            deadline: p.due,
+          }
+        : {}),
       owner: e.fm.owner,
-      deadline: e.fm.deadline,
-      objectives: vault.schema.has(e.fm.type, "goal") ? getObjectives(e) : undefined,
-      clocks: e.fm.clocks,
+      objectives: goal ? getObjectives(e) : undefined,
+      clocks: clocks.length ? clocks : undefined,
       relations: vault.neighbors(e.slug).map((n) => ({ rel: n.rel, dir: n.dir, ref: link(n.entity.slug), title: displayName(n.entity) })),
       disputes: vault
         .openDisputes()
@@ -348,14 +374,26 @@ export class HippoService {
     };
   }
 
+  /** Record goal progress directly: status, objectives, progress, due date, owner, counterparty, repeat. */
+  async updateGoal(agent: string, ref: string, update: GoalUpdate, opts: ActAs = {}) {
+    const { target, changes } = await this.applyGoal(agent, ref, () => update, opts);
+    return { goal: target, changes };
+  }
+
+  /** @deprecated The v1 shape: a clock becomes progress, a deadline the due date. Use `updateGoal`. */
   async updateQuest(agent: string, ref: string, update: QuestUpdate, opts: ActAs = {}) {
+    const { target, changes } = await this.applyGoal(agent, ref, (goal) => questToGoalUpdate(goal, update), opts);
+    return { quest: target, changes };
+  }
+
+  private applyGoal(agent: string, ref: string, update: (goal: Entity) => GoalUpdate, opts: ActAs) {
     return this.mutate((vault) => {
       const by = actingAs(vault, agent, opts);
-      const quest = vault.resolve(ref);
-      if (!quest || !vault.schema.has(quest.fm.type, "goal")) throw new VaultError(`no quest "${ref}"`);
-      const changes = applyQuestUpdate(vault, quest, update, by);
+      const goal = vault.resolve(ref);
+      if (!goal || !vault.schema.has(goal.fm.type, "goal")) throw new VaultError(`no goal "${ref}"`);
+      const changes = applyGoalUpdate(vault, goal, update(goal), by);
       if (changes.length) vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
-      return { message: signed(`quest(${quest.slug}): ${changes.join("; ")}`, opts.asHuman ? undefined : by), result: { quest: link(quest.slug), changes } };
+      return { message: signed(`goal(${goal.slug}): ${changes.join("; ")}`, opts.asHuman ? undefined : by), result: { target: link(goal.slug), changes } };
     });
   }
 
