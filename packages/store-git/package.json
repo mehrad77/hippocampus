@@ -1,0 +1,17 @@
+{
+  "name": "@hippocampus/store-git",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hippocampus/core": "workspace:*",
+    "@hippocampus/index": "workspace:*"
+  },
+  "license": "AGPL-3.0-only"
+}

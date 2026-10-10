@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
 import { FakeGitHub } from "./fake-github.ts";
 import { GitHubStore } from "./github-store.ts";
-import { SqliteBlobCache } from "./sql-cache.ts";
+import { SqliteBlobCache } from "@hippocampus/store-git";
 
 describe("SqliteBlobCache", () => {
   it("keeps blobs across instances on the same storage, as after a Durable Object restart", async () => {

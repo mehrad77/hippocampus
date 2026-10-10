@@ -1,4 +1,4 @@
-import { gitBlobSha } from "./blob-cache.ts";
+import { gitBlobSha } from "@hippocampus/store-git";
 
 interface FakeFile {
   sha: string;
