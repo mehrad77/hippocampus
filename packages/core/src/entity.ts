@@ -1,5 +1,6 @@
 import { getRegion, parseChecklist, parseDoc, renderChecklist, renderDoc, setRegion, removeRegion, type ChecklistItem } from "./markdown.ts";
 import { EntityFrontmatter, type Clock, type Fact, type FactValue } from "./schema.ts";
+import { parseFactKey } from "./text.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
 export interface Entity {
@@ -65,7 +66,11 @@ function compactFacts(facts: Record<string, Fact>): Record<string, unknown> {
     if (f.at) o.at = f.at;
     if (f.src.length) o.src = f.src;
     if (f.seen_by?.length) o.seen_by = f.seen_by;
-    if (f.was?.length) o.was = f.was;
+    if (f.valid_from) o.valid_from = f.valid_from;
+    if (f.valid_until) o.valid_until = f.valid_until;
+    if (f.confidence !== undefined) o.confidence = f.confidence;
+    if (f.confidential) o.confidential = true;
+    if (f.was?.length) o.was = f.was.map((w) => Object.fromEntries(Object.entries(w).filter(([, v]) => v !== undefined)));
     out[k] = o;
   }
   return out;
@@ -78,12 +83,33 @@ export function formatValue(v: FactValue): string {
   return s.startsWith("secret://") ? "🔒 secret" : s.replace(/\|/g, "\\|").replace(/\n/g, " ");
 }
 
+/** `2024-01 → 2026-03`, `since 2024-01`, `until 2026-03`, or empty. */
+export function formatValidity(f: { valid_from?: string; valid_until?: string }): string {
+  const [from, until] = [f.valid_from?.slice(0, 10), f.valid_until?.slice(0, 10)];
+  if (from && until) return `${from} → ${until}`;
+  if (from) return `since ${from}`;
+  return until ? `until ${until}` : "";
+}
+
+// Scope and Valid columns appear only when some fact uses them, so plain notes keep their table.
 function renderFacts(facts: Record<string, Fact>): string {
-  const rows = Object.entries(facts).map(
-    ([k, f]) =>
-      `| ${k} | ${formatValue(f.value)} | ${STATUS_MARK[f.status] ?? f.status} | ${f.by ? link(f.by) : "human"} | ${f.at?.slice(0, 10) ?? ""} |`,
-  );
-  return ["| Fact | Value | Status | By | Since |", "| --- | --- | --- | --- | --- |", ...rows].join("\n");
+  const entries = Object.entries(facts).map(([k, f]) => ({ ...parseFactKey(k), key: k, f }));
+  const scoped = entries.some((e) => e.scope);
+  const dated = entries.some((e) => e.f.valid_from || e.f.valid_until);
+  const head = ["Fact", ...(scoped ? ["Scope"] : []), "Value", "Status", "By", "Since", ...(dated ? ["Valid"] : [])];
+  const rows = entries.map(({ field, scope, key, f }) => {
+    const cells = [
+      scoped ? field : key,
+      ...(scoped ? [scope ?? ""] : []),
+      formatValue(f.value),
+      STATUS_MARK[f.status] ?? f.status,
+      f.by ? link(f.by) : "human",
+      f.at?.slice(0, 10) ?? "",
+      ...(dated ? [formatValidity(f)] : []),
+    ];
+    return `| ${cells.join(" | ")} |`;
+  });
+  return [`| ${head.join(" | ")} |`, `| ${head.map(() => "---").join(" | ")} |`, ...rows].join("\n");
 }
 
 function renderRelations(e: Entity): string {

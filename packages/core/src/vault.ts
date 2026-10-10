@@ -5,10 +5,10 @@ import { basename, displayName, parseEntity, renderEntity, type Entity } from ".
 import { parseEpisode, renderEpisode, type Episode } from "./episode.ts";
 import { isIntroductionPath, parseIntroduction, renderIntroduction, type Introduction } from "./introduction.ts";
 import { parseDoc, renderDoc } from "./markdown.ts";
-import { DisputeFrontmatter, type Capability, type Claim, type HippoConfig } from "./schema.ts";
+import { DisputeFrontmatter, type Capability, type Claim, type HippoConfig, type HumanDef } from "./schema.ts";
 import { loadSchema, type SchemaRegistry } from "./schema-registry.ts";
 import { applyChanges, type Change, type CommitMeta, type VaultStore } from "./store.ts";
-import { localParts, normalizeName, slugify } from "./text.ts";
+import { localParts, normalizeName, parseFactKey, slugify } from "./text.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
 export interface Dispute {
@@ -18,7 +18,11 @@ export interface Dispute {
   body: string;
 }
 
-export type Authority = "human" | "authority" | "none";
+/**
+ * How much weight a source's word carries about one entity or field, highest first: a human whose
+ * domains cover it, any other human, an agent with lane authority, anyone else. See reconcile.ts.
+ */
+export type Authority = "human_domain" | "human" | "authority" | "none";
 
 export interface VaultOptions {
   now?: () => Date;
@@ -200,16 +204,35 @@ export class Vault {
     return this.actorMember(id);
   }
 
+  /** Whether `agent` is one of the vault's humans. A missing author, or the generic `human`, is the primary human. */
   isHuman(agent: string | undefined): boolean {
-    return agent === undefined || agent === "human" || agent.toLowerCase() === this.config.human.toLowerCase();
+    return agent === undefined || agent === "human" || !!this.human(agent);
   }
 
-  /** How much weight `agent`'s word carries about `entity` (lane authority matches entity tags/type). */
-  authorityOf(agent: string | undefined, entity: Entity): Authority {
-    if (this.isHuman(agent)) return "human";
-    const domains = this.actorMember(agent!)?.fm.authority ?? [];
-    const scope = new Set([...entity.fm.tags.map((t) => t.toLowerCase()), entity.fm.type]);
-    return domains.some((d) => scope.has(d.toLowerCase())) ? "authority" : "none";
+  /** The human `id` names (case-insensitive), or the primary human when `id` is missing or the generic `human`. */
+  human(id?: string): HumanDef | undefined {
+    const humans = this.config.humans;
+    if (id === undefined || id === "human") return humans[0];
+    const key = id.toLowerCase();
+    return humans.find((h) => h.id.toLowerCase() === key);
+  }
+
+  /** The human a GitHub login belongs to (their `github:`), else the primary human. */
+  humanFor(login: string | undefined): HumanDef {
+    const key = login?.toLowerCase();
+    return (key && this.config.humans.find((h) => h.github?.toLowerCase() === key)) || this.config.humans[0]!;
+  }
+
+  /**
+   * How much weight `agent`'s word carries about `entity` (and `field`, a `facts:` key): domains
+   * (a human's, or an agent's lane authority) match the entity's tags or type, or the field's `domain`.
+   */
+  authorityOf(agent: string | undefined, entity: Entity, field?: string): Authority {
+    const scope = new Set([...entity.fm.tags.map((t) => t.toLowerCase()), entity.fm.type.toLowerCase()]);
+    const fieldDomain = field === undefined ? undefined : this.schema.fieldDef(entity.fm.type, parseFactKey(field).field)?.domain?.toLowerCase();
+    const covers = (domains: string[]) => domains.some((d) => scope.has(d.toLowerCase()) || d.toLowerCase() === fieldDomain);
+    if (this.isHuman(agent)) return covers(this.human(agent)?.domains ?? []) ? "human_domain" : "human";
+    return covers(this.actorMember(agent!)?.fm.authority ?? []) ? "authority" : "none";
   }
 
   /** Entities linked from or to `slug`. */
@@ -281,8 +304,10 @@ export class Vault {
     this.dirty.add(e.path);
   }
 
+  /** Dispute note name for a `facts:` key; a scoped key adds its scope (`dispute-x-greeting-lang-pt`). */
   disputeSlug(entity: string, field: string): string {
-    return `dispute-${entity}-${field}`.replace(/_/g, "-");
+    const { field: base, scope } = parseFactKey(field);
+    return `dispute-${entity}-${base}${scope ? `-${slugify(scope)}` : ""}`.replace(/_/g, "-");
   }
 
   openDispute(entity: Entity, field: string, claims: Claim[]): Dispute {

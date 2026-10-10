@@ -1,7 +1,8 @@
-import { parseDocument } from "yaml";
+import { isMap, isScalar, parseDocument } from "yaml";
 import { CONFIG_PATH } from "./config.ts";
 import { HANDBOOK_PATH, renderHandbook } from "./handbook.ts";
 import { parseDoc, renderDoc } from "./markdown.ts";
+import type { HumanDef } from "./schema.ts";
 import { MemoryStore, type VaultStore } from "./store.ts";
 import { Vault } from "./vault.ts";
 
@@ -17,10 +18,17 @@ export function validTimezone(tz: string): boolean {
   }
 }
 
+/** A human as the settings give it; `domains` may be left out. */
+export type HumanSetting = Pick<HumanDef, "id" | "github"> & { domains?: string[] };
+
 /** The campaign settings a new vault's `_hippo/config.yaml` is filled in with. */
 export interface VaultSettings {
+  /** What the memory is about (written to the config's `name`, or `campaign` in a v1 config). */
   campaign?: string;
+  /** Shorthand for `humans: [{ id: human }]`. */
   human?: string;
+  /** The vault's humans, primary first; wins over `human`. */
+  humans?: HumanSetting[];
   timezone?: string;
   domains?: string[];
   /** age public key for `secrets.recipient`. */
@@ -37,6 +45,14 @@ export interface BuildVaultOptions extends VaultSettings {
 /** Throws on settings that would make an unusable vault, before anything is written. */
 export function validateVaultSettings(s: VaultSettings): void {
   if (s.human !== undefined && !SLUG.test(s.human)) throw new Error(`human "${s.human}" must be an id: lowercase letters, digits and dashes`);
+  if (s.humans !== undefined && !s.humans.length) throw new Error("a vault needs at least one human");
+  const seen = new Set<string>();
+  for (const h of s.humans ?? []) {
+    if (!SLUG.test(h.id)) throw new Error(`human "${h.id}" must be an id: lowercase letters, digits and dashes`);
+    if (seen.has(h.id)) throw new Error(`human "${h.id}" is listed twice`);
+    seen.add(h.id);
+    for (const d of h.domains ?? []) if (!SLUG.test(d)) throw new Error(`domain "${d}" of human "${h.id}" must be lowercase letters, digits and dashes`);
+  }
   if (s.timezone !== undefined && !validTimezone(s.timezone)) throw new Error(`unknown timezone "${s.timezone}" (use an IANA name like Europe/Lisbon)`);
   for (const d of s.domains ?? []) if (!SLUG.test(d)) throw new Error(`domain "${d}" must be lowercase letters, digits and dashes`);
 }
@@ -65,12 +81,34 @@ export async function buildVaultFiles(template: Record<string, string>, opts: Bu
 /** Set the given settings in a `_hippo/config.yaml`, keeping its comments and layout. */
 export function patchConfig(raw: string, s: VaultSettings): string {
   const doc = parseDocument(raw);
-  if (s.campaign !== undefined) doc.set("campaign", s.campaign);
-  if (s.human !== undefined) doc.set("human", s.human);
+  if (s.campaign !== undefined) doc.set(doc.has("name") || !doc.has("campaign") ? "name" : "campaign", s.campaign);
+  const humans = settingsHumans(s);
+  if (humans) setHumans(doc, humans);
   if (s.timezone !== undefined) doc.set("timezone", s.timezone);
   if (s.domains !== undefined) doc.set("domains", doc.createNode(s.domains, { flow: true }));
   if (s.recipient !== undefined) doc.setIn(["secrets", "recipient"], s.recipient);
   return renderConfig(doc);
+}
+
+/** The humans the settings name, if any: `humans`, else `human` as the only one. */
+export function settingsHumans(s: VaultSettings): HumanSetting[] | undefined {
+  if (s.humans?.length) return s.humans;
+  return s.human === undefined ? undefined : [{ id: s.human }];
+}
+
+/** `humans:` in place of a legacy `human:` key, keeping that key's comment and position. */
+function setHumans(doc: ReturnType<typeof parseDocument>, humans: HumanSetting[]): void {
+  const compact = humans.map((h) => ({ id: h.id, ...(h.domains?.length ? { domains: h.domains } : {}), ...(h.github ? { github: h.github } : {}) }));
+  const node = doc.createNode(compact);
+  for (const item of node.items) if (isMap(item)) item.flow = true;
+  const legacy = isMap(doc.contents) ? doc.contents.items.find((p) => isScalar(p.key) && p.key.value === "human") : undefined;
+  if (legacy && isScalar(legacy.key) && !doc.has("humans")) {
+    legacy.key.value = "humans";
+    legacy.value = node;
+  } else {
+    doc.set("humans", node);
+    doc.delete("human");
+  }
 }
 
 /** No line folding, so the template's one-line flow maps and lists stay on one line. */
@@ -85,7 +123,7 @@ const titleCase = (id: string) => id.replace(/(^|-)([a-z])/g, (_, dash: string, 
 export async function placePlayerCharacter(store: VaultStore): Promise<void> {
   const PC = "characters/player.md";
   const vault = await Vault.load(store);
-  const human = vault.config.human;
+  const human = vault.config.humans[0]!.id;
   const pc = await store.read(PC);
   if (human === "player" || pc === undefined) return;
   if (vault.entities.has(human)) {

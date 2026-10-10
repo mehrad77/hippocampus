@@ -25,14 +25,42 @@ export function slugify(input: string): string {
   return slug || "untitled";
 }
 
-/** snake_case field names for facts. */
+/**
+ * snake_case field names for facts. A `@scope` suffix (`Greeting@lang:pt` → `greeting@lang:pt`) is
+ * kept: a fact's scope is part of its key in `facts:`, so each scope holds its own value.
+ */
 export function toFieldName(input: string): string {
+  const at = input.indexOf("@");
+  if (at >= 0) return factKey(input.slice(0, at), input.slice(at + 1));
   // Split camelCase before folding: `fold` lowercases, which would hide the boundaries.
   return (
     fold(input.replace(/([a-z0-9])([A-Z])/g, "$1_$2"))
       .replace(/[^a-z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "") || "note"
   );
+}
+
+/** A scope as written in a fact key: folded, lowercase, `:`/`.`/`-`/`_` kept (`lang:pt`, `org:harbor-university`). */
+export function normalizeScope(input: string): string {
+  return fold(input)
+    .trim()
+    .replace(/[^a-z0-9:._-]+/g, "-")
+    .replace(/-*:-*/g, ":")
+    .replace(/^[-:]+|[-:]+$/g, "");
+}
+
+/** The `facts:` key of `field` in `scope`: `field@scope`, or just `field` without a scope. */
+export function factKey(field: string, scope?: string): string {
+  const parsed = parseFactKey(field);
+  const base = toFieldName(parsed.field);
+  const s = normalizeScope(scope ?? parsed.scope ?? "");
+  return s ? `${base}@${s}` : base;
+}
+
+/** A `facts:` key split into its field and scope. */
+export function parseFactKey(key: string): { field: string; scope?: string } {
+  const at = key.indexOf("@");
+  return at < 0 ? { field: key } : { field: key.slice(0, at), scope: key.slice(at + 1) || undefined };
 }
 
 /** Small deterministic string hash (cyrb53), returned as base36. */

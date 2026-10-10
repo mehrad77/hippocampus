@@ -21,8 +21,8 @@ const ALLOWED: { file: string; line: string; why: string }[] = [
   { file: "packages/dashboard/src/mcp-source.ts", line: 'can("quest")', why: "key scope name" },
   { file: "packages/dashboard/src/demo-hosted.ts", line: '"remember", "quest"]', why: "key scope names" },
   // Config keys and values of the v1 format (renamed in v2), not entity types.
-  { file: "packages/core/src/schema.ts", line: 'campaign: z.string().default("campaign")', why: "v1 config key `campaign` (the vault's name) and its default" },
-  { file: "packages/core/src/bootstrap.ts", line: 'doc.set("campaign"', why: "v1 config key `campaign`" },
+  { file: "packages/core/src/schema.ts", line: 'name: z.coerce.string().default("campaign")', why: "the vault name's v1 default" },
+  { file: "packages/core/src/bootstrap.ts", line: '!doc.has("campaign") ? "name" : "campaign"', why: "v1 config key `campaign` (the vault's name)" },
   { file: "packages/core/src/config.ts", line: 'folder: "party"', why: "v1 default config's folder (data, read through the legacy map)" },
   // A Session Zero step id shown to the human, not a type.
   { file: "packages/dashboard/src/demo-setup.ts", line: '{ id: "party", title: "Party"', why: "setup step id" },

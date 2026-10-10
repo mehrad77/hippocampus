@@ -7,6 +7,10 @@ import { FactStatus, type Clock, type EpisodeKind, type Fact, type FactValue } f
 import { isSecretRef } from "./secrets.ts";
 import { fromLocal, localParts } from "./text.ts";
 import type { Authority, Dispute, Vault } from "./vault.ts";
+
+/** Authority as the dashboard shows it: any human is "human", whether or not the domain is theirs. */
+export type ShownAuthority = "human" | "authority" | "none";
+const shownAuthority = (a: Authority): ShownAuthority => (a === "human_domain" ? "human" : a);
 import { parseLinks, unwrapLink } from "./wikilink.ts";
 
 // Read models for humans (the dashboard). Agent-facing views stay in service.ts, sized for context windows;
@@ -31,7 +35,7 @@ export interface FactDetail extends Shown {
   status: FactStatus;
   by: string;
   byHuman: boolean;
-  authority: Authority;
+  authority: ShownAuthority;
   at?: string;
   stale: boolean;
   src: string[];
@@ -72,7 +76,7 @@ export interface QuestCard extends EntityCard {
 export interface ClaimView extends Shown {
   by: string;
   byHuman: boolean;
-  authority: Authority;
+  authority: ShownAuthority;
   at?: string;
   src: string[];
 }
@@ -358,7 +362,7 @@ export function factDetail(ctx: ViewContext, e: Entity, field: string, f: Fact):
     status: f.status,
     by: f.by ?? ctx.vault.config.human,
     byHuman: ctx.vault.isHuman(f.by),
-    authority: ctx.vault.authorityOf(f.by, e),
+    authority: shownAuthority(ctx.vault.authorityOf(f.by, e, field)),
     at: f.at,
     stale: f.status === "canon" && !!f.at && f.at < ctx.staleBefore,
     src: f.src,
@@ -382,7 +386,7 @@ export function disputeView(ctx: ViewContext, d: Dispute): DisputeView {
       ...shown(c.value),
       by: c.by ?? ctx.vault.config.human,
       byHuman: ctx.vault.isHuman(c.by),
-      authority: e ? ctx.vault.authorityOf(c.by, e) : "none",
+      authority: e ? shownAuthority(ctx.vault.authorityOf(c.by, e, d.fm.field)) : "none",
       at: c.at,
       src: c.src,
     })),

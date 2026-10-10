@@ -2,6 +2,7 @@ import { VaultError } from "./errors.ts";
 import { parseDoc } from "./markdown.ts";
 import { Behaviour, FieldDef, KindDef, TypeDef, type Capability, type HippoConfig } from "./schema.ts";
 import type { VaultStore } from "./store.ts";
+import { parseFactKey } from "./text.ts";
 
 export const DEFAULT_SCHEMA_FOLDER = "_hippo/schema";
 /** How many ancestors a type may have. Deeper chains are cut off with a warning. */
@@ -312,8 +313,9 @@ export class SchemaRegistry {
     return (candidates.find((t) => !t.extends) ?? candidates[0])?.name;
   }
 
+  /** The definition of `field`; a scoped `facts:` key (`field@scope`) has its field's definition. */
   fieldDef(type: string | undefined, field: string): FieldDef | undefined {
-    return this.type(type)?.fields[field];
+    return this.type(type)?.fields[parseFactKey(field).field];
   }
 
   isSecretField(type: string | undefined, field: string): boolean {

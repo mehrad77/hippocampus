@@ -7,8 +7,14 @@ import { Decrypter, Encrypter, armor, generateX25519Identity, identityToRecipien
  */
 export const SECRET_SCHEME = "secret://";
 
+/** A scoped key's `:` (`pin@org:harbor`) is stored as `~`, which no scope contains, so file names stay portable. */
 export function secretRef(entity: string, field: string): string {
-  return `${SECRET_SCHEME}${entity}/${field}`;
+  return `${SECRET_SCHEME}${entity}/${field.replace(/:/g, "~")}`;
+}
+
+/** The `facts:` key a secret file name stands for (the inverse of `secretRef`'s encoding). */
+export function secretFieldOf(fileField: string): string {
+  return fileField.replace(/~/g, ":");
 }
 
 export function isSecretRef(value: unknown): value is string {

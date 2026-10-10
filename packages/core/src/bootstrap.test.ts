@@ -36,7 +36,7 @@ describe("buildVaultFiles", () => {
     const raw = files[CONFIG_PATH]!;
     expect(raw).toContain("# Party id of the human player.");
     expect(raw).toMatch(/^domains: \[ ?residency, housing ?\]$/m);
-    expect(parseConfig(raw)).toMatchObject({ campaign: "lisbon-arc", human: "student", timezone: "Europe/Lisbon", secrets: { recipient: "age1examplerecipient" } });
+    expect(parseConfig(raw)).toMatchObject({ campaign: "lisbon-arc", human: "student", humans: [{ id: "student" }], timezone: "Europe/Lisbon", secrets: { recipient: "age1examplerecipient" } });
 
     expect(files["characters/player.md"]).toBeUndefined();
     expect(files[HANDBOOK_PATH]).toContain("lisbon-arc");
@@ -74,11 +74,31 @@ describe("buildVaultFiles", () => {
     expect(await buildVaultFiles(once, opts)).toEqual(once);
   });
 
+  it("writes `humans` in place of the template's `human`, and gives the PC to the first", async () => {
+    const files = await buildVaultFiles(template, {
+      humans: [
+        { id: "student", domains: ["housing"] },
+        { id: "game-master", domains: [], github: "gm-login" },
+      ],
+    });
+    const raw = files[CONFIG_PATH]!;
+    expect(raw).toContain("# Party id of the human player.");
+    expect(raw).not.toMatch(/^human:/m);
+    expect(raw).toMatch(/^humans:\n {2}- \{ ?id: student, domains: \[ ?housing ?\] ?\}\n {2}- \{ ?id: game-master, github: gm-login ?\}$/m);
+    const vault = await Vault.load(new MemoryStore(files));
+    expect(vault.config.humans.map((h) => h.id)).toEqual(["student", "game-master"]);
+    expect(vault.config.human).toBe("student");
+    expect([...vault.entities.keys()]).toEqual(["student"]);
+  });
+
   it("refuses settings that would make an unusable vault", async () => {
     await expect(buildVaultFiles(template, { human: "Not An Id" })).rejects.toThrow(/must be an id/);
     await expect(buildVaultFiles(template, { timezone: "Mars/Olympus" })).rejects.toThrow(/unknown timezone/);
     await expect(buildVaultFiles(template, { domains: ["Housing"] })).rejects.toThrow(/domain "Housing"/);
     await expect(buildVaultFiles({ "README.md": "# empty" })).rejects.toThrow(/no _hippo\/config.yaml/);
+    await expect(buildVaultFiles(template, { humans: [] })).rejects.toThrow(/at least one human/);
+    await expect(buildVaultFiles(template, { humans: [{ id: "student", domains: [] }, { id: "student", domains: [] }] })).rejects.toThrow(/listed twice/);
+    await expect(buildVaultFiles(template, { humans: [{ id: "Student", domains: [] }] })).rejects.toThrow(/must be an id/);
   });
 });
 

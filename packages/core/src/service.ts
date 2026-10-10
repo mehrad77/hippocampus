@@ -3,7 +3,7 @@ import { createEpisode, type NewEpisode } from "./episode.ts";
 import { HANDBOOK_PATH, renderHandbook, renderOnboarding } from "./handbook.ts";
 import { INTRODUCTION_LIMITS, createIntroduction, type NewIntroduction } from "./introduction.ts";
 import { humanText } from "./markdown.ts";
-import { addPartyMember, applyQuestUpdate, applyRuling, assertAgentId, isSecretField, type NewPartyMember, type QuestUpdate } from "./ops.ts";
+import { addPartyMember, applyQuestUpdate, applyRuling, assertAgentId, isSecretField, retractFact, type NewPartyMember, type QuestUpdate } from "./ops.ts";
 import { miniSearcher, type SearcherFactory } from "./search.ts";
 import type { Clock, FactStatus, FactValue } from "./schema.ts";
 import { StoreConflictError, type VaultStore } from "./store.ts";
@@ -84,12 +84,24 @@ function factViews(e: Entity, human: string, limit = Infinity): FactView[] {
 export const MAX_EPISODE_BYTES = 8 * 1024;
 
 export interface ActAs {
-  /** Act as the vault's human (`config.human`) instead of the agent named in the call. */
-  asHuman?: boolean;
+  /**
+   * Act as one of the vault's humans instead of the agent named in the call: `true` for the primary
+   * human, or a human's id.
+   */
+  asHuman?: boolean | string;
+}
+
+/** The human `asHuman` names (validated), or undefined when acting as an agent. */
+function humanOf(vault: Vault, opts: ActAs): string | undefined {
+  if (!opts.asHuman) return undefined;
+  if (opts.asHuman === true) return vault.config.humans[0]!.id;
+  const h = vault.human(opts.asHuman);
+  if (!h) throw new VaultError(`"${opts.asHuman}" is not one of this vault's humans (${vault.config.humans.map((x) => x.id).join(", ")})`);
+  return h.id;
 }
 
 function actingAs(vault: Vault, agent: string, opts: ActAs): string {
-  return opts.asHuman ? vault.config.human : assertAgentId(vault, agent);
+  return humanOf(vault, opts) ?? assertAgentId(vault, agent);
 }
 
 /** `message` signed with who made it, for `hippo audit`: `agent` is an agent id, or undefined for the human. */
@@ -406,6 +418,21 @@ export class HippoService {
       vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
       const result: { dispute: string; entity: string; field: string } & Shown = { dispute: slug, entity: entity.slug, field: d.fm.field, ...shown(value) };
       return { message: signed(`rule(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): ${entity.slug}.${d.fm.field} = ${result.secret ? "🔒" : result.value}`), result };
+    });
+  }
+
+  /**
+   * A human withdraws a fact (`field`, or `field@scope`): it becomes `retconned`, and the next report
+   * about it starts over. Only the vault's humans retract; `as` picks which (default: the primary).
+   */
+  async retract(ref: string, field: string, opts: { scope?: string; as?: string; via?: string } = {}) {
+    return this.mutate((vault) => {
+      const by = humanOf(vault, { asHuman: opts.as || true })!;
+      const entity = vault.resolve(ref);
+      if (!entity) throw new VaultError(`no entity "${ref}"`);
+      const key = retractFact(vault, entity, field, by, { scope: opts.scope });
+      vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
+      return { message: signed(`retract(${by}${opts.via ? ` via ${opts.via}` : ""}): ${entity.slug}.${key}`), result: { entity: entity.slug, field: key } };
     });
   }
 

@@ -12,11 +12,21 @@ export type FactValue = z.infer<typeof FactValue>;
 export const FactStatus = z.enum(["rumor", "canon", "disputed", "retconned"]);
 export type FactStatus = z.infer<typeof FactStatus>;
 
+/** Why a value left the current slot: overruled by someone, closed by a newer one, corrected by its source, or ruled on by the human. */
+export const PriorWhy = z.enum(["replaced", "succeeded", "retconned", "ruled"]);
+export type PriorWhy = z.infer<typeof PriorWhy>;
+
 export const PriorValue = z.object({
   value: FactValue,
   by: z.string().optional(),
   at: z.string().optional(),
+  valid_from: opt(z.coerce.string()),
+  valid_until: opt(z.coerce.string()),
+  why: PriorWhy.optional().catch(undefined),
 });
+export type PriorValue = z.infer<typeof PriorValue>;
+
+const confidence = z.coerce.number().min(0).max(1).optional().catch(undefined);
 
 const FactObject = z.object({
   value: FactValue,
@@ -31,6 +41,13 @@ const FactObject = z.object({
   was: z.array(PriorValue).optional(),
   /** While a rumor: distinct agents who reported this value (for promotion to canon). */
   seen_by: z.array(z.string()).optional(),
+  /** When the value started and stopped being true (ISO dates), if known. */
+  valid_from: opt(z.coerce.string()),
+  valid_until: opt(z.coerce.string()),
+  /** The reporter's own confidence, 0–1. */
+  confidence,
+  /** Kept out of search, prompts and summaries, like a `confidential` field. */
+  confidential: opt(z.boolean()),
 });
 
 /** Humans may write `facts: { phone: "+90…" }` directly; that shorthand is canon by the human. */
@@ -45,6 +62,12 @@ export type Fact = z.infer<typeof FactObject>;
 export const Relation = z.object({
   rel: z.string(),
   target: z.string(),
+  /** What the source is in the relation (`works_at` → `engineer`). */
+  role: opt(z.coerce.string()),
+  /** Context the relation holds in, like a fact's `@scope`. */
+  scope: opt(z.coerce.string()),
+  valid_from: opt(z.coerce.string()),
+  valid_until: opt(z.coerce.string()),
   by: z.string().optional(),
   src: z.array(z.string()).optional(),
 });
@@ -109,6 +132,7 @@ export const Claim = z.object({
   by: z.string().optional(),
   at: z.string().optional(),
   src: z.array(z.string()).default([]),
+  confidence,
 });
 export type Claim = z.infer<typeof Claim>;
 
@@ -209,19 +233,44 @@ export const KindDef = z.looseObject({
 });
 export type KindDef = z.infer<typeof KindDef>;
 
-export const HippoConfig = z.object({
+/** A person whose word outranks every agent's. Their `domains` rank them above the other humans there. */
+export const HumanDef = z.object({
+  id: z.coerce.string(),
+  domains: stringList.default([]),
+  /** GitHub login, so the hosted dashboard knows which human is signed in. */
+  github: opt(z.coerce.string()),
+});
+export type HumanDef = z.infer<typeof HumanDef>;
+
+/** A relation name, optionally with the name of its reverse direction (`depends_on` ↔ `used_by`). */
+export const RelationDef = z.union([z.string(), z.object({ name: z.string(), inverse: opt(z.string()) })]);
+export type RelationDef = z.infer<typeof RelationDef>;
+
+/** v1 keys under their new names: `campaign` → `name`, `human: x` → `humans: [{ id: x }]`. */
+function legacyConfig(v: unknown): unknown {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return v;
+  const { campaign, human, ...rest } = v as Record<string, unknown>;
+  const out: Record<string, unknown> = { ...rest };
+  if (out.name == null && campaign != null) out.name = campaign;
+  const humans = Array.isArray(out.humans) ? out.humans.map((h) => (typeof h === "object" && h !== null ? h : { id: h })) : [];
+  out.humans = humans.length ? humans : [{ id: human ?? "human" }];
+  return out;
+}
+
+const ConfigObject = z.object({
   /** Vault format version; see migrations.ts. */
   version: z.number().int().nonnegative().default(1),
-  campaign: z.string().default("campaign"),
+  /** What this memory is about. */
+  name: z.coerce.string().default("campaign"),
   /** IANA timezone used for chronicle days and times. */
   timezone: z.string().default("UTC"),
-  /** Party id that represents the human; their word outranks everyone. */
-  human: z.string().default("human"),
+  /** People whose word outranks every agent's; the first is the primary human (missing `by` = them). */
+  humans: z.array(HumanDef).min(1),
   /** Inline type definitions; they override `_hippo/schema/types/*.md` notes of the same name. */
   types: z.record(z.string(), TypeDef).optional(),
   /** Inline kind definitions; they override `_hippo/schema/kinds/*.md` notes of the same name. */
   kinds: z.record(z.string(), KindDef).optional(),
-  relations: z.array(z.string()).default([]),
+  relations: z.array(RelationDef).default([]),
   /** Tag vocabulary used for lanes/authority (e.g. residency, housing). */
   domains: z.array(z.string()).default([]),
   folders: z
@@ -251,4 +300,19 @@ export const HippoConfig = z.object({
     })
     .prefault({}),
 });
+
+export const HippoConfig = z.preprocess(
+  legacyConfig,
+  ConfigObject.transform(({ relations, ...c }) => ({
+    ...c,
+    /** Relation names (each relation's forward direction). */
+    relations: relations.map((r) => (typeof r === "string" ? r : r.name)),
+    /** Declared inverse names, by forward name. Adding an inverse is stored as its forward relation. */
+    relation_inverses: Object.fromEntries(relations.flatMap((r) => (typeof r !== "string" && r.inverse ? [[r.name, r.inverse]] : []))) as Record<string, string>,
+    /** @deprecated v1 name of `name`, kept for display. */
+    campaign: c.name,
+    /** The primary human's id (`humans[0].id`), kept for display and as the default author. */
+    human: c.humans[0]!.id,
+  })),
+);
 export type HippoConfig = z.infer<typeof HippoConfig>;

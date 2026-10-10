@@ -7,7 +7,7 @@ import { humanText, parseDoc } from "./markdown.ts";
 import { AGENT_ID, RESERVED_AGENT_IDS } from "./ops.ts";
 import { DisputeFrontmatter, type HippoConfig } from "./schema.ts";
 import { loadSchema, schemaFolder, type SchemaRegistry } from "./schema-registry.ts";
-import { isSecretRef, secretPath } from "./secrets.ts";
+import { isSecretRef, secretFieldOf, secretPath } from "./secrets.ts";
 import type { Change, VaultStore } from "./store.ts";
 import { slugify } from "./text.ts";
 import { VaultError } from "./vault.ts";
@@ -84,8 +84,11 @@ function occurrences(text: string, value: string): number {
   return text.match(new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "gu"))?.length ?? 0;
 }
 
+/** Whether `id` is one of the vault's humans (a missing author, or the generic `human`, is the primary one). */
 function isHumanId(config: HippoConfig, id: string | undefined): boolean {
-  return !id || id === "human" || id.toLowerCase() === config.human.toLowerCase();
+  if (!id || id === "human") return true;
+  const key = id.toLowerCase();
+  return config.humans.some((h) => h.id.toLowerCase() === key);
 }
 
 function badPath(path: string): boolean {
@@ -269,7 +272,7 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
   for (const c of changes) {
     if (!("content" in c) || op(c) !== "modify" || !under(c.path, l.secrets) || !c.path.endsWith(".age")) continue;
     const [slug, ...rest] = c.path.slice(l.secrets.length + 1, -".age".length).split("/");
-    const field = rest.join("/");
+    const field = secretFieldOf(rest.join("/"));
     if (!slug || !field) continue;
     let held = false;
     let covered = false;

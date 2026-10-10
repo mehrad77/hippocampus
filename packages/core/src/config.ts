@@ -24,3 +24,13 @@ export function parseConfig(raw: string | undefined): HippoConfig {
   if (!raw) return DEFAULT_CONFIG;
   return HippoConfig.parse(parseYaml(raw) ?? {});
 }
+
+/**
+ * A relation name as stored: a declared inverse (`used_by` of `depends_on: { inverse: used_by }`)
+ * becomes its forward name with the direction flipped, so each edge is written once, one way.
+ */
+export function canonicalRelation(config: Pick<HippoConfig, "relations" | "relation_inverses">, rel: string): { rel: string; flip: boolean } {
+  if (config.relations.includes(rel)) return { rel, flip: false };
+  const forward = Object.entries(config.relation_inverses).find(([, inverse]) => inverse === rel)?.[0];
+  return forward ? { rel: forward, flip: true } : { rel, flip: false };
+}
