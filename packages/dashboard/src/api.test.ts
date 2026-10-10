@@ -120,7 +120,7 @@ describe("dashboard API: actions", () => {
     const { post, store } = harness();
     const r = await post("actions/quest", { quest: "residence-permit", reopen: ["health insurance"], clock: { name: "Paperwork", tick: 1 } });
     expect(r).toMatchObject({ status: 200, body: { quest: "[[residence-permit]]", changes: ["○ Get health insurance", "progress 3/6"] } });
-    const raw = (await store.read("quests/residence-permit.md"))!;
+    const raw = (await store.read("goals/residence-permit.md"))!;
     expect(raw).toContain("- [ ] Get health insurance");
     expect(parseDoc(raw).data).toMatchObject({ progress: { done: 3, total: 6 }, updated_by: "player" });
   });

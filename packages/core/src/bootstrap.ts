@@ -1,5 +1,5 @@
-import { isMap, isScalar, parseDocument } from "yaml";
-import { CONFIG_PATH } from "./config.ts";
+import { parseDocument } from "yaml";
+import { CONFIG_PATH, renderConfig, setHumans } from "./config.ts";
 import { HANDBOOK_PATH, renderHandbook } from "./handbook.ts";
 import { parseDoc, renderDoc } from "./markdown.ts";
 import type { HumanDef } from "./schema.ts";
@@ -95,24 +95,6 @@ export function settingsHumans(s: VaultSettings): HumanSetting[] | undefined {
   if (s.humans?.length) return s.humans;
   return s.human === undefined ? undefined : [{ id: s.human }];
 }
-
-/** `humans:` in place of a legacy `human:` key, keeping that key's comment and position. */
-function setHumans(doc: ReturnType<typeof parseDocument>, humans: HumanSetting[]): void {
-  const compact = humans.map((h) => ({ id: h.id, ...(h.domains?.length ? { domains: h.domains } : {}), ...(h.github ? { github: h.github } : {}) }));
-  const node = doc.createNode(compact);
-  for (const item of node.items) if (isMap(item)) item.flow = true;
-  const legacy = isMap(doc.contents) ? doc.contents.items.find((p) => isScalar(p.key) && p.key.value === "human") : undefined;
-  if (legacy && isScalar(legacy.key) && !doc.has("humans")) {
-    legacy.key.value = "humans";
-    legacy.value = node;
-  } else {
-    doc.set("humans", node);
-    doc.delete("human");
-  }
-}
-
-/** No line folding, so the template's one-line flow maps and lists stay on one line. */
-export const renderConfig = (doc: ReturnType<typeof parseDocument>) => doc.toString({ lineWidth: 0, flowCollectionPadding: false });
 
 const titleCase = (id: string) => id.replace(/(^|-)([a-z])/g, (_, dash: string, c: string) => `${dash ? " " : ""}${c.toUpperCase()}`).replace(/-/g, " ");
 

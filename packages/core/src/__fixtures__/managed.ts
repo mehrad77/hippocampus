@@ -9,8 +9,8 @@ export const MANAGED_CONFIG = `${CONFIG.replace(
   "character: { folder: characters, description: People }",
   "character: { folder: characters, description: People, fields: { email: { identity_key: true }, stakes: { human_only: true }, pin: { human_only: true, secret: true } } }",
 ).replace(
-  "party: { folder: party, description: Agents }\n",
-  "party: { folder: party, description: Agents }\n  archetype: { folder: archetypes, description: Roles people play, inheritable: true }\n  group: { folder: groups, description: Groups of people }\n",
+  "party: { folder: party, description: Agents, capabilities: [actor] }\n",
+  "party: { folder: party, description: Agents, capabilities: [actor] }\n  archetype: { folder: archetypes, description: Roles people play, inheritable: true }\n  group: { folder: groups, description: Groups of people }\n",
 )}kinds:
   rollup:
     behaviour: interaction

@@ -1,4 +1,4 @@
-import { CURATOR_RULES_PATH, buildVaultFiles } from "@hippocampus/core";
+import { CURATOR_RULES_PATH, CURRENT_VAULT_VERSION, buildVaultFiles } from "@hippocampus/core";
 import type { HttpError } from "@hippocampus/dashboard";
 import { TEMPLATE } from "@hippocampus/template";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -60,7 +60,7 @@ describe("bootstrapVault", () => {
     const files = repo.files();
     expect(Object.keys(files).sort()).toEqual(Object.keys(await buildVaultFiles(TEMPLATE, { ...SETTINGS, now: NOW })).sort());
     for (const path of GUARDRAIL_FILES) expect(files[path]).toBe(TEMPLATE[path]);
-    expect(files["_hippo/config.yaml"]).toContain("campaign: Lisbon relocation");
+    expect(files["_hippo/config.yaml"]).toContain("name: Lisbon relocation");
     expect(files["_hippo/config.yaml"]).toContain("timezone: Europe/Lisbon");
 
     const minted = [...gh.tokens.values()].filter((t) => t.installation !== undefined);
@@ -102,6 +102,17 @@ describe("bootstrapVault", () => {
     expect(Object.keys(files).filter((p) => !before.includes(p)).sort()).toEqual([".github/workflows/validate.yml", "CLAUDE.md", CURATOR_RULES_PATH].sort());
     expect(after.log()).toHaveLength(2);
     expect(after.log()[0]!.message).toBe("chore: add Hippocampus guardrail files [skip ci]\n\nHippo-Actor: bootstrap");
+  });
+
+  it("adopts an older vault as it is, and refuses one newer than the app", async () => {
+    const { run, addRepo } = await setup();
+    const existing = await buildVaultFiles(TEMPLATE, { ...SETTINGS, now: NOW });
+    const older = { ...existing, "_hippo/config.yaml": existing["_hippo/config.yaml"]!.replace(`version: ${CURRENT_VAULT_VERSION}`, `version: ${CURRENT_VAULT_VERSION - 1}`) };
+    expect((await run(await addRepo("player/older-vault", 9007, older))).mode).toBe("adopted");
+    const newer = { ...existing, "_hippo/config.yaml": existing["_hippo/config.yaml"]!.replace(`version: ${CURRENT_VAULT_VERSION}`, `version: ${CURRENT_VAULT_VERSION + 1}`) };
+    const err = await refusal(run(await addRepo("player/newer-vault", 9008, newer)));
+    expect(err.code).toBe("BAD_VAULT");
+    expect(err.message).toMatch(/newer than this Hippocampus/);
   });
 
   it("refuses a public repo before writing or registering anything", async () => {

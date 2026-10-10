@@ -47,7 +47,7 @@ async function runToEnd(relay: SleepRelay, first: RelayStep, agent: ScriptedLLM)
   return { report: step.report, seen, rejected };
 }
 
-const NOTE = /^(characters|factions|locations|items|lore|quests|campaigns|party)\//;
+const NOTE = /^(characters|factions|locations|items|lore|goals|arcs|party)\//;
 const REGION = /%% hippo:begin ([\w-]+) %%\n([\s\S]*?)\n%% hippo:end \1 %%/g;
 
 /**
@@ -123,8 +123,8 @@ describe("sleep relay", () => {
     expect(second.questions.map((q) => q.name)).toEqual(["claims"]);
     expect(second.progress).toEqual({ done: 0, total: 3, unit: first.questions[0]!.unit });
 
-    // The human adds a quest meanwhile. Every prompt lists the quests, so the recorded answers no longer fit.
-    await store.write("quests/health-insurance.md", "---\ntype: quest\ntitle: Health insurance\nstatus: active\n---\n");
+    // The human adds a goal meanwhile. Every prompt lists the goals, so the recorded answers no longer fit.
+    await store.write("goals/health-insurance.md", "---\ntype: goal\ntitle: Health insurance\nstatus: active\n---\n");
     const claims = await answers(agent, second.questions);
     const third = asking(await relay.answer({ runId: first.run, answers: claims }));
     expect(third.questions.map((q) => [q.unit, q.name])).toEqual(first.questions.map((q) => [q.unit, "mentions"]));

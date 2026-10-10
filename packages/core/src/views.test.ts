@@ -90,7 +90,7 @@ describe("dashboard views", () => {
     const quest = o.quests[0]!;
     expect(quest).toMatchObject({ slug: "residence-permit", owner: { slug: "residency-agent", type: "party" }, deadline: "2026-11-30", daysLeft: 64, degree: 1 });
     expect(quest.objectives).toHaveLength(2);
-    expect(o.upcoming).toEqual([{ what: "due", date: "2026-11-30", daysLeft: 64, ref: { slug: "residence-permit", title: "Residence permit 2026", type: "quest" } }]);
+    expect(o.upcoming).toEqual([{ what: "due", date: "2026-11-30", daysLeft: 64, ref: { slug: "residence-permit", title: "Residence permit 2026", type: "goal" } }]);
     const agent = o.party.find((p) => p.slug === "residency-agent")!;
     expect(agent).toMatchObject({ pending: 2, chronicled30d: 1, lastSeen: "2026-09-26T10:00:00.000Z", owns: [{ slug: "residence-permit" }] });
     expect(o.chronicle.map((c) => c.id)).toEqual(["ep-01AAA", "ep-01BBB"]);
@@ -127,7 +127,7 @@ describe("dashboard views", () => {
     expect(address).toMatchObject({ value: "Alfama", status: "disputed", by: "campus-agent", authority: "none", dispute: "dispute-migration-agency-office-address" });
     expect(d.facts.find((f) => f.field === "phone")).toMatchObject({ stale: true, authority: "authority" });
     expect(d.facts.find((f) => f.field === "hours")).toMatchObject({ seenBy: ["home-finder"] });
-    expect(d.relations).toEqual([{ rel: "handles", dir: "out", ref: { slug: "residence-permit", title: "Residence permit 2026", type: "quest" } }]);
+    expect(d.relations).toEqual([{ rel: "handles", dir: "out", ref: { slug: "residence-permit", title: "Residence permit 2026", type: "goal" } }]);
     expect(d.disputes[0]).toMatchObject({ status: "open", secretField: false, current: { value: "Alfama" } });
     expect(d.mentions.map((m) => m.id)).toEqual(["ep-01AAA"]);
     expect(d.pending.map((e) => e.id)).toEqual(["ep-in1"]);

@@ -38,7 +38,7 @@ describe("sleep", () => {
     expect(chronicle.match(/\[!episode\]/g)).toHaveLength(3);
 
     // Quest progress.
-    expect(await store.read("quests/residence-permit.md")).toContain("- [x] Book agency appointment");
+    expect(await store.read("goals/residence-permit.md")).toContain("- [x] Book agency appointment");
 
     // Summaries written into the managed region; human prose kept.
     const agencyRaw = (await store.read("factions/migration-agency.md"))!;

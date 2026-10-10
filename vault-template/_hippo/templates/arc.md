@@ -1,5 +1,5 @@
 ---
-type: campaign
+type: arc
 title: "{{title}}"
 aliases: []
 tags: []

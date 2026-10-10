@@ -11,7 +11,7 @@ import { Vault, VaultError } from "./vault.ts";
 
 const now = () => new Date("2026-09-27T12:00:00.000Z");
 const HUMANS = "humans:\n  - { id: player, domains: [housing] }\n  - { id: game-master, domains: [residency], github: GM-Login }\n";
-const twoHumans = (extra: Record<string, string> = {}) => fixtureStore({ "_hippo/config.yaml": CONFIG.replace("human: player\n", HUMANS), ...extra });
+const twoHumans = (extra: Record<string, string> = {}) => fixtureStore({ "_hippo/config.yaml": CONFIG.replace("humans: [{ id: player }]\n", HUMANS), ...extra });
 
 describe("config", () => {
   it("reads v1 `human` and `campaign` as `humans` and `name`, keeping the old names as aliases", () => {

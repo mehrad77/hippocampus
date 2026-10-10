@@ -34,7 +34,7 @@ describe("buildVaultFiles", () => {
     expect(Object.keys(files)).toEqual(Object.keys(files).sort());
 
     const raw = files[CONFIG_PATH]!;
-    expect(raw).toContain("# Party id of the human player.");
+    expect(raw).toContain("# The humans this memory belongs to;");
     expect(raw).toMatch(/^domains: \[ ?residency, housing ?\]$/m);
     expect(parseConfig(raw)).toMatchObject({ campaign: "lisbon-arc", human: "student", humans: [{ id: "student" }], timezone: "Europe/Lisbon", secrets: { recipient: "age1examplerecipient" } });
 
@@ -74,7 +74,7 @@ describe("buildVaultFiles", () => {
     expect(await buildVaultFiles(once, opts)).toEqual(once);
   });
 
-  it("writes `humans` in place of the template's `human`, and gives the PC to the first", async () => {
+  it("writes `humans` under its comment, and gives the PC to the first", async () => {
     const files = await buildVaultFiles(template, {
       humans: [
         { id: "student", domains: ["housing"] },
@@ -82,7 +82,7 @@ describe("buildVaultFiles", () => {
       ],
     });
     const raw = files[CONFIG_PATH]!;
-    expect(raw).toContain("# Party id of the human player.");
+    expect(raw).toContain("# The humans this memory belongs to;");
     expect(raw).not.toMatch(/^human:/m);
     expect(raw).toMatch(/^humans:\n {2}- \{ ?id: student, domains: \[ ?housing ?\] ?\}\n {2}- \{ ?id: game-master, github: gm-login ?\}$/m);
     const vault = await Vault.load(new MemoryStore(files));

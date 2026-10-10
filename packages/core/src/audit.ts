@@ -9,7 +9,7 @@ import { AGENT_ID, RESERVED_AGENT_IDS } from "./ops.ts";
 import { DisputeFrontmatter, type HippoConfig } from "./schema.ts";
 import { loadSchema, schemaFolder, type SchemaRegistry } from "./schema-registry.ts";
 import { isSecretRef, secretFieldOf, secretPath } from "./secrets.ts";
-import type { Change, VaultStore } from "./store.ts";
+import { bufferedStore, type Change, type VaultStore } from "./store.ts";
 import { slugify } from "./text.ts";
 import { VaultError } from "./vault.ts";
 import { REVIEW_PATH } from "./views.ts";
@@ -35,24 +35,10 @@ export class AuditError extends VaultError {
 
 /** Read-only view of `base` with `changes` applied (the last change to a path wins). */
 export function overlayStore(base: VaultStore, changes: Change[]): VaultStore {
-  const over = new Map(changes.map((c) => [c.path, "remove" in c ? undefined : c.content] as const));
   const readOnly = async (): Promise<never> => {
     throw new VaultError("overlay store is read-only");
   };
-  return {
-    async list(prefix = "") {
-      const dir = prefix && !prefix.endsWith("/") ? `${prefix}/` : prefix;
-      const paths = new Set(await base.list(prefix));
-      for (const [path, content] of over) {
-        if (content === undefined) paths.delete(path);
-        else if (path.startsWith(dir)) paths.add(path);
-      }
-      return [...paths].sort();
-    },
-    read: async (path) => (over.has(path) ? over.get(path) : base.read(path)),
-    write: readOnly,
-    remove: readOnly,
-  };
+  return { ...bufferedStore(base, changes).store, write: readOnly, remove: readOnly };
 }
 
 type Op = "add" | "modify" | "remove";
@@ -416,8 +402,9 @@ function auditConfidential(i: {
 }
 
 /**
- * A format migration only reshapes. It may rewrite the config, add or rewrite schema notes, templates,
- * dashboards and the handbook, and move or rewrite entity notes: a note removed from one type folder
+ * A format migration only reshapes. It may rewrite the config, add or rewrite schema notes and the
+ * handbook, add, rewrite or rename templates and dashboards, move a type folder's `.gitkeep`, and move
+ * or rewrite entity notes: a note removed from one type folder
  * comes back under another with the same name, and every note keeps its human prose, facts,
  * relations, id, names, tags, summary and managed memory. Its type and goal props (v1 `deadline`,
  * `clocks`) may change. Nothing else: not the inbox, chronicle, disputes, secrets, CI or guardrails.
@@ -438,9 +425,10 @@ async function auditMigration(i: { l: Layout; after: VaultStore; changes: Change
     const o = op(c);
     if (badPath(c.path)) flag(c.path, "path not normalized");
     else if (c.path === CONFIG_PATH || c.path === HANDBOOK_PATH || scaffold(c.path)) {
-      if (o === "remove") flag(c.path, "a migration may not remove this file");
-    } else if (o === "add" && basename(c.path) === ".gitkeep" && typeFolder(c.path)) {
-      // An empty type folder kept in git.
+      // Templates and dashboards named after a v1 type are renamed (removed, then added under the new name).
+      if (o === "remove" && !SCAFFOLD.some((f) => under(c.path, f))) flag(c.path, "a migration may not remove this file");
+    } else if (o !== "modify" && basename(c.path) === ".gitkeep" && typeFolder(c.path)) {
+      // An empty type folder kept in git, or a renamed one's placeholder moving along.
     } else if (isNote(c.path)) {
       const key = basename(c.path);
       if (o === "modify" && "content" in c) pairs.push({ path: c.path, old: was.get(c.path)!, raw: c.content });

@@ -100,7 +100,7 @@ If your coding agent is also connected to your Hippocampus MCP server or your va
 
 If a change alters files in existing vaults (frontmatter keys, folder layout, region names):
 1. Bump `CURRENT_VAULT_VERSION` in `packages/core/src/migrations.ts`.
-2. Add a `Migration` that rewrites old vaults, with a test.
+2. Add a `Migration` that rewrites old vaults (`packages/core/src/migrations/`, registered in `MIGRATIONS`), with a test over a frozen inline fixture of the old format.
 3. Note it under "Vault format" in [CHANGELOG.md](../CHANGELOG.md).
 
 ## Tests and CI

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { managedStore } from "./__fixtures__/managed.ts";
-import { GOAL_TYPE_NOTE, MIGRATED_QUEST, V2_CONFIG, fixtureStore } from "./__fixtures__/vault.ts";
+import { GOAL_TYPE_NOTE, MIGRATED_QUEST, V2_CONFIG, fixtureStore, v1FixtureStore } from "./__fixtures__/vault.ts";
 import { auditChanges, overlayStore, type Actor } from "./audit.ts";
 import { createIntroduction, renderIntroduction } from "./introduction.ts";
 import { applyGoalUpdate } from "./goal.ts";
@@ -14,13 +14,15 @@ const curator: Actor = { kind: "curator" };
 const agent = (id: string, scopes?: string[]): Actor => ({ kind: "agent", id, scopes });
 
 const EPISODE = "inbox/residency-agent/2026-09-27T100000-agency.md";
-const store = () =>
-  fixtureStore({
+const EXTRAS = {
     [EPISODE]: "---\nid: ep-agency\nagent: residency-agent\nat: 2026-09-27T10:00:00Z\n---\nAgency appointment booked for 2026-10-14.\n",
     "inbox/player/2026-09-27T110000-rent.md": "---\nid: ep-rent\nagent: player\nat: 2026-09-27T11:00:00Z\n---\nRent went up to 1300 EUR.\n",
     "locations/alfama-flat.md": "---\ntype: location\ntitle: Alfama flat\ntags: [housing]\nfacts:\n  rent: 1200 EUR\n---\n\n## Notes\nThe view is worth it.\n",
     "chronicle/2026/09/2026-09-20.md": "---\ntype: chronicle\ndate: 2026-09-20\n---\n# 2026-09-20\n\n> [!episode] 10:00 · [[campus-agent]] · fact\n> Enrolment opens.\n\n^ep-old\n",
-  });
+};
+const store = () => fixtureStore(EXTRAS);
+/** The same vault in the v1 format, for migrations. */
+const v1Store = () => v1FixtureStore(EXTRAS);
 const note = (fm: string, body = "") => `---\n${fm}\n---\n${body}`;
 const audit = async (changes: Change[], actor: Actor, forbidden?: string[], s = store()) => auditChanges({ before: s, changes, actor, forbidden });
 
@@ -97,17 +99,17 @@ describe("auditChanges", () => {
       }
     });
 
-    it("edit quest notes and the handbook only with the quest scope", async () => {
+    it("edit goal notes and the handbook only with the quest scope", async () => {
       const s = store();
-      const quest = (await s.read("quests/residence-permit.md"))!.replace("- [ ] Get health insurance", "- [x] Get health insurance");
-      const changes: Change[] = [{ path: "quests/residence-permit.md", content: quest }, { path: "HANDBOOK.md", content: "# Handbook\n" }];
+      const quest = (await s.read("goals/residence-permit.md"))!.replace("- [ ] Get health insurance", "- [x] Get health insurance");
+      const changes: Change[] = [{ path: "goals/residence-permit.md", content: quest }, { path: "HANDBOOK.md", content: "# Handbook\n" }];
       expect(await audit(changes, agent("residency-agent", ["quest"]), [], s)).toEqual([]);
       expect(await audit(changes, agent("residency-agent"), [], s)).toEqual([]);
       expect(await audit(changes, agent("residency-agent", ["read", "remember"]), [], s)).toHaveLength(2);
-      // A note in the quests folder that isn't a quest stays off limits.
-      await s.write("quests/stray.md", note("type: lore"));
-      expect(await audit([{ path: "quests/stray.md", content: note("type: lore\ntags: [residency]") }], agent("residency-agent", ["quest"]), [], s)).toEqual([
-        { path: "quests/stray.md", rule: "agents may only edit goal notes" },
+      // A note in the goals folder that isn't a goal stays off limits.
+      await s.write("goals/stray.md", note("type: lore"));
+      expect(await audit([{ path: "goals/stray.md", content: note("type: lore\ntags: [residency]") }], agent("residency-agent", ["quest"]), [], s)).toEqual([
+        { path: "goals/stray.md", rule: "agents may only edit goal notes" },
       ]);
     });
   });
@@ -229,7 +231,7 @@ describe("auditChanges", () => {
 });
 
 describe("auditChanges: goal edits by agents", () => {
-  const QUEST = "quests/residence-permit.md";
+  const QUEST = "goals/residence-permit.md";
   const edit = async (fn: (raw: string) => string, scopes = ["read", "goal"]) => {
     const s = store();
     return audit([{ path: QUEST, content: fn((await s.read(QUEST))!) }], agent("residency-agent", scopes), [], s);
@@ -254,10 +256,10 @@ describe("auditChanges: goal edits by agents", () => {
     ]);
     expect(await rules((r) => r.replace("title: Residence permit 2026", "title: Permit"))).toEqual(["agents may only change goal props: title"]);
     expect(await rules((r) => r.replace("tags: [residency]", "tags: [residency, housing]"))).toEqual(["agents may only change goal props: tags"]);
-    expect(await rules((r) => r.replace("deadline: 2026-11-30", "deadline: 2026-11-30\ncadence: 2w"))).toEqual(["agents may only change goal props: cadence"]);
+    expect(await rules((r) => r.replace("due: 2026-11-30", "due: 2026-11-30\ncadence: 2w"))).toEqual(["agents may only change goal props: cadence"]);
     expect(await rules((r) => `${r}\n%% hippo:begin summary %%\nThe permit.\n%% hippo:end summary %%\n`)).toEqual(["agents may only change goal props: summary"]);
     expect(await rules((r) => `${r}\nMy own words.\n`)).toEqual(["human prose changed"]);
-    expect(await rules((r) => r.replace("deadline: 2026-11-30", "due: 2026-12-01\nprogress: { done: 1, total: 2 }\nupdated_by: residency-agent"))).toEqual([]);
+    expect(await rules((r) => r.replace("due: 2026-11-30", "due: 2026-12-01\nprogress: { done: 1, total: 2 }\nupdated_by: residency-agent"))).toEqual([]);
   });
 });
 
@@ -314,7 +316,7 @@ describe("auditChanges: a migration", () => {
     { path: "quests/residence-permit.md", remove: true },
     { path: "goals/residence-permit.md", content: MIGRATED_QUEST },
   ];
-  const rules = async (changes: Change[], s = store()) => (await audit(changes, migration, [], s)).map((v) => `${v.path}: ${v.rule}`);
+  const rules = async (changes: Change[], s = v1Store()) => (await audit(changes, migration, [], s)).map((v) => `${v.path}: ${v.rule}`);
 
   it("may reshape config, schema, scaffolding and notes, keeping their memory", async () => {
     expect(await rules(migrated())).toEqual([]);
@@ -323,7 +325,7 @@ describe("auditChanges: a migration", () => {
   });
 
   it("never touches the inbox, chronicle, disputes, secrets, CI or guardrails", async () => {
-    const s = store();
+    const s = v1Store();
     await s.write("disputes/dispute-x.md", "x");
     await s.write("secrets/passport/number.age", "x");
     await s.write("_hippo/curator.md", "x");
@@ -331,8 +333,13 @@ describe("auditChanges: a migration", () => {
       expect(await rules([{ path, content: "changed" }], s)).toEqual([`${path}: a migration may not change this file`]);
     }
     expect(await rules([{ path: EPISODE, remove: true }], s)).toEqual([`${EPISODE}: a migration may not change this file`]);
-    const tpl = fixtureStore({ "_hippo/templates/quest.md": "x" });
-    expect(await rules([{ path: "_hippo/templates/quest.md", remove: true }], tpl)).toEqual(["_hippo/templates/quest.md: a migration may not remove this file"]);
+    // Templates and dashboards may be renamed; the handbook, config and schema notes stay.
+    const tpl = v1FixtureStore({ "_hippo/templates/quest.md": "x", "HANDBOOK.md": "x", "_hippo/schema/types/lore.md": "---\nfolder: lore\n---\n" });
+    expect(await rules([{ path: "_hippo/templates/quest.md", remove: true }], tpl)).toEqual([]);
+    for (const path of ["HANDBOOK.md", "_hippo/config.yaml", "_hippo/schema/types/lore.md"]) expect(await rules([{ path, remove: true }], tpl)).toEqual([`${path}: a migration may not remove this file`]);
+    // A type folder's placeholder may move along with its notes; nothing else in it may go.
+    const keep = v1FixtureStore({ "quests/.gitkeep": "" });
+    expect(await rules([...migrated(), { path: "quests/.gitkeep", remove: true }], keep)).toEqual([]);
   });
 
   it("moves notes under the same name, never drops or invents one", async () => {
@@ -359,12 +366,12 @@ describe("auditChanges: a migration", () => {
     // Goal props are the migration's to convert.
     expect(await tweak("status: active", "status: active\nprogress: { done: 0, total: 2 }")).toEqual([]);
     // Facts compare by meaning, not by how they're written.
-    const s = store();
+    const s = v1Store();
     await s.write("locations/alfama-flat.md", "---\ntype: location\ntitle: Alfama flat\nfacts:\n  rent: 1200 EUR\n---\n");
     expect(await rules([{ path: "locations/alfama-flat.md", content: "---\ntype: location\ntitle: Alfama flat\nfacts:\n  rent:\n    value: 1200 EUR\n    status: canon\n---\n" }], s)).toEqual([]);
   });
 
   it("is an actor of its own: the curator may not do what a migration does", async () => {
-    expect(await audit(migrated(), curator)).toContainEqual({ path: "_hippo/config.yaml", rule: "protected file" });
+    expect(await audit(migrated(), curator, [], v1Store())).toContainEqual({ path: "_hippo/config.yaml", rule: "protected file" });
   });
 });

@@ -31,7 +31,7 @@ describe("initVault", () => {
     expect(r).toEqual({ dir: target, campaign: "lisbon-arc", human: "student" });
 
     const raw = readFileSync(join(target, CONFIG_PATH), "utf8");
-    expect(raw).toContain("# Party id of the human player.");
+    expect(raw).toContain("# The humans this memory belongs to;");
     expect(raw).toMatch(/^domains: \[ ?residency, housing ?\]$/m);
     const config = parseConfig(raw);
     expect(config).toMatchObject({ campaign: "lisbon-arc", human: "student", timezone: "Europe/Lisbon", domains: ["residency", "housing"] });

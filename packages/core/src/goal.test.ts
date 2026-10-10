@@ -13,8 +13,8 @@ const GOAL_CONFIG = CONFIG.replace(
   "character: { folder: characters, description: People }",
   "character: { folder: characters, description: People, fields: { birthday: { kind: date, recurs: yearly }, start: { kind: date }, nickname: text } }",
 ).replace(
-  "party: { folder: party, description: Agents }\n",
-  "party: { folder: party, description: Agents }\n  deal: { folder: deals, description: Agreements, capabilities: [goal], statuses: { open: active, stalled: blocked, won: done, lost: failed }, template: _hippo/templates/deal.md }\n",
+  "party: { folder: party, description: Agents, capabilities: [actor] }\n",
+  "party: { folder: party, description: Agents, capabilities: [actor] }\n  deal: { folder: deals, description: Agreements, capabilities: [goal], statuses: { open: active, stalled: blocked, won: done, lost: failed }, template: _hippo/templates/deal.md }\n",
 );
 
 const DEAL_TEMPLATE = "---\ntype: deal\ntitle: \"{{title}}\"\ntags: [sales]\nstatus: open\nowner: \"\"\n---\n\n%% hippo:begin objectives %%\n- [ ] Send the offer\n%% hippo:end objectives %%\n\n## Notes\nWhat {{title}} is about.\n";
@@ -32,8 +32,8 @@ const load = (extra?: Record<string, string>) => Vault.load(store(extra), { now 
 describe("goal props", () => {
   it("read a v1 deadline as due and the first v1 clock as progress, unless the new keys are there", async () => {
     const v = await load({
-      "quests/old.md": "---\ntype: quest\ntitle: Old\ndeadline: 2026-12-01\nclocks:\n  - { name: Paperwork, segments: 4, filled: 9 }\n  - { name: Patience, segments: 6 }\n---\n",
-      "quests/new.md": "---\ntype: quest\ntitle: New\ndue: 2026-11-01\ndeadline: 2026-12-01\nprogress: { done: 1, total: 3 }\nclocks: [{ name: Paperwork, segments: 4, filled: 2 }]\n---\n",
+      "goals/old.md": "---\ntype: goal\ntitle: Old\ndeadline: 2026-12-01\nclocks:\n  - { name: Paperwork, segments: 4, filled: 9 }\n  - { name: Patience, segments: 6 }\n---\n",
+      "goals/new.md": "---\ntype: goal\ntitle: New\ndue: 2026-11-01\ndeadline: 2026-12-01\nprogress: { done: 1, total: 3 }\nclocks: [{ name: Paperwork, segments: 4, filled: 2 }]\n---\n",
     });
     expect(goalProps(v.resolve("old")!)).toMatchObject({ due: "2026-12-01", progress: { done: 4, total: 4 } });
     expect(goalProps(v.resolve("new")!)).toMatchObject({ due: "2026-11-01", progress: { done: 1, total: 3 } });
@@ -117,7 +117,7 @@ describe("applyGoalUpdate", () => {
 
   it("rolls a repeating goal on to its next due date when it's done: objectives unticked, active again", async () => {
     const v = await load({
-      "quests/rent.md": "---\ntype: quest\ntitle: Pay rent\nstatus: active\ndue: 2026-10-01\nrepeat: { every: 1m }\nprogress: { done: 2, total: 2 }\n---\n%% hippo:begin objectives %%\n- [x] Transfer\n- [ ] Keep the receipt\n%% hippo:end objectives %%\n",
+      "goals/rent.md": "---\ntype: goal\ntitle: Pay rent\nstatus: active\ndue: 2026-10-01\nrepeat: { every: 1m }\nprogress: { done: 2, total: 2 }\n---\n%% hippo:begin objectives %%\n- [x] Transfer\n- [ ] Keep the receipt\n%% hippo:end objectives %%\n",
     });
     const rent = v.resolve("rent")!;
     expect(applyGoalUpdate(v, rent, { status: "done", complete: ["receipt"] }, "player")).toEqual([
@@ -157,13 +157,13 @@ describe("applyGoalUpdate", () => {
 
   it("draws the progress region in the note, and leaves a v1 clocks region alone", async () => {
     const s = store({
-      "quests/old.md": "---\ntype: quest\ntitle: Old\nclocks: [{ name: Paperwork, segments: 4, filled: 1 }]\n---\n%% hippo:begin clocks %%\n- ⏱ **Paperwork** ■□□□ 1/4\n%% hippo:end clocks %%\n\n## Notes\nKeep this.\n",
+      "goals/old.md": "---\ntype: goal\ntitle: Old\nclocks: [{ name: Paperwork, segments: 4, filled: 1 }]\n---\n%% hippo:begin clocks %%\n- ⏱ **Paperwork** ■□□□ 1/4\n%% hippo:end clocks %%\n\n## Notes\nKeep this.\n",
     });
     const v = await Vault.load(s, { now });
     applyQuestUpdate(v, v.resolve("old")!, { clock: { name: "Paperwork", tick: 1 }, deadline: "2026-11-30" }, "residency-agent");
     applyGoalUpdate(v, v.resolve("lease-renewal")!, { progress: { total: 2, done: 1 } }, "home-finder");
     await v.flush();
-    const old = (await s.read("quests/old.md"))!;
+    const old = (await s.read("goals/old.md"))!;
     expect(old).toContain("%% hippo:begin progress %%\n▰▰▱▱ 2/4 · due 2026-11-30\n%% hippo:end progress %%");
     expect(old).toContain("- ⏱ **Paperwork** ■□□□ 1/4");
     expect(old).toContain("Keep this.");
@@ -199,7 +199,7 @@ describe("upcomingDates", () => {
     const v = await load({
       "characters/joao-silva.md":
         "---\ntype: character\ntitle: João Silva\nfacts:\n  birthday: 1990-10-20\n  start: 2026-10-15\n  nickname: 2026-10-16\n  appointment_date: 2026-10-17\n  notes_date: { value: 2026-10-18, status: retconned }\n---\n",
-      "quests/finished.md": "---\ntype: quest\ntitle: Finished\nstatus: done\ndue: 2026-10-12\n---\n",
+      "goals/finished.md": "---\ntype: goal\ntitle: Finished\nstatus: done\ndue: 2026-10-12\n---\n",
     });
     applyGoalUpdate(v, v.resolve("lease-renewal")!, { repeat: { every: "2w", after_last: "interaction" } }, "home-finder");
     expect(upcomingDates(v, "2026-10-11", "2026-12-31")).toEqual([

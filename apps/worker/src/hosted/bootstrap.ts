@@ -8,6 +8,7 @@ import {
   buildVaultFiles,
   parseConfig,
   validateVaultSettings,
+  vaultVersionStatus,
   withTrailers,
   type Change,
   type CommitMeta,
@@ -101,7 +102,9 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
   if (p.mode === "refuse") throw new HttpError(409, `${info.fullName} already has files; pick an empty repo (or one with only a README, LICENSE or .gitignore).`, "NOT_EMPTY");
   if (p.mode === "adopt") {
     try {
-      assertVaultVersion(parseConfig(await store.read(CONFIG_PATH)));
+      // An older vault is adopted as it is and migrated when it's opened; a newer one needs a newer app.
+      const config = parseConfig(await store.read(CONFIG_PATH));
+      if (vaultVersionStatus(config) === "newer") assertVaultVersion(config);
     } catch (err) {
       throw new HttpError(409, `${info.fullName} has a ${CONFIG_PATH} that doesn't load: ${(err as Error).message}`, "BAD_VAULT");
     }

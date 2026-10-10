@@ -99,7 +99,7 @@ describe("MCP source parity", () => {
       quest: "[[residence-permit]]",
       changes: ["○ Get health insurance", "progress 3/6"],
     });
-    expect(await store.read("quests/residence-permit.md")).toContain("updated_by: residency-agent");
+    expect(await store.read("goals/residence-permit.md")).toContain("updated_by: residency-agent");
 
     const err = await remote.quest!("no-such-quest", { status: "done" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(HttpError);

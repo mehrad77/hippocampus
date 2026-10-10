@@ -25,7 +25,7 @@ describe("MCP server", () => {
     expect(tools).toEqual(["ask_canon", "briefing", "get", "introduce", "neighbors", "onboard", "recall", "remember", "update_quest"]);
     expect((await client.listResources()).resources.map((r) => r.uri)).toEqual(["hippo://handbook"]);
     const res = await client.readResource({ uri: "hippo://handbook" });
-    expect((res.contents[0] as { text: string }).text).toContain("Player's Handbook");
+    expect((res.contents[0] as { text: string }).text).toContain("# 📜 Handbook — ");
   });
 
   it("round-trips remember → recall with a bound identity", async () => {
@@ -52,7 +52,7 @@ describe("MCP server", () => {
     }
     expect((await call("update_quest", { quest: "residence-permit", complete: ["health insurance"], agent: "player" })).isError).toBe(true);
     expect(await store.list("inbox")).toEqual([]);
-    expect(await store.read("quests/residence-permit.md")).not.toContain("- [x]");
+    expect(await store.read("goals/residence-permit.md")).not.toContain("- [x]");
 
     const bound = await connect("player");
     expect((await bound.call("remember", { text: "The agency moved to Alfama." })).text).toContain('"player" is the human');

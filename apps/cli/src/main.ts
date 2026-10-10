@@ -32,7 +32,7 @@ import { loadEnv } from "./env-file.ts";
 import { Git } from "./git.ts";
 import { assetRoot, expandHome, identityFile, indexKey, userEnvFile } from "./paths.ts";
 import { openIndex, openSearcher as searcherFor, openStore as storeFor } from "./stores.ts";
-import { initVault, keygen } from "./vault-setup.ts";
+import { initVault, keygen, templateFiles } from "./vault-setup.ts";
 
 // Settings: the shell, then a gitignored .env in the working directory, then the user env file
 // (~/.config/hippocampus/env, written by `hippo dashboard`). Earlier sources win.
@@ -176,11 +176,13 @@ program
   .action(async () => {
     const vault = await Vault.load(openStore(), { skipVersionCheck: true });
     const status = vaultVersionStatus(vault.config);
-    err(`vault format v${vault.config.version} (tool v${CURRENT_VAULT_VERSION}${status === "current" ? "" : `: ${status}, run \`hippo migrate\``})`);
-    if (status !== "current") process.exitCode = 1;
+    err(`vault format v${vault.config.version} (tool v${CURRENT_VAULT_VERSION}${status === "current" ? "" : `: ${status}`})`);
+    if (status === "newer") process.exitCode = 1;
+    if (status === "older") err(`⚠ run \`hippo migrate\` to upgrade this vault to format v${CURRENT_VAULT_VERSION}`);
     err(`${vault.entities.size} entities · ${vault.episodes.length} pending episodes · ${vault.openDisputes().length} open disputes`);
     for (const w of vault.warnings) err(`⚠ ${w}`);
-    if (vault.warnings.length) process.exitCode = 1;
+    // This release still passes an older vault (only the hint), so pinned vault CI keeps working until someone migrates.
+    if (vault.warnings.length && status !== "older") process.exitCode = 1;
   });
 
 program
@@ -207,14 +209,14 @@ program
   .action(async (opts: { dryRun?: boolean }) => {
     const store = openStore();
     const vault = await Vault.load(store, { skipVersionCheck: true });
-    const r = await migrate(store, vault.config, { dryRun: opts.dryRun });
-    if (store instanceof GitHubStore && !opts.dryRun) await store.commit({ message: `chore: migrate vault format to v${r.to}` });
+    const r = await migrate(store, vault.config, { dryRun: opts.dryRun, template: await templateFiles(assetRoot()) });
     if (!r.applied.length) {
       err(`✓ vault format v${r.to} is up to date`);
       return;
     }
     for (const a of r.applied) err(`${opts.dryRun ? "would apply" : "applied"} ${a}`);
-    for (const c of r.changed) err(`  ${c}`);
+    for (const c of r.changes) err(`  ${"remove" in c ? "-" : "~"} ${c.path}`);
+    for (const n of r.notes) err(`⚠ ${n}`);
   });
 
 program

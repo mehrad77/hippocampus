@@ -280,12 +280,14 @@ async function copyStore(from: VaultStore | Record<string, string>): Promise<Mem
 }
 
 /**
- * Build the demo vault from the seed (a store or a path→content map) as of `now`.
+ * Build the demo vault from the seed (a store or a path→content map), laid over the template, as of `now`.
  * Every timestamp is relative to `now`, so the demo always looks like it's mid-campaign.
  */
-export async function buildDemoStore(seed: VaultStore | Record<string, string>, opts: { now?: Date } = {}): Promise<MemoryStore> {
+export async function buildDemoStore(seed: VaultStore | Record<string, string>, opts: { now?: Date; template?: VaultStore | Record<string, string> } = {}): Promise<MemoryStore> {
   const now = opts.now ?? new Date();
-  const store = await copyStore(seed);
+  // A seed brings its notes and config; the template brings the rest (type and kind notes, scaffolding).
+  const files = async (from: VaultStore | Record<string, string>) => Object.fromEntries((await copyStore(from)).files);
+  const store = new MemoryStore({ ...(opts.template ? await files(opts.template) : {}), ...(await files(seed)) });
   const config = (await store.read("_hippo/config.yaml")) ?? "";
   // A throwaway key: the demo's secret is really encrypted, and nobody can read it back.
   const { recipient } = await generateKeyPair();

@@ -294,7 +294,7 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
     server.registerResource(
       "handbook",
       "hippo://handbook",
-      { title: "Player's Handbook", description: "Vault conventions, party, active quests", mimeType: "text/markdown" },
+      { title: "Handbook", description: "Vault conventions, types and kinds, agents, active goals", mimeType: "text/markdown" },
       async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: await service.handbook() }] }),
     ),
   );

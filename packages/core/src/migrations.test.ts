@@ -5,7 +5,7 @@ import { Vault } from "./vault.ts";
 
 async function withVersion(version: number) {
   const store = fixtureStore();
-  await store.write("_hippo/config.yaml", `${(await store.read("_hippo/config.yaml"))!.replace("version: 1\n", `version: ${version}\n`)}`);
+  await store.write("_hippo/config.yaml", `${(await store.read("_hippo/config.yaml"))!.replace(`version: ${CURRENT_VAULT_VERSION}\n`, `version: ${version}\n`)}`);
   return store;
 }
 
@@ -28,6 +28,6 @@ describe("vault format version", () => {
   it("migrate is a no-op on a current vault", async () => {
     const store = await withVersion(CURRENT_VAULT_VERSION);
     const vault = await Vault.load(store);
-    expect(await migrate(store, vault.config)).toEqual({ from: 1, to: 1, applied: [], changed: [] });
+    expect(await migrate(store, vault.config)).toEqual({ from: CURRENT_VAULT_VERSION, to: CURRENT_VAULT_VERSION, applied: [], changes: [], changed: [], notes: [] });
   });
 });

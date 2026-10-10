@@ -1,11 +1,11 @@
 ---
-type: quest
+type: goal
 title: "{{title}}"
 aliases: []
 tags: []
 status: active
 owner: ""
-deadline:
+due:
 ---
 
 %% hippo:begin objectives %%

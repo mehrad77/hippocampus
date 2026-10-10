@@ -97,6 +97,11 @@ async function readTree(dir: string): Promise<Map<string, Buffer>> {
   return out;
 }
 
+/** The template's text files by vault path, which `hippo migrate` takes new notes and scaffolding from. */
+export async function templateFiles(assets: string): Promise<Record<string, string>> {
+  return splitText(await readTree(join(assets, "vault-template"))).text;
+}
+
 /** The vault is built from text; anything else a seed brings (images, PDFs) is copied as is. */
 function splitText(files: Map<string, Buffer>): { text: Record<string, string>; binary: [string, Buffer][] } {
   const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });

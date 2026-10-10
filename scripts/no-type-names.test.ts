@@ -3,7 +3,8 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // Code checks capabilities (goal, actor, arc), never type names: a vault may call its goals
-// anything. The v1 names live only in schema-registry.ts's legacy map (as object keys, so not literals).
+// anything. The v1 names live only in schema-registry.ts's legacy map (as object keys, so not literals)
+// and in the format migrations (packages/core/src/migrations/).
 const ROOT = join(import.meta.dirname, "..");
 const LITERAL = /(["'`])(quest|party|campaign)\1/g;
 
@@ -23,7 +24,7 @@ const ALLOWED: { file: string; line: string; why: string }[] = [
   // Config keys and values of the v1 format (renamed in v2), not entity types.
   { file: "packages/core/src/schema.ts", line: 'name: z.coerce.string().default("campaign")', why: "the vault name's v1 default" },
   { file: "packages/core/src/bootstrap.ts", line: '!doc.has("campaign") ? "name" : "campaign"', why: "v1 config key `campaign` (the vault's name)" },
-  { file: "packages/core/src/config.ts", line: 'folder: "party"', why: "v1 default config's folder (data, read through the legacy map)" },
+  { file: "packages/core/src/config.ts", line: 'folder: "party"', why: "the default config's agent folder (data; party keeps its name in v2)" },
   // A Session Zero step id shown to the human, not a type.
   { file: "packages/dashboard/src/demo-setup.ts", line: '{ id: "party", title: "Party"', why: "setup step id" },
 ];
@@ -33,8 +34,8 @@ function sources(dir: string): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) {
-      // Test support and fixtures build vaults with v1 names on purpose.
-      if (entry.name !== "node_modules" && entry.name !== "__fixtures__" && entry.name !== "testing") out.push(...sources(path));
+      // Test support and fixtures build vaults with v1 names on purpose; format migrations convert them.
+      if (!["node_modules", "__fixtures__", "testing", "migrations"].includes(entry.name)) out.push(...sources(path));
     } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) && !entry.name.endsWith(".gen.ts")) {
       out.push(path);
     }

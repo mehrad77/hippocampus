@@ -4,7 +4,9 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 
 ## [Unreleased]
 
-**Breaking for self-hosted Workers:** `apps/worker` is now a hosted multi-user app. A single-vault deployment needs a GitHub App, a new D1 registry and new secrets before it starts again, and its agents need new keys. Follow [docs/MIGRATING-WORKER.md](docs/MIGRATING-WORKER.md). The CLI and vaults are not affected: there's no vault format change.
+**Breaking for self-hosted Workers:** `apps/worker` is now a hosted multi-user app. A single-vault deployment needs a GitHub App, a new D1 registry and new secrets before it starts again, and its agents need new keys. Follow [docs/MIGRATING-WORKER.md](docs/MIGRATING-WORKER.md).
+
+**Breaking: vault format v2.** Run `hippo migrate` in each vault (this release's `hippo validate` still passes a v1 vault, with a hint). Older versions of Hippocampus refuse a migrated vault.
 
 ### Added
 - **The hosted app** (`apps/worker`): one Cloudflare Worker for many people, each with a vault in their own private GitHub repo.
@@ -66,6 +68,9 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 - The single-vault Worker's settings and storage: `GITHUB_REPO`, `GITHUB_TOKEN`, `HIPPO_OWNERS`, `GITHUB_OAUTH_CLIENT_ID`/`_SECRET`, the `INDEX` D1 database, the `TOKENS` KV namespace, and the `Scribe` Durable Object (wrangler migration `v2` deletes it).
 - `pnpm agent-token`: keys are minted on the hosted app's setup page.
 - The commented-out nightly `sleep` job in the vault template's CI. Use agent-run sleep or the Actions curator instead.
+
+### Vault format
+- v2: generic building blocks. Entity types and episode kinds are notes in `_hippo/schema/types/` and `_hippo/schema/kinds/` (the config's `types:` move there), and code asks for capabilities (`goal`, `actor`, `arc`) instead of type names. `quest` is now `goal` (`goals/`), `campaign` is now `arc` (`arcs/`); `party` keeps its name. Goals use `due` and one `progress` (`{ done, total }`) instead of `deadline` and `clocks`. The config says `name` and `humans` instead of `campaign` and `human`. `hippo migrate` converts a v1 vault, moving notes out of the default `quests/` and `campaigns/` folders, keeping custom types and folders, turning extra clocks into objectives (it says which), and replacing or patching the v1 templates and dashboards. It never touches the inbox, chronicle, disputes or secrets, and its commit passes the audit as the `migration` actor.
 
 ### Security
 - Hosted commits are audited against the caller's real credentials; a key can't commit as another agent, the curator or the human.

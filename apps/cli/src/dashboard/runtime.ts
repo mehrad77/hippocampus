@@ -32,7 +32,7 @@ export interface OpenOptions {
   env: Env;
   /** Use the persistent search index (`--no-index` turns it off). */
   index: boolean;
-  /** Where `seeds/` lives, for the demo. */
+  /** Where `vault-template/` and `seeds/` live, for the demo. */
   assets: string;
   log?: (msg: string) => void;
 }
@@ -41,7 +41,7 @@ export interface OpenOptions {
 export async function openVault(target: VaultTarget, opts: OpenOptions): Promise<ActiveVault> {
   switch (target.kind) {
     case "demo": {
-      const store = await buildDemoStore(new FsStore(join(opts.assets, "seeds", "example-relocation")));
+      const store = await buildDemoStore(new FsStore(join(opts.assets, "seeds", "example-relocation")), { template: new FsStore(join(opts.assets, "vault-template")) });
       const service = new HippoService(store);
       const vault: VaultInfo = { kind: "memory" };
       return { mode: "demo", vault, target, store, service, source: serviceSource(service, { mode: "demo", vault }), close: async () => {} };

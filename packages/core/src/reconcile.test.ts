@@ -182,7 +182,7 @@ describe("reconcileFact", () => {
 });
 
 /** Two humans: `player` (primary, housing) and `game-master` (residency); a character type with qualified fields. */
-const TWO_HUMANS = CONFIG.replace("human: player\n", "humans:\n  - { id: player, domains: [housing] }\n  - { id: game-master, domains: [residency], github: gm-login }\n").replace(
+const TWO_HUMANS = CONFIG.replace("humans: [{ id: player }]\n", "humans:\n  - { id: player, domains: [housing] }\n  - { id: game-master, domains: [residency], github: gm-login }\n").replace(
   "character: { folder: characters, description: People }",
   "character: { folder: characters, description: People, fields: { employer: { succession: true }, stakes: { human_only: true }, visa: { domain: residency } } }",
 );

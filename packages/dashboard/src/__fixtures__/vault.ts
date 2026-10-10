@@ -47,14 +47,14 @@ facts:
 ## Notes
 Human prose that must survive.
 `,
-    "quests/residence-permit.md": `---
-type: quest
+    "goals/residence-permit.md": `---
+type: goal
 title: Residence permit 2026
 tags: [residency]
 status: active
 owner: "[[residency-agent]]"
-deadline: 2026-11-30
-clocks: [{ name: Paperwork, segments: 6, filled: 2 }]
+due: 2026-11-30
+progress: { done: 2, total: 6 }
 ---
 %% hippo:begin objectives %%
 - [x] Get health insurance

@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { buildDemoStore } from "./demo.ts";
 
 const SEED = fileURLToPath(new URL("../../../seeds/example-relocation", import.meta.url));
+const TEMPLATE = fileURLToPath(new URL("../../../vault-template", import.meta.url));
 const NOW = new Date("2026-09-27T12:00:00.000Z");
 /** The demo passport number and the text of its secret inbox episode. */
 const PASSPORT = "X0000000";
@@ -14,7 +15,7 @@ describe("demo campaign", () => {
   let store: Awaited<ReturnType<typeof buildDemoStore>>;
   let svc: HippoService;
   beforeAll(async () => {
-    store = await buildDemoStore(new FsStore(SEED), { now: NOW });
+    store = await buildDemoStore(new FsStore(SEED), { now: NOW, template: new FsStore(TEMPLATE) });
     svc = new HippoService(store, { now: () => NOW });
   });
 
@@ -79,7 +80,7 @@ describe("demo campaign", () => {
 
   it("is relative to now, so deadlines stay ahead", async () => {
     const later = new Date("2027-03-01T12:00:00.000Z");
-    const o = await new HippoService(await buildDemoStore(new FsStore(SEED), { now: later }), { now: () => later }).overview();
+    const o = await new HippoService(await buildDemoStore(new FsStore(SEED), { now: later, template: new FsStore(TEMPLATE) }), { now: () => later }).overview();
     expect(o.today).toBe("2027-03-01");
     expect(o.upcoming.every((u) => u.daysLeft >= 0)).toBe(true);
     expect(o.upcoming.length).toBeGreaterThan(0);

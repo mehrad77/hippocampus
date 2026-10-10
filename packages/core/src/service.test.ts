@@ -197,9 +197,9 @@ describe("HippoService", () => {
     const store = fixtureStore();
     const svc = new HippoService(store, { now });
     await expect(svc.updateQuest("Player", "residence-permit", { complete: ["health insurance"] })).rejects.toThrow(/is the human/);
-    expect(await store.read("quests/residence-permit.md")).not.toContain("- [x]");
+    expect(await store.read("goals/residence-permit.md")).not.toContain("- [x]");
     await svc.updateQuest("residency-agent", "residence-permit", { complete: ["health insurance"] }, { asHuman: true });
-    expect(await store.read("quests/residence-permit.md")).toContain("updated_by: player");
+    expect(await store.read("goals/residence-permit.md")).toContain("updated_by: player");
   });
 
   it("refuses reserved ids as party members", async () => {
@@ -300,7 +300,7 @@ describe("HippoService", () => {
       { text: "Book agency appointment", done: false },
       { text: "Pay card fee", done: false },
     ]);
-    expect(await store.read("quests/residence-permit.md")).toContain("▰▱▱▱ 1/4 · due 2026-11-30");
+    expect(await store.read("goals/residence-permit.md")).toContain("▰▱▱▱ 1/4 · due 2026-11-30");
     expect(await store.read("HANDBOOK.md")).toContain("1/3 objectives");
   });
 
@@ -322,7 +322,7 @@ describe("HippoService", () => {
     const card = (await svc.overview()).quests[0]!;
     expect(card).toMatchObject({ state: "active", word: "active", due: "2026-12-01", nextDue: "2026-12-01", daysLeft: 65, progress: { done: 1, total: 3 }, counterparty: { slug: "migration-agency" } });
     expect(card.clocks).toEqual([{ name: "Progress", segments: 3, filled: 1, deadline: undefined, daysLeft: undefined }]);
-    expect(await store.read("quests/residence-permit.md")).toContain("▰▱▱ 1/3 · due 2026-12-01 · repeats every 1y");
+    expect(await store.read("goals/residence-permit.md")).toContain("▰▱▱ 1/3 · due 2026-12-01 · repeats every 1y");
     await expect(svc.updateGoal("residency-agent", "migration-agency", { status: "done" })).rejects.toThrow(/no goal "migration-agency"/);
   });
 

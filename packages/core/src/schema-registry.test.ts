@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONFIG, fixtureStore } from "./__fixtures__/vault.ts";
+import { CONFIG, V1_CONFIG, fixtureStore } from "./__fixtures__/vault.ts";
 import { auditChanges } from "./audit.ts";
 import { parseConfig } from "./config.ts";
 import { renderHandbook } from "./handbook.ts";
@@ -17,7 +17,7 @@ const v2 = (extra = "") => parseConfig(`version: 2\n${extra}`);
 
 describe("schema registry", () => {
   it("maps a v1 config's quest, party and campaign types to capabilities, and secret_fields to fields", () => {
-    const schema = buildSchema(parseConfig(CONFIG), notes());
+    const schema = buildSchema(parseConfig(V1_CONFIG), notes());
     expect(schema.typesWith("goal")).toEqual(["quest"]);
     expect(schema.typesWith("actor")).toEqual(["party"]);
     expect(schema.typesWith("arc")).toEqual(["campaign"]);
@@ -130,7 +130,7 @@ describe("schema registry", () => {
   it("refuses a vault that defines no types at all", async () => {
     expect(() => buildSchema(v2(), notes())).toThrow(VaultError);
     expect(() => buildSchema(parseConfig("version: 1\ntypes: {}\n"), notes())).toThrow(/defines no entity types/);
-    const store = new MemoryStore({ "_hippo/config.yaml": "version: 1\n" });
+    const store = new MemoryStore({ "_hippo/config.yaml": "version: 2\n" });
     await expect(Vault.load(store)).rejects.toThrow(/defines no entity types/);
   });
 });
@@ -139,7 +139,7 @@ describe("capabilities, not type names", () => {
   // Types declared only as notes, under names the code has never heard of.
   const store = () =>
     new MemoryStore({
-      "_hippo/config.yaml": "version: 1\ncampaign: lisbon-arc\nhuman: player\ndomains: [residency]\nrelations: [part_of]\n",
+      "_hippo/config.yaml": "version: 2\nname: lisbon-arc\nhumans: [{ id: player }]\ndomains: [residency]\nrelations: [part_of]\n",
       "_hippo/schema/types/crew.md": "---\nfolder: crew\ncapabilities: [actor]\n---\nThe agents.\n",
       "_hippo/schema/types/errand.md": "---\nfolder: errands\ncapabilities: [goal]\n---\nThings to get done.\n",
       "_hippo/schema/types/place.md": "---\nfolder: places\n---\nWhere things are.\n",
@@ -182,7 +182,7 @@ describe("capabilities, not type names", () => {
     ]);
   });
 
-  it("keeps the fixture vault's behaviour through the legacy names", async () => {
+  it("finds the fixture vault's goals and actors through their declared capabilities", async () => {
     const vault = await Vault.load(fixtureStore());
     expect(vault.withCapability("goal").map((e) => e.slug)).toEqual(["residence-permit"]);
     expect(vault.withCapability("actor").map((e) => e.slug).sort()).toEqual(["campus-agent", "home-finder", "residency-agent"]);

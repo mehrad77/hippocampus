@@ -63,3 +63,47 @@ export class MemoryStore implements VaultStore {
     this.files.delete(path);
   }
 }
+
+/** A store that keeps writes and removes in memory over `base`, and the changes they add up to. */
+export interface BufferedStore {
+  /** Reads and lists see the buffered writes and removes; `base` is never written. */
+  store: VaultStore;
+  /** What the buffer would change in `base`, by path: writes that leave a file as it was are left out. */
+  changes(): Promise<Change[]>;
+}
+
+/** Buffer writes over `base`, starting from `initial` changes (the last change to a path wins). */
+export function bufferedStore(base: VaultStore, initial: Change[] = []): BufferedStore {
+  // A path's buffered content, or `undefined` once it's removed.
+  const over = new Map<string, string | undefined>(initial.map((c) => [c.path, "remove" in c ? undefined : c.content]));
+  const store: VaultStore = {
+    async list(prefix = "") {
+      const dir = prefix && !prefix.endsWith("/") ? `${prefix}/` : prefix;
+      const paths = new Set(await base.list(prefix));
+      for (const [path, content] of over) {
+        if (content === undefined) paths.delete(path);
+        else if (path.startsWith(dir)) paths.add(path);
+      }
+      return [...paths].sort();
+    },
+    read: async (path) => (over.has(path) ? over.get(path) : base.read(path)),
+    async write(path, content) {
+      over.set(path, content);
+    },
+    async remove(path) {
+      over.set(path, undefined);
+    },
+  };
+  return {
+    store,
+    async changes() {
+      const out: Change[] = [];
+      for (const path of [...over.keys()].sort()) {
+        const [now, was] = [over.get(path), await base.read(path)];
+        if (now === was) continue;
+        out.push(now === undefined ? { path, remove: true } : { path, content: now });
+      }
+      return out;
+    },
+  };
+}
