@@ -1,20 +1,24 @@
-import { displayName, formatValue, getSummary, type Entity } from "./entity.ts";
-import { applyGoalUpdate, getObjectives, goalProps, goalStateOf, legacyClocks, nextDue, type Clock, type GoalState, type GoalUpdate, type Progress, type Repeat } from "./goal.ts";
+import { actorProps } from "./actor.ts";
+import { displayName, formatValue, getHumanGuidelines, getSummary, type Entity } from "./entity.ts";
+import { addDuration, applyGoalUpdate, getObjectives, goalProps, goalStateOf, legacyClocks, nextDue, type Clock, type GoalState, type GoalUpdate, type Progress, type Repeat } from "./goal.ts";
 import { createEpisode, type NewEpisode } from "./episode.ts";
 import { HANDBOOK_PATH, renderHandbook, renderOnboarding } from "./handbook.ts";
 import { validateEpisode } from "./kinds.ts";
 import { INTRODUCTION_LIMITS, createIntroduction, type NewIntroduction } from "./introduction.ts";
+import { resolveInheritance, type InheritedGuideline } from "./inherit.ts";
 import { humanText } from "./markdown.ts";
-import { addPartyMember, applyRuling, assertAgentId, isSecretField, questToGoalUpdate, retractFact, type NewPartyMember, type QuestUpdate } from "./ops.ts";
+import { addPartyMember, applyRuling, assertAgentId, declineProposal, isSecretField, questToGoalUpdate, retractFact, type NewPartyMember, type QuestUpdate } from "./ops.ts";
 import { miniSearcher, type SearcherFactory } from "./search.ts";
-import type { FactStatus, FactValue } from "./schema.ts";
+import type { DecisionEntry, DisputeKind, FactStatus, FactValue, Guideline, ProposalState, QuestionEntry, Stats } from "./schema.ts";
 import { StoreConflictError, type VaultStore } from "./store.ts";
-import { fold, isoDate, localParts, truncate } from "./text.ts";
+import { fold, isoDate, localParts, parseFactKey, truncate } from "./text.ts";
 import { ACTOR_TRAILER, actorTrailer, withTrailers } from "./trailers.ts";
 import { Vault, VaultError } from "./vault.ts";
 import {
+  addDays,
   catalog,
   chroniclePage,
+  daysBetween,
   entityCard,
   entityDetail,
   episodeView,
@@ -23,11 +27,14 @@ import {
   lastSleepAt,
   overview,
   parseChronicleDay,
+  readChronicle,
   refOf,
+  seesConfidential,
   shown,
   upcomingDates,
   viewContext,
   type Catalog,
+  type ChronicleEntryView,
   type ChroniclePage,
   type EntityDetail,
   type Graph,
@@ -35,14 +42,58 @@ import {
   type SearchResult,
   type Shown,
 } from "./views.ts";
-import { link, unwrapLink } from "./wikilink.ts";
+import { link, parseLinks, unwrapLink } from "./wikilink.ts";
 
 export interface FactView {
+  /** The `facts:` key: the field, or `field@scope`. */
   field: string;
   value: string;
   status: FactStatus;
   by: string;
   at?: string;
+  /** The context it holds in (`lang:pt`), when the key has one. */
+  scope?: string;
+  valid_from?: string;
+  valid_until?: string;
+  confidence?: number;
+  /** The value is confidential: shown only to a bound caller with authority over it, else masked. */
+  confidential?: true;
+}
+
+/** Who is reading. Confidential values are shown only to a bound caller (`caller`) with authority over them. */
+export interface ReadAs {
+  /** The agent the connection is bound to; absent for unbound callers, who see confidential values masked. */
+  caller?: string;
+}
+
+export interface GuidelinesView {
+  /** The human's own guidelines: the prose under the note's `## Guidelines` heading. */
+  human: string;
+  /** The entity's own guidelines. */
+  items: Guideline[];
+  /** Guidelines it inherits (`extends:`, inheritable tags), each with the note it comes from. */
+  inherited: InheritedGuideline[];
+}
+
+/** How often to be in touch, and how late the next contact is. */
+export interface CadenceView {
+  /** `2w`, `1m`, or `none`. */
+  every: string;
+  /** When the next contact is due (the last contact plus `every`). */
+  due?: string;
+  /** Days past `due`, when it is past. */
+  overdueDays?: number;
+}
+
+export interface OverdueContact {
+  ref: string;
+  title: string;
+  last_contact: string;
+  cadence: string;
+  due: string;
+  days_overdue: number;
+  /** The group it's a `member_of`, if any. */
+  group?: string;
 }
 
 export interface EntityBrief {
@@ -73,9 +124,43 @@ export interface EntityView extends EntityBrief {
   objectives?: { text: string; done: boolean }[];
   /** @deprecated v1 clocks, until the migration turns them into progress and objectives. */
   clocks?: Clock[];
+  /** Goals: the status as written (a core state or a word of the type's vocabulary). */
+  word?: string;
+  /** Agents: what it handles, where its word is authoritative, where it runs. */
+  lane?: string;
+  authority?: string[];
+  host?: string;
+  guidelines?: GuidelinesView;
+  stats?: Stats;
+  decisions?: DecisionEntry[];
+  questions?: QuestionEntry[];
+  /** Notes it inherits from: its `extends:` chain (nearest first), then inheritable notes its tags name. */
+  inherits?: string[];
+  cadence?: CadenceView;
   relations: { rel: string; dir: "out" | "in"; ref: string; title: string }[];
   disputes: string[];
   notes: string;
+}
+
+/** A proposal settled by a human; `value` (masked like any shown value) only when accepted. */
+export interface ProposalDecision extends Partial<Shown> {
+  proposal: string;
+  decision: "accepted" | "declined";
+  entity: string;
+  field: string;
+}
+
+/** What to know before talking to someone (`briefing` with `about`). */
+export interface PersonBrief extends EntityBrief {
+  guidelines: GuidelinesView;
+  /** The last three interactions with them in the past 90 days, newest first. */
+  interactions: ChronicleEntry[];
+  /** Open goals they own or are the counterparty of. */
+  goals: { ref: string; title: string; role: "owner" | "counterparty"; state: GoalState; next_due?: string; progress?: Progress }[];
+  /** Open disputes, proposals and possible merges about them. */
+  disputes: { ref: string; kind: DisputeKind; field: string; state?: ProposalState }[];
+  stats?: Stats;
+  cadence?: CadenceView;
 }
 
 export interface EpisodeBrief {
@@ -88,17 +173,79 @@ export interface EpisodeBrief {
 
 export interface ChronicleEntry extends EpisodeBrief {}
 
-// Confidential values stay masked until bound callers with authority can see them.
-function factViews(vault: Vault, e: Entity, limit = Infinity): FactView[] {
+// Confidential values stay masked unless the caller is bound and has authority over them.
+function factViews(vault: Vault, e: Entity, opts: ReadAs & { limit?: number } = {}): FactView[] {
   return Object.entries(e.fm.facts)
-    .slice(0, limit)
-    .map(([field, f]) => ({
-      field,
-      value: formatValue(f.value, { confidential: isConfidentialField(vault, e, field, f) }),
-      status: f.status,
-      by: f.by ?? vault.config.human,
-      at: f.at,
-    }));
+    .slice(0, opts.limit ?? Infinity)
+    .map(([field, f]) => {
+      const confidential = isConfidentialField(vault, e, field, f);
+      const { scope } = parseFactKey(field);
+      return {
+        field,
+        value: formatValue(f.value, { confidential: confidential && !seesConfidential(vault, opts.caller, e, field) }),
+        status: f.status,
+        by: f.by ?? vault.config.human,
+        at: f.at,
+        ...(scope ? { scope } : {}),
+        ...(f.valid_from ? { valid_from: f.valid_from } : {}),
+        ...(f.valid_until ? { valid_until: f.valid_until } : {}),
+        ...(f.confidence !== undefined ? { confidence: f.confidence } : {}),
+        ...(confidential ? { confidential: true as const } : {}),
+      };
+    });
+}
+
+function guidelinesView(vault: Vault, e: Entity): GuidelinesView {
+  return {
+    human: getHumanGuidelines(e),
+    items: e.fm.guidelines ?? [],
+    inherited: resolveInheritance(vault, e).guidelines.filter((g) => g.source !== e.slug),
+  };
+}
+
+/** The effective cadence of `e` (own, else inherited or from its groups) and how overdue contact is on `today`. */
+function cadenceOf(vault: Vault, e: Entity, today: string): CadenceView | undefined {
+  const every = resolveInheritance(vault, e).cadence;
+  if (!every) return undefined;
+  const last = e.fm.stats?.last_contact;
+  const due = every !== "none" && last ? addDuration(last, every) : undefined;
+  const late = due ? daysBetween(due, today) : 0;
+  return { every, ...(due ? { due } : {}), ...(late > 0 ? { overdueDays: late } : {}) };
+}
+
+/**
+ * Up to `cap` overdue contacts, most overdue first, spread across groups: each group's most overdue
+ * comes before anyone's second, so one big group doesn't fill the list.
+ */
+export function overdueContacts(vault: Vault, today: string, cap: number): OverdueContact[] {
+  const all: OverdueContact[] = [];
+  for (const e of vault.entities.values()) {
+    if (vault.schema.has(e.fm.type, "actor") || !e.fm.stats?.last_contact) continue;
+    const c = cadenceOf(vault, e, today);
+    if (!c?.overdueDays || !c.due) continue;
+    const group = e.fm.relations.filter((r) => r.rel === "member_of").map((r) => vault.resolve(r.target)?.slug).find(Boolean);
+    all.push({ ref: link(e.slug), title: displayName(e), last_contact: e.fm.stats.last_contact, cadence: c.every, due: c.due, days_overdue: c.overdueDays, ...(group ? { group: link(group) } : {}) });
+  }
+  all.sort((a, b) => b.days_overdue - a.days_overdue || a.ref.localeCompare(b.ref));
+  const picked: OverdueContact[] = [];
+  const rounds = new Map<string, number>();
+  for (const o of all) rounds.set(o.group ?? o.ref, 0);
+  // Round r takes the r-th most overdue of each group, in overall order.
+  for (let round = 0; picked.length < cap && picked.length < all.length; round++) {
+    for (const o of all) {
+      if (picked.length >= cap) break;
+      const key = o.group ?? o.ref;
+      if (picked.includes(o) || rounds.get(key)! > round) continue;
+      picked.push(o);
+      rounds.set(key, rounds.get(key)! + 1);
+    }
+  }
+  return picked.sort((a, b) => b.days_overdue - a.days_overdue || a.ref.localeCompare(b.ref));
+}
+
+/** Whether a chronicle entry is about `e`: it touched it, or its text links it. */
+function mentions(vault: Vault, entry: ChronicleEntryView, e: Entity): boolean {
+  return [...entry.touched, ...parseLinks(entry.text).map((l) => l.target)].some((t) => t === e.slug || vault.resolve(t)?.slug === e.slug);
 }
 
 /** Episode text limit: a memory is one concrete thing, and every byte goes through the curator's prompts. */
@@ -153,8 +300,8 @@ function checkIntroduction(input: NewIntroduction): void {
   }
 }
 
-function brief(vault: Vault, e: Entity, factLimit = 8): EntityBrief {
-  return { ref: link(e.slug), type: e.fm.type, title: displayName(e), summary: truncate(getSummary(e), 400), facts: factViews(vault, e, factLimit) };
+function brief(vault: Vault, e: Entity, opts: ReadAs & { limit?: number } = {}): EntityBrief {
+  return { ref: link(e.slug), type: e.fm.type, title: displayName(e), summary: truncate(getSummary(e), 400), facts: factViews(vault, e, { limit: 8, ...opts }) };
 }
 
 /** The operations agents perform on memory. Transport-agnostic: used by the MCP server and CLI. */
@@ -220,7 +367,12 @@ export class HippoService {
     return { id: ep.id, path: ep.path, kind: ep.kind, ...(warnings.length ? { warnings } : {}) };
   }
 
-  async recall(query: string, opts: { types?: string[]; limit?: number } = {}) {
+  /** Today in the vault's timezone. */
+  private today(vault: Vault): string {
+    return localParts(vault.nowIso(), vault.config.timezone).date;
+  }
+
+  async recall(query: string, opts: ReadAs & { types?: string[]; limit?: number } = {}) {
     const vault = await this.vault();
     const index = await this.searcher(vault);
     const limit = opts.limit ?? 6;
@@ -239,18 +391,23 @@ export class HippoService {
       .map((h) => vault.episodes.find((ep) => ep.id === h.id)!)
       .filter(Boolean)
       .map((ep) => ({ id: ep.id, agent: ep.agent, kind: ep.kind, at: ep.at, text: truncate(ep.text, 300) }));
-    return { entities: entities.map((e) => brief(vault, e)), related: related.slice(0, 10), pending: recent };
+    return { entities: entities.map((e) => brief(vault, e, { caller: opts.caller })), related: related.slice(0, 10), pending: recent };
   }
 
-  async get(ref: string): Promise<EntityView> {
+  async get(ref: string, opts: ReadAs = {}): Promise<EntityView> {
     const vault = await this.vault();
     const e = vault.resolve(ref);
     if (!e) throw new VaultError(`no entity "${ref}"${await this.suggest(vault, ref)}`);
     const goal = vault.schema.has(e.fm.type, "goal");
     const p = goal ? goalProps(e) : undefined;
     const clocks = goal ? legacyClocks(e) : [];
+    const actor = vault.schema.has(e.fm.type, "actor") ? actorProps(e) : undefined;
+    const inheritance = resolveInheritance(vault, e);
+    const guidelines = guidelinesView(vault, e);
+    const inherits = [...inheritance.chain, ...inheritance.mixins].map((x) => link(x.slug));
+    const cadence = cadenceOf(vault, e, this.today(vault));
     return {
-      ...brief(vault, e, Infinity),
+      ...brief(vault, e, { caller: opts.caller, limit: Infinity }),
       summary: getSummary(e),
       path: e.path,
       aliases: e.fm.aliases,
@@ -266,17 +423,69 @@ export class HippoService {
             repeat: p.repeat,
             last_done: p.last_done,
             deadline: p.due,
+            word: p.status ?? "active",
           }
         : {}),
       owner: e.fm.owner,
       objectives: goal ? getObjectives(e) : undefined,
       clocks: clocks.length ? clocks : undefined,
+      ...(actor ? { lane: actor.lane, authority: actor.authority, host: actor.host } : {}),
+      ...(guidelines.human || guidelines.items.length || guidelines.inherited.length ? { guidelines } : {}),
+      ...(e.fm.stats ? { stats: e.fm.stats } : {}),
+      ...(e.fm.decisions?.length ? { decisions: e.fm.decisions } : {}),
+      ...(e.fm.questions?.length ? { questions: e.fm.questions } : {}),
+      ...(inherits.length ? { inherits } : {}),
+      ...(cadence ? { cadence } : {}),
       relations: vault.neighbors(e.slug).map((n) => ({ rel: n.rel, dir: n.dir, ref: link(n.entity.slug), title: displayName(n.entity) })),
       disputes: vault
         .openDisputes()
         .filter((d) => unwrapLink(d.fm.entity) === e.slug)
         .map((d) => `${link(d.slug)} (${d.fm.field})`),
       notes: truncate(humanText(e.body).replace(/^## Notes\s*/, ""), 1500),
+    };
+  }
+
+  /**
+   * What to know before talking to someone: canon facts, guidelines (own and inherited), the last
+   * three interactions in 90 days, open goals with them, open disputes and proposals, and contact stats.
+   */
+  async personBrief(ref: string, opts: ReadAs = {}): Promise<PersonBrief> {
+    const vault = await this.vault();
+    const e = vault.resolve(ref);
+    if (!e) throw new VaultError(`no entity "${ref}"${await this.suggest(vault, ref)}`);
+    const today = this.today(vault);
+    const interaction = (kind: string) => vault.schema.kind(kind.split("/")[0]).def.behaviour === "interaction";
+    const interactions = (await readChronicle(vault, addDays(today, -89), today))
+      .filter((c) => interaction(c.kind) && mentions(vault, c, e))
+      .slice(-3)
+      .reverse()
+      .map((c) => ({ id: c.id, agent: c.agent, kind: c.kind, at: c.at, text: truncate(c.text, 300) }));
+    const goals: PersonBrief["goals"] = [];
+    for (const g of vault.withCapability("goal")) {
+      const state = goalStateOf(vault, g);
+      if (state === "done" || state === "failed") continue;
+      const p = goalProps(g);
+      const role = p.owner && vault.resolve(p.owner)?.slug === e.slug ? "owner" : p.counterparty && vault.resolve(p.counterparty)?.slug === e.slug ? "counterparty" : undefined;
+      if (!role) continue;
+      const next = nextDue(g, vault);
+      goals.push({ ref: link(g.slug), title: displayName(g), role, state, ...(next ? { next_due: next } : {}), ...(p.progress ? { progress: p.progress } : {}) });
+    }
+    const disputes = vault
+      .openDisputes()
+      .filter((d) => vault.resolve(d.fm.entity)?.slug === e.slug || (d.fm.targets ?? []).some((t) => vault.resolve(t)?.slug === e.slug))
+      .map((d) => ({ ref: link(d.slug), kind: d.fm.kind ?? ("conflict" as const), field: d.fm.field, ...(d.fm.state ? { state: d.fm.state } : {}) }));
+    const cadence = cadenceOf(vault, e, today);
+    const base = brief(vault, e, { caller: opts.caller, limit: Infinity });
+    return {
+      ...base,
+      summary: getSummary(e),
+      facts: base.facts.filter((f) => f.status === "canon"),
+      guidelines: guidelinesView(vault, e),
+      interactions,
+      goals,
+      disputes,
+      ...(e.fm.stats ? { stats: e.fm.stats } : {}),
+      ...(cadence ? { cadence } : {}),
     };
   }
 
@@ -311,7 +520,7 @@ export class HippoService {
   }
 
   /** Archivist: the single canonical answer to a factual question, with status and provenance. */
-  async askCanon(question: string) {
+  async askCanon(question: string, opts: ReadAs = {}) {
     const vault = await this.vault();
     const index = await this.searcher(vault);
     const terms = fold(question)
@@ -320,7 +529,7 @@ export class HippoService {
     const answers: (FactView & { entity: string; score: number })[] = [];
     for (const hit of await index.search(question, { kind: "entity", limit: 5 })) {
       const e = vault.entities.get(hit.id)!;
-      for (const f of factViews(vault, e)) {
+      for (const f of factViews(vault, e, { caller: opts.caller })) {
         const hay = fold(`${f.field.replace(/_/g, " ")} ${f.value}`);
         const overlap = terms.filter((t) => hay.includes(t)).length;
         answers.push({ ...f, entity: link(e.slug), score: hit.score * (1 + overlap) });
@@ -334,7 +543,7 @@ export class HippoService {
       .filter((d) => entities.has(unwrapLink(d.fm.entity)))
       .map((d) => {
         const e = vault.resolve(d.fm.entity);
-        const confidential = !!e && isConfidentialField(vault, e, d.fm.field, e.fm.facts[d.fm.field]);
+        const confidential = !!e && isConfidentialField(vault, e, d.fm.field, e.fm.facts[d.fm.field]) && !seesConfidential(vault, opts.caller, e, d.fm.field);
         return { ref: link(d.slug), entity: d.fm.entity, field: d.fm.field, claims: d.fm.claims.map((c) => `${formatValue(c.value, { confidential })} (${c.by ?? "human"})`) };
       });
     return { facts: top, disputes, pending_inbox: vault.episodes.length };
@@ -369,6 +578,7 @@ export class HippoService {
       chronicle: chronicle.slice(-40),
       updated,
       upcoming,
+      overdue: overdueContacts(vault, today, vault.config.briefing.overdue_per_day),
       disputes: vault.openDisputes().map((d) => ({ ref: link(d.slug), entity: d.fm.entity, field: d.fm.field })),
       pending_inbox: vault.episodes.length,
     };
@@ -474,6 +684,43 @@ export class HippoService {
       vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
       const result: { dispute: string; entity: string; field: string } & Shown = { dispute: slug, entity: entity.slug, field: d.fm.field, ...shown(value) };
       return { message: signed(`rule(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): ${entity.slug}.${d.fm.field} = ${result.secret ? "🔒" : result.value}`), result };
+    });
+  }
+
+  /**
+   * A human settles a proposal (or a possible merge): `accept` applies the value (a typed `value`, the
+   * claim at `claim`, else the latest claim) as canon by that human; `decline` closes it unchanged, and
+   * the same value isn't proposed again. Merges can only be declined: merging is done by hand.
+   */
+  async decideProposal(ref: string, choice: { decision: "accept" | "decline"; value?: string; claim?: number }, opts: { as?: string; via?: string } = {}): Promise<ProposalDecision> {
+    return this.mutate<ProposalDecision>((vault) => {
+      const by = humanOf(vault, { asHuman: opts.as || true })!;
+      const slug = unwrapLink(ref);
+      const d = vault.disputes.get(slug);
+      if (!d || d.fm.status !== "open" || (d.fm.kind !== "proposal" && d.fm.kind !== "merge")) throw new VaultError(`no open proposal "${ref}"`);
+      const entity = vault.resolve(d.fm.entity);
+      const via = opts.via ? ` via ${opts.via}` : "";
+      if (choice.decision === "decline") {
+        declineProposal(vault, d);
+        vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
+        return { message: signed(`decline(${by}${via}): ${slug}`), result: { proposal: slug, decision: "declined", entity: entity?.slug ?? unwrapLink(d.fm.entity), field: d.fm.field } };
+      }
+      if (d.fm.kind === "merge") throw new VaultError(`${slug} is a possible duplicate: merge the notes by hand, or decline it`);
+      if (!entity) throw new VaultError(`proposal ${slug} is about ${d.fm.entity}, which no longer exists`);
+      let value: FactValue;
+      if (choice.value?.trim()) {
+        if (isSecretField(vault, entity, d.fm.field)) throw new VaultError(`${entity.slug}.${d.fm.field} is secret: accept one of the claims instead`);
+        value = choice.value.trim();
+      } else {
+        const claim = choice.claim !== undefined ? d.fm.claims[choice.claim] : d.fm.claims.at(-1);
+        if (!claim) throw new VaultError(choice.claim !== undefined ? `proposal ${slug} has no claim #${choice.claim}` : `proposal ${slug} has no value to accept; give one`);
+        value = claim.value;
+      }
+      applyRuling(vault, d, value, by);
+      vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
+      const result: ProposalDecision = { proposal: slug, decision: "accepted", entity: entity.slug, field: d.fm.field, ...shown(value, { confidential: isConfidentialField(vault, entity, d.fm.field, entity.fm.facts[d.fm.field]) }) };
+      // Neither a secret nor a confidential value goes into the commit message.
+      return { message: signed(`accept(${by}${via}): ${entity.slug}.${d.fm.field} = ${result.secret ? "🔒" : result.confidential ? "◐" : result.value}`), result };
     });
   }
 

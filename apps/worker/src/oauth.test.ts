@@ -138,7 +138,7 @@ describe("connecting an app over OAuth", () => {
     expect(checked).toEqual([
       ["read", true],
       ["remember", true],
-      ["quest", false],
+      ["goal", false],
       ["curate", false],
     ]);
     expect(page).toMatch(/secret memories in plain text/);
@@ -220,6 +220,15 @@ describe("connecting an app over OAuth", () => {
     expect((await h.app.oauth.listUserGrants(`account-${GM.id}`)).items).toEqual([]);
     expect((await h.app.oauth.listUserGrants(`account-${PLAYER.id}`)).items).toEqual([]);
     expect((await flow.submit(fields)).status).toBe(302);
+  });
+
+  it("grants the goal scope under its old name too, and reads a posted quest as goal", async () => {
+    const h = await hostedApp();
+    const { visit } = await h.readyAccount(PLAYER);
+    const goal = await connect(h, visit, { new_agent: "claude-ai", scope: ["read", "goal"] });
+    expect(await (await h.callMcp(goal.access_token)).json()).toMatchObject({ grant: { scopes: ["read", "goal", "quest"] } });
+    const old = await connect(h, visit, { new_agent: "claude-ai", scope: ["read", "quest"] });
+    expect(await (await h.callMcp(old.access_token)).json()).toMatchObject({ grant: { scopes: ["read", "goal", "quest"] } });
   });
 
   it("honours scopes narrowed on refresh", async () => {

@@ -5,7 +5,7 @@ import type { Episode } from "./episode.ts";
 import { humanText, parseDoc } from "./markdown.ts";
 import { CURRENT_VAULT_VERSION, vaultVersionStatus } from "./migrations.ts";
 import { isSecretField } from "./ops.ts";
-import { FactStatus, type EpisodeKind, type Fact, type FactValue } from "./schema.ts";
+import { FactStatus, type DisputeKind, type EpisodeKind, type Fact, type FactValue, type ProposalState } from "./schema.ts";
 import { isSecretRef } from "./secrets.ts";
 import { fromLocal, localParts, parseFactKey } from "./text.ts";
 import type { Authority, Dispute, Vault } from "./vault.ts";
@@ -107,6 +107,14 @@ export interface ClaimView extends Shown {
 
 export interface DisputeView {
   slug: string;
+  /** conflict: sources disagree; proposal: a value only a human sets; merge: two notes may be one. */
+  kind: DisputeKind;
+  /** Proposals and merges: pending, applied, already_present or declined. */
+  state?: ProposalState;
+  /** Why a proposal or merge was raised. */
+  evidence?: string;
+  /** Merges: the two notes that may be one. */
+  targets?: Ref[];
   entity: Ref;
   field: string;
   status: "open" | "resolved";
@@ -291,11 +299,19 @@ export function isConfidentialField(vault: Vault, e: Entity, field: string, f?: 
   return !!(def?.confidential || def?.identity_key);
 }
 
+/**
+ * Whether `caller` may see confidential values of `e` (`field`, a `facts:` key): only a caller bound
+ * to an identity (a bound key, an OAuth grant, local `--agent`) with authority there, or a human.
+ */
+export function seesConfidential(vault: Vault, caller: string | undefined, e: Entity, field?: string): boolean {
+  return !!caller && vault.authorityOf(caller, e, field) !== "none";
+}
+
 export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to.slice(0, 10)}T00:00:00Z`) - Date.parse(`${from.slice(0, 10)}T00:00:00Z`)) / DAY);
 }
 
-function addDays(day: string, n: number): string {
+export function addDays(day: string, n: number): string {
   return new Date(Date.parse(`${day}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
 }
 
@@ -432,6 +448,10 @@ export function disputeView(ctx: ViewContext, d: Dispute): DisputeView {
   const confidential = !!e && isConfidentialField(ctx.vault, e, d.fm.field, current);
   return {
     slug: d.slug,
+    kind: d.fm.kind ?? "conflict",
+    ...(d.fm.state ? { state: d.fm.state } : {}),
+    ...(d.fm.evidence ? { evidence: d.fm.evidence } : {}),
+    ...(d.fm.targets?.length ? { targets: d.fm.targets.map((t) => refFor(ctx.vault, t)) } : {}),
     entity: refFor(ctx.vault, d.fm.entity),
     field: d.fm.field,
     status: d.fm.status,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { managedStore } from "./__fixtures__/managed.ts";
 import { fixtureStore } from "./__fixtures__/vault.ts";
 import { applyFact, applyRulings } from "./ops.ts";
 import { parseDoc } from "./markdown.ts";
@@ -350,5 +351,181 @@ describe("HippoService", () => {
     const n = await new HippoService(store, { now }).neighbors("residence-permit");
     expect(n.edges).toEqual([{ from: "migration-agency", rel: "handles", to: "residence-permit" }]);
     expect(await store.read("factions/migration-agency.md")).toContain("- handles:: [[residence-permit]]");
+  });
+});
+
+describe("HippoService: people", () => {
+  const note = (fm: string, body = "") => `---\n${fm}\n---\n${body}`;
+  const COLLEAGUE = note("type: archetype\ncadence: 1m\nguidelines:\n  - { rule: Keep it about work, status: canon }");
+  const LANDLORD = note(
+    [
+      "type: character",
+      "title: The landlord",
+      "tags: [colleague]",
+      "facts:",
+      "  email: { value: landlord@lisbon.example, status: canon }",
+      '  greeting@lang:pt: { value: "Olá", status: canon, by: home-finder, valid_from: 2026-01-01, confidence: 0.8 }',
+      "guidelines:",
+      '  - { rule: Write in Portuguese, scope: "lang:pt", status: canon }',
+      "decisions:",
+      "  - { id: dec-1, what: Renew the lease, by: player, at: 2026-09-01T10:00:00.000Z }",
+      "questions:",
+      '  - { id: q-1, q: "Is the deposit refundable?", by: home-finder, at: 2026-09-02T10:00:00.000Z }',
+      "stats: { first_met: 2026-01-10, last_contact: 2026-08-01 }",
+    ].join("\n"),
+    "\n## Notes\nMet at the Harbor University open day.\n\n## Guidelines\nBe brief.\n",
+  );
+  const PROPOSAL = note(
+    'type: dispute\nkind: proposal\nentity: "[[landlord]]"\nfield: stakes\nstatus: open\nstate: pending\nclaims:\n  - { value: low, by: residency-agent, src: [ep-1] }\n  - { value: high, by: home-finder, src: [ep-2] }',
+  );
+  const people = (extra: Record<string, string> = {}) =>
+    managedStore({ "archetypes/colleague.md": COLLEAGUE, "characters/landlord.md": LANDLORD, "disputes/proposal-landlord-stakes.md": PROPOSAL, ...extra });
+
+  it("get shows qualifiers, guidelines (own, inherited, the human's), stats, decisions, questions, inheritance and cadence", async () => {
+    const svc = new HippoService(people(), { now });
+    const v = await svc.get("landlord");
+    expect(v.facts).toEqual([
+      { field: "email", value: "◐ confidential", status: "canon", by: "player", confidential: true },
+      { field: "greeting@lang:pt", value: "Olá", status: "canon", by: "home-finder", scope: "lang:pt", valid_from: "2026-01-01", confidence: 0.8 },
+    ]);
+    expect(v.guidelines).toEqual({
+      human: "Be brief.",
+      items: [{ rule: "Write in Portuguese", scope: "lang:pt", status: "canon", src: [] }],
+      inherited: [{ rule: "Keep it about work", status: "canon", src: [], source: "colleague" }],
+    });
+    expect(v.stats).toEqual({ first_met: "2026-01-10", last_contact: "2026-08-01", last: {}, counts: {} });
+    expect(v.decisions).toEqual([{ id: "dec-1", what: "Renew the lease", alternatives: [], by: "player", at: "2026-09-01T10:00:00.000Z" }]);
+    expect(v.questions).toMatchObject([{ id: "q-1", q: "Is the deposit refundable?", status: "open" }]);
+    expect(v.inherits).toEqual(["[[colleague]]"]);
+    expect(v.cadence).toEqual({ every: "1m", due: "2026-09-01", overdueDays: 26 });
+    expect(v.disputes).toEqual(["[[proposal-landlord-stakes]] (stakes)"]);
+
+    const agent = await svc.get("residency-agent");
+    expect(agent).toMatchObject({ lane: "student residence permit end-to-end", authority: ["residency"] });
+    expect(agent.guidelines).toBeUndefined();
+  });
+
+  it("shows a confidential value only to a caller with authority over it", async () => {
+    const svc = new HippoService(people(), { now });
+    const email = async (caller?: string) => (await svc.get("landlord", { caller })).facts.find((f) => f.field === "email")!.value;
+    expect(await email()).toBe("◐ confidential");
+    expect(await email("home-finder")).toBe("◐ confidential");
+    expect(await email("player")).toBe("landlord@lisbon.example");
+    const svc2 = new HippoService(people({ "characters/landlord.md": LANDLORD.replace("tags: [colleague]", "tags: [colleague, housing]") }), { now });
+    expect((await svc2.get("landlord", { caller: "home-finder" })).facts[0]!.value).toBe("landlord@lisbon.example");
+    expect((await svc2.askCanon("landlord email", { caller: "home-finder" })).facts.map((f) => f.value)).toContain("landlord@lisbon.example");
+    expect((await svc2.askCanon("landlord email")).facts.map((f) => f.value)).not.toContain("landlord@lisbon.example");
+    expect(JSON.stringify(await svc2.recall("landlord"))).not.toContain("landlord@lisbon.example");
+    expect(JSON.stringify(await svc2.recall("landlord", { caller: "home-finder" }))).toContain("landlord@lisbon.example");
+  });
+
+  it("personBrief: canon facts, guidelines, the last three interactions in 90 days, goals with them, open proposals, cadence", async () => {
+    const entry = (time: string, agent: string, kind: string, text: string, id: string, touched?: string) =>
+      `> [!episode] ${time} · [[${agent}]] · ${kind}\n> ${text}${touched ? `\n>\n> ↳ [[${touched}]]` : ""}\n\n^${id}\n`;
+    const day = (date: string, ...entries: string[]) => `---\ntype: chronicle\ndate: ${date}\n---\n# ${date}\n\n${entries.join("\n")}`;
+    const store = people({
+      "chronicle/2026/06/2026-06-01.md": day("2026-06-01", entry("10:00", "home-finder", "interaction", "Viewing with [[landlord]]", "ep-old")),
+      "chronicle/2026/09/2026-09-01.md": day("2026-09-01", entry("10:00", "home-finder", "interaction", "Coffee with [[The landlord]]", "ep-a")),
+      "chronicle/2026/09/2026-09-10.md": day("2026-09-10", entry("09:00", "home-finder", "rollup/call", "call with [[landlord]]", "ep-b")),
+      "chronicle/2026/09/2026-09-15.md": day("2026-09-15", entry("09:00", "home-finder", "observation", "[[landlord]] repainted the hall", "ep-obs")),
+      "chronicle/2026/09/2026-09-20.md": day(
+        "2026-09-20",
+        entry("08:00", "home-finder", "interaction", "Agreed on the rent", "ep-c", "landlord"),
+        entry("09:00", "campus-agent", "interaction", "Met the registrar at [[harbor-university]]", "ep-other"),
+      ),
+      "goals/renew-lease.md": note('type: goal\ntitle: Renew the lease\nstatus: active\nowner: "[[home-finder]]"\ncounterparty: "[[landlord]]"\ndue: 2026-10-31'),
+      "goals/old-lease.md": note('type: goal\ntitle: Old lease\nstatus: done\ncounterparty: "[[landlord]]"'),
+    });
+    const b = await new HippoService(store, { now }).personBrief("The landlord");
+    expect(b.ref).toBe("[[landlord]]");
+    expect(b.facts.map((f) => f.field)).toEqual(["email", "greeting@lang:pt"]);
+    expect(b.facts[0]!.value).toBe("◐ confidential");
+    expect(b.guidelines.human).toBe("Be brief.");
+    expect(b.guidelines.inherited.map((g) => g.rule)).toEqual(["Keep it about work"]);
+    expect(b.interactions.map((i) => [i.id, i.kind])).toEqual([
+      ["ep-c", "interaction"],
+      ["ep-b", "rollup/call"],
+      ["ep-a", "interaction"],
+    ]);
+    expect(b.goals).toEqual([{ ref: "[[renew-lease]]", title: "Renew the lease", role: "counterparty", state: "active", next_due: "2026-10-31" }]);
+    expect(b.disputes).toEqual([{ ref: "[[proposal-landlord-stakes]]", kind: "proposal", field: "stakes", state: "pending" }]);
+    expect(b.cadence).toEqual({ every: "1m", due: "2026-09-01", overdueDays: 26 });
+    await expect(new HippoService(store, { now }).personBrief("nobody-here")).rejects.toThrow(/no entity "nobody-here"/);
+  });
+
+  it("briefing lists overdue contacts, most overdue first, spread across groups and capped per day", async () => {
+    const person = (title: string, cadence: string, last: string, group?: string) =>
+      note(`type: character\ntitle: ${title}\ncadence: ${cadence}\nstats: { last_contact: ${last} }${group ? `\nrelations:\n  - { rel: member_of, target: "[[${group}]]" }` : ""}`);
+    const extra = {
+      "groups/family.md": note("type: group\ntitle: Family"),
+      "groups/work.md": note("type: group\ntitle: Work"),
+      "characters/flatmate.md": person("Flatmate", "1w", "2026-09-01", "family"),
+      "characters/cousin.md": person("Cousin", "1w", "2026-09-02", "family"),
+      "characters/aunt.md": person("Aunt", "1w", "2026-09-03", "family"),
+      "characters/tutor.md": person("Tutor", "1w", "2026-09-15", "work"),
+      "characters/neighbour.md": person("Neighbour", "2w", "2026-09-05"),
+      "characters/classmate.md": person("Classmate", "1m", "2026-09-20"),
+      "characters/stranger-x.md": person("Stranger", "none", "2026-01-01"),
+    };
+    const b = await new HippoService(people(extra), { now }).briefing();
+    // Three a day: the family's second and third most overdue wait behind the other groups' first.
+    expect(b.overdue.map((o) => [o.ref, o.days_overdue, o.group])).toEqual([
+      ["[[landlord]]", 26, undefined],
+      ["[[flatmate]]", 19, "[[family]]"],
+      ["[[neighbour]]", 8, undefined],
+    ]);
+    expect(b.overdue[0]).toEqual({ ref: "[[landlord]]", title: "The landlord", last_contact: "2026-08-01", cadence: "1m", due: "2026-09-01", days_overdue: 26 });
+
+    const store = people(extra);
+    await store.write("_hippo/config.yaml", ((await store.read("_hippo/config.yaml")) ?? "") + "briefing: { overdue_per_day: 5 }\n");
+    const more = await new HippoService(store, { now }).briefing();
+    expect(more.overdue.map((o) => o.ref)).toEqual(["[[landlord]]", "[[flatmate]]", "[[cousin]]", "[[neighbour]]", "[[tutor]]"]);
+  });
+
+  it("decideProposal: accept applies a claim (or a typed value) as the human's; decline closes it unchanged", async () => {
+    const store = people();
+    const svc = new HippoService(store, { now });
+    expect(await svc.decideProposal("[[proposal-landlord-stakes]]", { decision: "accept" })).toEqual({
+      proposal: "proposal-landlord-stakes",
+      decision: "accepted",
+      entity: "landlord",
+      field: "stakes",
+      value: "high",
+      secret: false,
+    });
+    const v = await svc.vault();
+    expect(v.resolve("landlord")!.fm.facts.stakes).toMatchObject({ value: "high", status: "canon", by: "player", src: ["ep-1", "ep-2"] });
+    expect(v.disputes.get("proposal-landlord-stakes")!.fm).toMatchObject({ status: "resolved", state: "applied", ruling: "high" });
+    await expect(svc.decideProposal("proposal-landlord-stakes", { decision: "decline" })).rejects.toThrow(/no open proposal/);
+
+    const again = new HippoService(people(), { now });
+    expect(await again.decideProposal("proposal-landlord-stakes", { decision: "accept", claim: 0 })).toMatchObject({ value: "low" });
+    const typed = new HippoService(people(), { now });
+    expect(await typed.decideProposal("proposal-landlord-stakes", { decision: "accept", value: " medium " })).toMatchObject({ value: "medium" });
+
+    const declined = people();
+    const d = new HippoService(declined, { now });
+    expect(await d.decideProposal("proposal-landlord-stakes", { decision: "decline" })).toEqual({ proposal: "proposal-landlord-stakes", decision: "declined", entity: "landlord", field: "stakes" });
+    const after = await d.vault();
+    expect(after.disputes.get("proposal-landlord-stakes")!.fm).toMatchObject({ status: "resolved", state: "declined" });
+    expect(after.resolve("landlord")!.fm.facts.stakes).toBeUndefined();
+    expect((await d.overview()).attention.disputes).toEqual([]);
+  });
+
+  it("decideProposal refuses conflicts, and merges can only be declined", async () => {
+    const conflict = note('type: dispute\nentity: "[[landlord]]"\nfield: rent\nstatus: open\nclaims:\n  - { value: 900, by: home-finder }\n  - { value: 950, by: residency-agent }');
+    const merge = note('type: dispute\nkind: merge\nentity: "[[landlord]]"\nfield: email\nstatus: open\nstate: pending\ntargets: ["[[landlord]]", "[[player]]"]\nevidence: Same email');
+    const store = people({ "disputes/dispute-landlord-rent.md": conflict, "disputes/merge-landlord-player.md": merge });
+    const svc = new HippoService(store, { now });
+    await expect(svc.decideProposal("dispute-landlord-rent", { decision: "accept" })).rejects.toThrow(/no open proposal/);
+    await expect(svc.decideProposal("merge-landlord-player", { decision: "accept" })).rejects.toThrow(/merge the notes by hand/);
+    const views = (await svc.overview()).attention.disputes.sort((a, b) => a.slug.localeCompare(b.slug));
+    expect(views.map((x) => [x.slug, x.kind, x.state])).toEqual([
+      ["dispute-landlord-rent", "conflict", undefined],
+      ["merge-landlord-player", "merge", "pending"],
+      ["proposal-landlord-stakes", "proposal", "pending"],
+    ]);
+    expect(views[1]).toMatchObject({ evidence: "Same email", targets: [{ slug: "landlord" }, { slug: "player" }] });
+    expect(await svc.decideProposal("merge-landlord-player", { decision: "decline" })).toMatchObject({ decision: "declined" });
   });
 });

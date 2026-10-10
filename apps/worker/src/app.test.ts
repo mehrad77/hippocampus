@@ -180,7 +180,7 @@ describe("OAuth endpoints", () => {
     expect(resource).toMatchObject({ resource: `${ORIGIN}/mcp`, authorization_servers: [ORIGIN] });
     const server = (await (await h.send(new Request(`${ORIGIN}/.well-known/oauth-authorization-server`))).json()) as Record<string, unknown>;
     expect(server).toMatchObject({ authorization_endpoint: `${ORIGIN}/authorize`, token_endpoint: `${ORIGIN}/oauth/token`, registration_endpoint: `${ORIGIN}/oauth/register` });
-    expect(server.scopes_supported).toEqual(["read", "remember", "quest", "curate"]);
+    expect(server.scopes_supported).toEqual(["read", "remember", "goal", "curate", "quest"]);
   });
 
   it("rate-limit client registration by IP", async () => {
