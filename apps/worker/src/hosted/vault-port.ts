@@ -30,10 +30,11 @@ export interface VaultHosts {
   get(vaultId: string): VaultStub;
 }
 
-export const vaultMeta = (v: Pick<VaultRecord, "id" | "fullName" | "branch" | "repoId" | "installationId">): VaultMeta => ({
+export const vaultMeta = (v: Pick<VaultRecord, "id" | "fullName" | "branch" | "repoId" | "installationId" | "quotas">): VaultMeta => ({
   vaultId: v.id,
   fullName: v.fullName,
   branch: v.branch,
   repoId: v.repoId,
   installationId: v.installationId,
+  ...(v.quotas ? { quotas: v.quotas } : {}),
 });

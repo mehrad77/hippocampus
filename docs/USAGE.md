@@ -250,7 +250,7 @@ The setup page also gives snippets for `.mcp.json`, Cursor and VS Code, and the 
 
 **Reconnecting.** If the app is uninstalled or suspended, the repo is removed from the installation or deleted, or the repo is made public, the vault is disconnected and stops answering. The setup page says why. Undo it on GitHub (install again, make the repo private) and it reconnects.
 
-**Limits.** Per vault: 2,000 episodes waiting in the inbox, 20 waiting introductions, 20,000 files, 50 MB of text, 24 sleep runs a day, and 50 keys. Requests are rate-limited per key, account and IP.
+**Limits.** Per vault: 2,000 episodes waiting in the inbox, 20 waiting introductions, 20,000 files, 50 MB of text, 24 sleep runs a day, and 50 keys. Requests are rate-limited per key, account and IP. An admin can raise these for one vault (`POST /dashboard/api/admin/vaults/quotas` with `{"id", "quotas": {"sleepRunsPerDay": 96}}`); `null` restores the defaults.
 
 **Deleting your account.** Your account menu deletes everything the app holds for you, after you type your GitHub login: keys stop working, connected apps are signed out, the GitHub App is uninstalled, and your account and your vault's index and cache are erased. Your vault repo stays on GitHub, untouched.
 

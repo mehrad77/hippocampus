@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import type { SqlDriver } from "@hippocampus/index";
 import { nodeSqlite } from "@hippocampus/index/node";
 import { FakeGitHub } from "@hippocampus/store-github/testing";
@@ -11,18 +11,21 @@ import type { HostedSettings } from "./settings.ts";
 export const ORIGIN = "https://hippo.test";
 export const APP = { id: "4321", slug: "hippocampus-test", clientId: "Iv1.hosted", clientSecret: "app-secret", webhookSecret: "hook-secret" };
 
-/** The registry, migrated from the same SQL file wrangler applies to D1. */
+/** The registry, migrated from the same SQL files, in order, that wrangler applies to D1. */
 export async function registryDb(): Promise<SqlDriver> {
   const db = nodeSqlite(":memory:");
-  const sql = readFileSync(new URL("../../migrations/0001_registry.sql", import.meta.url), "utf8");
-  const statements = sql
-    .split("\n")
-    .filter((line) => !line.trim().startsWith("--"))
-    .join("\n")
-    .split(";")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  await db.batch(statements.map((s) => ({ sql: s })));
+  const dir = new URL("../../migrations/", import.meta.url);
+  for (const file of readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()) {
+    const sql = readFileSync(new URL(file, dir), "utf8");
+    const statements = sql
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("--"))
+      .join("\n")
+      .split(";")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    await db.batch(statements.map((s) => ({ sql: s })));
+  }
   return db;
 }
 

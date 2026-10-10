@@ -3,7 +3,7 @@ import type { HttpError } from "@hippocampus/dashboard";
 import { nodeSqlStorage } from "@hippocampus/index/testing";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_EMBED_DAILY_LIMIT, cappedEmbedder, hostedEmbedding } from "./embed-cap.ts";
-import { DailyCounter, checkInbox, inboxCounts, sizeGuard } from "./quotas.ts";
+import { DailyCounter, checkInbox, inboxCounts, quotaOverrides, sizeGuard, storedQuotas } from "./quotas.ts";
 
 const caught = (fn: () => unknown) => {
   try {
@@ -49,6 +49,26 @@ describe("sizeGuard", () => {
     expect(big.tripped).toBeUndefined();
     expect(await big.read("b.md")).toBe("67890");
     await expect(big.read("c.md")).rejects.toMatchObject({ code: "VAULT_TOO_LARGE" });
+  });
+});
+
+describe("quota overrides", () => {
+  it("accepts whole numbers for the limits named, and nothing else", () => {
+    expect(quotaOverrides({ sleepRunsPerDay: 96 })).toEqual({ sleepRunsPerDay: 96 });
+    expect(quotaOverrides(null)).toEqual({});
+    expect(caught(() => quotaOverrides({ sleepRunsPerDay: "96" }))).toMatchObject({ status: 400, code: "INVALID" });
+    expect(caught(() => quotaOverrides({ sleepRuns: 96 }))).toMatchObject({ status: 400, code: "INVALID" });
+    expect(caught(() => quotaOverrides({ vaultFiles: -1 }))).toMatchObject({ status: 400, code: "INVALID" });
+    expect(caught(() => quotaOverrides({ vaultFiles: 1.5 }))).toMatchObject({ status: 400, code: "INVALID" });
+    expect(caught(() => quotaOverrides(["sleepRunsPerDay"]))).toMatchObject({ status: 400, code: "INVALID" });
+  });
+
+  it("reads a stored override, and ignores one that doesn't check out", () => {
+    expect(storedQuotas('{"sleepRunsPerDay":96}')).toEqual({ sleepRunsPerDay: 96 });
+    expect(storedQuotas("{}")).toBeUndefined();
+    expect(storedQuotas('{"sleepRunsPerDay":"x"}')).toBeUndefined();
+    expect(storedQuotas("{not json")).toBeUndefined();
+    expect(storedQuotas(null)).toBeUndefined();
   });
 });
 

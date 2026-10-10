@@ -2,6 +2,7 @@ import { AGENT_ID, RESERVED_AGENT_IDS } from "@hippocampus/core";
 import { HttpError } from "@hippocampus/dashboard";
 import type { SqlDriver, SqlValue } from "@hippocampus/index";
 import { hashToken, newToken } from "../auth.ts";
+import { storedQuotas, type Quotas } from "./quotas.ts";
 
 // The hosted app's registry over SQL (D1 in the Worker, node:sqlite in tests). The schema is
 // apps/worker/migrations/0001_registry.sql. It holds accounts, which repo is whose vault, and
@@ -37,6 +38,8 @@ export interface VaultRecord {
   branch: string;
   status: VaultStatus;
   reason?: DisconnectReason;
+  /** An admin's overrides of the hosted limits for this vault; absent means the defaults. */
+  quotas?: Partial<Quotas>;
   created: string;
   updated: string;
 }
@@ -158,6 +161,7 @@ interface VaultRow {
   branch: string;
   status: VaultStatus;
   reason: DisconnectReason | null;
+  quotas: string | null;
   created: string;
   updated: string;
 }
@@ -183,6 +187,7 @@ interface GrantRow extends KeyRow {
   v_branch: string;
   v_status: VaultStatus;
   v_reason: DisconnectReason | null;
+  v_quotas: string | null;
   v_created: string;
   v_updated: string;
   account_status: AccountStatus;
@@ -198,18 +203,22 @@ const toAccount = (r: AccountRow): Account => ({
   updated: r.updated,
 });
 
-const toVault = (r: VaultRow): VaultRecord => ({
-  id: r.id,
-  accountId: r.account_id,
-  installationId: r.installation_id,
-  repoId: r.repo_id,
-  fullName: r.full_name,
-  branch: r.branch,
-  status: r.status,
-  ...(r.reason ? { reason: r.reason } : {}),
-  created: r.created,
-  updated: r.updated,
-});
+const toVault = (r: VaultRow): VaultRecord => {
+  const quotas = storedQuotas(r.quotas);
+  return {
+    id: r.id,
+    accountId: r.account_id,
+    installationId: r.installation_id,
+    repoId: r.repo_id,
+    fullName: r.full_name,
+    branch: r.branch,
+    status: r.status,
+    ...(r.reason ? { reason: r.reason } : {}),
+    ...(quotas ? { quotas } : {}),
+    created: r.created,
+    updated: r.updated,
+  };
+};
 
 function toKey(r: KeyRow): KeyRecord {
   const scopes = (() => {
@@ -231,7 +240,7 @@ function toKey(r: KeyRow): KeyRecord {
   };
 }
 
-const VAULT_COLUMNS = "id, account_id, installation_id, repo_id, full_name, branch, status, reason, created, updated";
+const VAULT_COLUMNS = "id, account_id, installation_id, repo_id, full_name, branch, status, reason, quotas, created, updated";
 
 export interface NewVault {
   accountId: number;
@@ -348,7 +357,7 @@ export class Registry {
   /** Every vault with its owner's login, for admins. */
   async vaults(): Promise<(VaultRecord & { login: string })[]> {
     const rows = await this.db.all<VaultRow & { login: string }>(
-      `SELECT v.id, v.account_id, v.installation_id, v.repo_id, v.full_name, v.branch, v.status, v.reason, v.created, v.updated, a.login
+      `SELECT v.id, v.account_id, v.installation_id, v.repo_id, v.full_name, v.branch, v.status, v.reason, v.quotas, v.created, v.updated, a.login
        FROM vaults v JOIN accounts a ON a.id = v.account_id ORDER BY v.created`,
     );
     return rows.map((r) => ({ ...toVault(r), login: r.login }));
@@ -416,6 +425,13 @@ export class Registry {
     return row && toVault(row);
   }
 
+  /** Set an admin's overrides of a vault's limits; `null` or none clears them. Callers check the values first (`quotaOverrides`). */
+  async setVaultQuotas(id: string, quotas: Partial<Quotas> | null): Promise<VaultRecord | undefined> {
+    const json = quotas && Object.keys(quotas).length ? JSON.stringify(quotas) : null;
+    const row = await this.one<VaultRow>(`UPDATE vaults SET quotas = ? WHERE id = ? RETURNING ${VAULT_COLUMNS}`, [json, id]);
+    return row && toVault(row);
+  }
+
   async renameVault(id: string, fullName: string): Promise<VaultRecord | undefined> {
     const row = await this.one<VaultRow>(`UPDATE vaults SET full_name = ?, updated = ? WHERE id = ? RETURNING ${VAULT_COLUMNS}`, [fullName, this.stamp(), id]);
     return row && toVault(row);
@@ -446,7 +462,7 @@ export class Registry {
     const row = await this.one<GrantRow>(
       `SELECT k.*, v.id AS v_id, v.account_id AS v_account_id, v.installation_id AS v_installation_id, v.repo_id AS v_repo_id,
          v.full_name AS v_full_name, v.branch AS v_branch, v.status AS v_status, v.reason AS v_reason,
-         v.created AS v_created, v.updated AS v_updated, a.status AS account_status
+         v.quotas AS v_quotas, v.created AS v_created, v.updated AS v_updated, a.status AS account_status
        FROM keys k JOIN vaults v ON v.id = k.vault_id JOIN accounts a ON a.id = v.account_id
        WHERE k.hash = ?`,
       [hash],
@@ -461,6 +477,7 @@ export class Registry {
       branch: row.v_branch,
       status: row.v_status,
       reason: row.v_reason,
+      quotas: row.v_quotas,
       created: row.v_created,
       updated: row.v_updated,
     });
