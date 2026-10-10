@@ -2,7 +2,7 @@ import { MemoryStore, generateKeyPair } from "@hippocampus/core";
 import { fixtureStore } from "../../../core/src/__fixtures__/vault.ts";
 import { ScriptedLLM } from "../llm.ts";
 
-// One night of the example campaign, shared by the classic sleep and the relay tests so both curate the same inbox.
+// One night of the example vault, shared by the classic sleep and the relay tests so both curate the same inbox.
 
 export const now = () => new Date("2026-09-27T21:00:00.000Z");
 
@@ -41,10 +41,10 @@ export function script() {
           { entity: "passport", field: "number", value: "U12345678", secret: true },
         ],
         relations: [],
-        quests: [{ quest: "residence-permit", status: "unchanged", completed: ["Book agency appointment"], added: [] }],
+        goals: [{ goal: "residence-permit", status: "unchanged", completed: ["Book agency appointment"], added: [] }],
       },
-      { facts: [{ entity: "migration-agency", field: "appointment date", value: "2026-10-15", secret: false }], relations: [], quests: [] },
-      { facts: [{ entity: "joao-silva", field: "phone", value: "+351 900 000 001", secret: false }], relations: [], quests: [] },
+      { facts: [{ entity: "migration-agency", field: "appointment date", value: "2026-10-15", secret: false }], relations: [], goals: [] },
+      { facts: [{ entity: "joao-silva", field: "phone", value: "+351 900 000 001", secret: false }], relations: [], goals: [] },
     )
     .respond("summary", ({ prompt }) => ({ summary: `Summary of ${prompt.split("\n")[0]}` }));
 }

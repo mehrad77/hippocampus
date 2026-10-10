@@ -11,10 +11,12 @@ import {
   Vault,
   applyChanges,
   decryptSecret,
+  fieldUsage,
   isSecretRef,
   migrate,
   renderHandbook,
   secretPath,
+  validateShapes,
   vaultVersionStatus,
   withTrailers,
   type SearcherFactory,
@@ -181,6 +183,11 @@ program
     if (status === "older") err(`⚠ run \`hippo migrate\` to upgrade this vault to format v${CURRENT_VAULT_VERSION}`);
     err(`${vault.entities.size} entities · ${vault.episodes.length} pending episodes · ${vault.openDisputes().length} open disputes`);
     for (const w of vault.warnings) err(`⚠ ${w}`);
+    // Advisory only (never the exit code): notes and episodes that don't fit the schema. Paths and fields, never values.
+    if (status === "current") {
+      for (const f of validateShapes(vault)) err(`📐 ${f.path}: ${f.message}`);
+      for (const u of fieldUsage(vault)) err(`📐 ${u.type} notes use undeclared fields: ${u.fields.map((f) => `${f.field} ×${f.count}`).join(", ")}`);
+    }
     // This release still passes an older vault (only the hint), so pinned vault CI keeps working until someone migrates.
     if (vault.warnings.length && status !== "older") process.exitCode = 1;
   });

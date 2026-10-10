@@ -23,6 +23,7 @@ export * from "./service.ts";
 export * from "./store.ts";
 export * from "./text.ts";
 export * from "./trailers.ts";
+export * from "./validate-shapes.ts";
 export * from "./vault.ts";
 export * from "./views.ts";
 export * from "./wikilink.ts";

@@ -27,5 +27,5 @@ The connection needs a **curator key** (the `curate` scope). If there are no `sl
 
 - Use only what each question gives you. Never invent names, dates, numbers or facts, and never carry a value from one question into another.
 - The vault's own house rules arrive inside each question's `system` text. Follow them.
-- Questions can contain secret values (ID numbers, credentials). Use them only to answer that question, and never repeat them anywhere else: not in other answers, your report, or your notes.
+- Questions can contain secret values (ID numbers, credentials) and confidential details (marked `Confidential: yes`). Use them only to answer that question, and never repeat them anywhere else: not in other answers, your report, or your notes.
 - Don't edit the vault's files. Everything happens through the tools.

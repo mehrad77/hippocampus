@@ -309,6 +309,21 @@ export class Vault {
     return e;
   }
 
+  /**
+   * Drop a note created in this batch and never written (the curator found it was an existing one
+   * after all). A note already in the store is never discarded this way.
+   */
+  discardEntity(e: Entity): void {
+    if (this.entities.get(e.slug) !== e) return;
+    this.entities.delete(e.slug);
+    for (const [key, slugs] of this.aliasIndex) {
+      slugs.delete(e.slug);
+      if (!slugs.size) this.aliasIndex.delete(key);
+    }
+    if (e.fm.id && this.idIndex.get(e.fm.id) === e.slug) this.idIndex.delete(e.fm.id);
+    this.dirty.delete(e.path);
+  }
+
   addAliases(e: Entity, aliases: string[]): void {
     const known = new Set([e.slug, e.fm.title, ...e.fm.aliases].filter(Boolean).map((a) => normalizeName(a!)));
     const fresh = aliases.filter((a) => a.trim() && !known.has(normalizeName(a)));

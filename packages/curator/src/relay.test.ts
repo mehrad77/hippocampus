@@ -1,6 +1,7 @@
 import { MemoryStore, StoreConflictError, Vault, decryptSecret, humanText, parseDoc, type Change, type CommitMeta } from "@hippocampus/core";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
 import { episode, now, script, setup } from "./__fixtures__/night.ts";
 import { ScriptedLLM } from "./llm.ts";
 import { MemoryRunStore, RunBusyError, SleepRelay, type Question, type RelayStep } from "./relay.ts";
@@ -291,5 +292,42 @@ describe("sleep relay", () => {
     const status = await relay.abort(first.run);
     expect(status).toEqual({ history: [expect.objectContaining({ id: first.run, outcome: "aborted", consolidated: 0, remaining: 3 })] });
     await expect(relay.abort(first.run)).rejects.toThrow(/no sleep run/);
+  });
+
+  it("curates an episode of a kind without text from its data alone, asking nothing", async () => {
+    const config = (await fixtureStore().read("_hippo/config.yaml"))!.replace(
+      "relations:",
+      "kinds:\n  call: { behaviour: interaction, text: forbidden, counts_as_contact: true, data: { with: { kind: ref } } }\nrelations:",
+    );
+    const store = fixtureStore({
+      "_hippo/config.yaml": config,
+      "inbox/residency-agent/2026-09-27T100000-call.md": '---\nagent: residency-agent\nkind: call\nat: 2026-09-27T10:00:00Z\ndata:\n  with: "[[migration-agency]]"\n---\n',
+    });
+    const { relay } = relayOver(store);
+    const step = await relay.start({ curator: "archivist", model: "scripted" });
+
+    expect(step.state).toBe("done");
+    if (step.state !== "done") return;
+    expect(step.report).toMatchObject({ failed: [], remaining: 0, summaries: [], consolidated: [{ agent: "residency-agent", touched: ["migration-agency"], stats: ["migration-agency"] }] });
+    expect(parseDoc((await store.read("factions/migration-agency.md"))!).data.stats).toMatchObject({ counts: { call: 1 }, last_contact: "2026-09-27" });
+    expect(await store.list("inbox")).toEqual([]);
+  });
+
+  it("passes over a data-only episode in look-ahead, and still curates like the classic sleep", async () => {
+    const classic = await setup();
+    // Between the first and second episode; with no text, it's curated from its data.
+    classic.store.files.set("inbox/home-finder/2026-09-27T103000-call.md", '---\nagent: home-finder\nkind: interaction\nat: 2026-09-27T10:30:00Z\nabout: [migration-agency]\ndata:\n  channel: call\n---\n');
+    const relayed = { store: new MemoryStore(Object.fromEntries(classic.store.files)), identity: classic.identity };
+    const expected = await sleep({ store: classic.store, llm: script(), now });
+    expect(expected.failed).toEqual([]);
+
+    const { relay } = relayOver(relayed.store);
+    const first = asking(await relay.start({ curator: "archivist", model: "scripted" }));
+    expect(first.questions.map((q) => q.name)).toEqual(["mentions", "mentions", "mentions"]);
+    const { report, rejected } = await runToEnd(relay, first, script());
+    expect(rejected).toEqual([]);
+    expect(report.consolidated).toEqual(expected.consolidated);
+    expect(report.consolidated[1]).toMatchObject({ agent: "home-finder", stats: ["migration-agency"] });
+    expect(await tree(relayed)).toEqual(await tree(classic));
   });
 });
