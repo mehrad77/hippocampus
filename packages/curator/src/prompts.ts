@@ -1,12 +1,17 @@
-import { displayName, formatValue, getSummary, type Entity, type Episode, type HippoConfig, type Vault } from "@hippocampus/core";
+import { displayName, formatValue, getSummary, type Entity, type Episode, type HippoConfig, type ResolvedType, type SchemaRegistry, type Vault } from "@hippocampus/core";
 import { z } from "zod";
 
 // Every step is a small, strictly-typed call so that small local models cope.
 
 const oneOf = (values: string[]) => z.enum((values.length ? values : ["none"]) as [string, ...string[]]);
 
-export function mentionsSchema(config: HippoConfig) {
-  const types = Object.keys(config.types).filter((t) => t !== "party");
+/** Types a mention may have: agents aren't the subject of memories, so actor types are left out. */
+export function mentionTypes(schema: SchemaRegistry): ResolvedType[] {
+  return schema.types().filter((t) => !t.capabilities.includes("actor"));
+}
+
+export function mentionsSchema(schema: SchemaRegistry) {
+  const types = mentionTypes(schema).map((t) => t.name);
   return z.object({
     entities: z.array(
       z.object({
@@ -72,12 +77,11 @@ ${ep.text}
 
 export function mentionsPrompt(vault: Vault, ep: Episode, houseRules?: string) {
   const { config } = vault;
-  const types = Object.entries(config.types)
-    .filter(([t]) => t !== "party")
-    .map(([t, d]) => `- ${t}: ${d.description}`)
+  const types = mentionTypes(vault.schema)
+    .map((t) => `- ${t.name}: ${t.description}`)
     .join("\n");
   const quests = vault
-    .ofType("quest")
+    .withCapability("goal")
     .map((q) => `- ${displayName(q)}`)
     .join("\n");
   return {

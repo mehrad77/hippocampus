@@ -30,8 +30,7 @@ export async function applyFact(
   opts: { secret?: boolean } = {},
 ): Promise<FactResult> {
   const field = toFieldName(rawField);
-  const secretFields = vault.config.types[entity.fm.type]?.secret_fields ?? [];
-  const secret = opts.secret || secretFields.includes(field) || isSecretRef(entity.fm.facts[field]?.value);
+  const secret = opts.secret || vault.schema.isSecretField(entity.fm.type, field) || isSecretRef(entity.fm.facts[field]?.value);
   const incomingAuthority = vault.authorityOf(prov.by, entity);
 
   if (secret) {
@@ -211,7 +210,7 @@ export function applyRuling(vault: Vault, d: Dispute, value: FactValue, by = vau
 
 /** Whether a field holds (or must hold) a secret, so its value may never be written in plain text. */
 export function isSecretField(vault: Vault, entity: Entity, field: string): boolean {
-  if ((vault.config.types[entity.fm.type]?.secret_fields ?? []).includes(field)) return true;
+  if (vault.schema.isSecretField(entity.fm.type, field)) return true;
   if (isSecretRef(entity.fm.facts[field]?.value)) return true;
   const d = vault.disputes.get(vault.disputeSlug(entity.slug, field));
   return !!d?.fm.claims.some((c) => isSecretRef(c.value));
@@ -243,15 +242,17 @@ export function assertAgentId(vault: Vault, id: string): string {
   return norm;
 }
 
-/** Add an agent to the party (`party/<id>.md`), as the human. */
+/** Add an agent to the party (a note of the vault's actor type, e.g. `party/<id>.md`), as the human. */
 export function addPartyMember(vault: Vault, input: NewPartyMember): Entity {
   const id = assertAgentId(vault, input.id);
+  const type = vault.schema.defaultTypeFor("actor");
+  if (!type) throw new VaultError("no entity type has the actor capability, so agents have nowhere to go");
   if (vault.entities.has(id)) throw new VaultError(`"${id}" already exists (${vault.entities.get(id)!.path})`);
   const known = new Set(vault.config.domains.map((d) => d.toLowerCase()));
   const authority = [...new Set((input.authority ?? []).map((d) => d.trim().toLowerCase()).filter(Boolean))];
   const unknown = authority.filter((d) => !known.has(d));
   if (unknown.length) throw new VaultError(`unknown domain${unknown.length > 1 ? "s" : ""} ${unknown.join(", ")}; known: ${vault.config.domains.join(", ") || "(none)"}`);
-  const e = vault.createEntity({ type: "party", title: input.title.trim() || id, slug: id, by: vault.config.human });
+  const e = vault.createEntity({ type, title: input.title.trim() || id, slug: id, by: vault.config.human });
   e.fm.lane = input.lane?.trim() || undefined;
   e.fm.authority = authority;
   e.fm.host = input.host?.trim() || undefined;

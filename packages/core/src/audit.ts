@@ -6,6 +6,7 @@ import { isIntroductionPath } from "./introduction.ts";
 import { humanText, parseDoc } from "./markdown.ts";
 import { AGENT_ID, RESERVED_AGENT_IDS } from "./ops.ts";
 import { DisputeFrontmatter, type HippoConfig } from "./schema.ts";
+import { loadSchema, schemaFolder, type SchemaRegistry } from "./schema-registry.ts";
 import { isSecretRef, secretPath } from "./secrets.ts";
 import type { Change, VaultStore } from "./store.ts";
 import { slugify } from "./text.ts";
@@ -54,10 +55,13 @@ type Op = "add" | "modify" | "remove";
 
 interface Layout {
   config: HippoConfig;
+  schema: SchemaRegistry;
   inbox: string;
   chronicle: string;
   disputes: string;
   secrets: string;
+  /** Type and kind notes: the human's alone, like the config. */
+  schemaDir: string;
   /** The entity type whose folder holds `path`, for notes. */
   typeOf(path: string): string | undefined;
 }
@@ -88,24 +92,27 @@ function badPath(path: string): boolean {
   return path.startsWith("/") || path.includes("\\") || path.split("/").some((seg) => seg === "" || seg === "." || seg === "..");
 }
 
-function layout(config: HippoConfig): Layout {
-  // Longest folder first, so a nested type folder wins over its parent.
-  const folders = Object.entries(config.types)
-    .map(([type, def]) => ({ type, folder: def.folder }))
-    .sort((a, b) => b.folder.length - a.folder.length);
+/**
+ * Folders and types as the tree being changed defines them (read from `before`), so a historic
+ * commit audits against the layout and schema of its own time.
+ */
+async function loadLayout(store: VaultStore, config: HippoConfig): Promise<Layout> {
+  const schema = await loadSchema(store, config);
   return {
     config,
     ...config.folders,
-    typeOf: (path) => (path.endsWith(".md") ? folders.find((f) => under(path, f.folder))?.type : undefined),
+    schema,
+    schemaDir: schemaFolder(config),
+    typeOf: (path) => schema.typeAt(path),
   };
 }
 
 function curatorPath(path: string, op: Op, l: Layout): string | undefined {
-  if (PROTECTED.has(path) || under(path, ".github")) return "protected file";
+  if (PROTECTED.has(path) || under(path, ".github") || under(path, l.schemaDir)) return "protected file";
   const type = l.typeOf(path);
   if (op === "remove" && isIntroductionPath(path)) return "introductions are the human's to settle";
   if (op === "remove") return under(path, l.inbox) ? undefined : type ? "entity note removed" : "curator may only remove inbox files";
-  if (type === "party") return "party note";
+  if (l.schema.has(type, "actor")) return "party note";
   if (type) return undefined;
   if ((under(path, l.disputes) || under(path, l.chronicle)) && path.endsWith(".md")) return undefined;
   if (under(path, l.secrets) && path.endsWith(".age")) return undefined;
@@ -117,7 +124,8 @@ function agentPath(path: string, op: Op, id: string, can: (scope: string) => boo
   if (op === "add" && can("remember") && dirname(path) === `${l.inbox}/${id}` && path.endsWith(".md")) return undefined;
   // A new introduction replaces the agent's earlier one; it was never a memory, so nothing is lost.
   if (op === "remove" && can("remember") && dirname(path) === `${l.inbox}/${id}` && isIntroductionPath(path)) return undefined;
-  if (op !== "remove" && can("quest") && (path === HANDBOOK_PATH || (op === "modify" && l.typeOf(path) === "quest"))) return undefined;
+  // The scope keeps its wire name, `quest`; what it allows is editing notes of a goal type.
+  if (op !== "remove" && can("quest") && (path === HANDBOOK_PATH || (op === "modify" && l.schema.has(l.typeOf(path), "goal")))) return undefined;
   return op === "add" ? "agents only add episodes to their own inbox folder" : `agents may not ${op} this file`;
 }
 
@@ -170,7 +178,7 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
   if (actor.kind === "human" || actor.kind === "bootstrap") return out;
 
   const config = parseConfig(await before.read(CONFIG_PATH));
-  const l = layout(config);
+  const l = await loadLayout(before, config);
   const after = overlayStore(before, i.changes);
   const op = (c: Change): Op => ("remove" in c ? "remove" : was.get(c.path) === undefined ? "add" : "modify");
 
@@ -213,9 +221,9 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
     if (!a) return flag(path, "unreadable note");
     const b = oldRaw === undefined ? undefined : parseNote(path, oldRaw);
     if (oldRaw !== undefined && !b) return flag(path, "overwrites an unreadable note");
-    if (actor.kind === "curator" && (a.fm.type === "party" || b?.fm.type === "party")) flag(path, "party note");
+    if (actor.kind === "curator" && (l.schema.has(a.fm.type, "actor") || l.schema.has(b?.fm.type, "actor"))) flag(path, "party note");
     if (b) {
-      if (actor.kind === "agent" && b.fm.type !== "quest") flag(path, "agents may only edit quest notes");
+      if (actor.kind === "agent" && !l.schema.has(b.fm.type, "goal")) flag(path, "agents may only edit quest notes");
       const folderType = l.typeOf(path);
       if ((b.fm.type || folderType) !== (a.fm.type || folderType)) flag(path, "entity type changed");
       if ((b.fm.id ?? "") !== (a.fm.id ?? "")) flag(path, "entity id changed");
@@ -229,10 +237,9 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
         flag(path, `human fact changed: ${field}`);
       }
     }
-    const secretFields = config.types[a.fm.type]?.secret_fields ?? [];
     for (const [field, f] of Object.entries(a.fm.facts)) {
       const prev = b?.fm.facts[field];
-      if (!secretFields.includes(field) && !isSecretRef(prev?.value) && !isSecretRef(f.value)) continue;
+      if (!l.schema.isSecretField(a.fm.type, field) && !isSecretRef(prev?.value) && !isSecretRef(f.value)) continue;
       if (prev && JSON.stringify(prev) === JSON.stringify(f)) continue;
       if (!isSecretRef(f.value)) {
         // A plaintext value the human typed earlier isn't this change's leak.
@@ -266,8 +273,8 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
     if (!slug || !field) continue;
     let held = false;
     let covered = false;
-    for (const def of Object.values(config.types)) {
-      const notePath = `${def.folder}/${slug}.md`;
+    for (const { folder } of l.schema.folders()) {
+      const notePath = `${folder}/${slug}.md`;
       const old = await before.read(notePath);
       if (old === undefined) continue;
       const prev = parseNote(notePath, old)?.fm.facts[field];

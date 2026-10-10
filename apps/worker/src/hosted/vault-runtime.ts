@@ -344,8 +344,8 @@ export class VaultRuntime {
   async party(): Promise<{ id: string; title: string }[]> {
     await this.learnInbox();
     const vault = await this.service().vault();
-    return [...vault.entities.values()]
-      .filter((e) => e.fm.type === "party")
+    return vault
+      .withCapability("actor")
       .map((e) => ({ id: e.slug, title: displayName(e) }))
       .sort((a, b) => a.id.localeCompare(b.id));
   }

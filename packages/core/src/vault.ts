@@ -1,10 +1,12 @@
 import { CONFIG_PATH, parseConfig } from "./config.ts";
+import { VaultError } from "./errors.ts";
 import { assertVaultVersion } from "./migrations.ts";
 import { basename, displayName, parseEntity, renderEntity, type Entity } from "./entity.ts";
 import { parseEpisode, renderEpisode, type Episode } from "./episode.ts";
 import { isIntroductionPath, parseIntroduction, renderIntroduction, type Introduction } from "./introduction.ts";
 import { parseDoc, renderDoc } from "./markdown.ts";
-import { DisputeFrontmatter, type Claim, type HippoConfig } from "./schema.ts";
+import { DisputeFrontmatter, type Capability, type Claim, type HippoConfig } from "./schema.ts";
+import { loadSchema, type SchemaRegistry } from "./schema-registry.ts";
 import { applyChanges, type Change, type CommitMeta, type VaultStore } from "./store.ts";
 import { localParts, normalizeName, slugify } from "./text.ts";
 import { link, unwrapLink } from "./wikilink.ts";
@@ -24,7 +26,8 @@ export interface VaultOptions {
   skipVersionCheck?: boolean;
 }
 
-export class VaultError extends Error {}
+// Its own module, so modules vault.ts imports can throw it without an import cycle.
+export { VaultError };
 
 /** Everything a curator step can change, deep-copied (see `Vault.snapshot`). */
 export interface VaultSnapshot {
@@ -62,6 +65,8 @@ export class Vault {
   private constructor(
     readonly store: VaultStore,
     readonly config: HippoConfig,
+    /** Types and kinds; code asks it for capabilities instead of naming types. */
+    readonly schema: SchemaRegistry,
     opts: VaultOptions,
   ) {
     this.now = opts.now ?? (() => new Date());
@@ -70,7 +75,9 @@ export class Vault {
   static async load(store: VaultStore, opts: VaultOptions = {}): Promise<Vault> {
     const config = parseConfig(await store.read(CONFIG_PATH));
     if (!opts.skipVersionCheck) assertVaultVersion(config);
-    const vault = new Vault(store, config, opts);
+    const schema = await loadSchema(store, config);
+    const vault = new Vault(store, config, schema, opts);
+    vault.warnings.push(...schema.warnings);
     await vault.reload();
     return vault;
   }
@@ -81,8 +88,8 @@ export class Vault {
     this.aliasIndex.clear();
     this.idIndex.clear();
     const { folders } = this.config;
-    for (const [type, def] of Object.entries(this.config.types)) {
-      for (const path of await this.store.list(def.folder)) {
+    for (const { type, folder } of this.schema.folders()) {
+      for (const path of await this.store.list(folder)) {
         if (!path.endsWith(".md")) continue;
         const raw = await this.store.read(path);
         if (raw === undefined) continue;
@@ -166,16 +173,31 @@ export class Vault {
     return [...this.entities.values()].filter((e) => e.fm.type === type);
   }
 
-  /** A party note found by any name (for display). Identity and authority use `partyMember`. */
-  party(agent: string): Entity | undefined {
-    const e = this.resolve(agent);
-    return e?.fm.type === "party" ? e : undefined;
+  /** Entities whose type has `cap` (own or inherited). */
+  withCapability(cap: Capability): Entity[] {
+    return [...this.entities.values()].filter((e) => this.schema.has(e.fm.type, cap));
   }
 
-  /** The party member whose slug is exactly `id`: an agent's title or alias never grants its authority. */
-  partyMember(id: string): Entity | undefined {
+  /** An agent's note found by any name (for display). Identity and authority use `actorMember`. */
+  actor(agent: string): Entity | undefined {
+    const e = this.resolve(agent);
+    return e && this.schema.has(e.fm.type, "actor") ? e : undefined;
+  }
+
+  /** The agent whose slug is exactly `id`: an agent's title or alias never grants its authority. */
+  actorMember(id: string): Entity | undefined {
     const e = this.entities.get(id);
-    return e?.fm.type === "party" ? e : undefined;
+    return e && this.schema.has(e.fm.type, "actor") ? e : undefined;
+  }
+
+  /** @deprecated Use `actor`. */
+  party(agent: string): Entity | undefined {
+    return this.actor(agent);
+  }
+
+  /** @deprecated Use `actorMember`. */
+  partyMember(id: string): Entity | undefined {
+    return this.actorMember(id);
   }
 
   isHuman(agent: string | undefined): boolean {
@@ -185,7 +207,7 @@ export class Vault {
   /** How much weight `agent`'s word carries about `entity` (lane authority matches entity tags/type). */
   authorityOf(agent: string | undefined, entity: Entity): Authority {
     if (this.isHuman(agent)) return "human";
-    const domains = this.partyMember(agent!)?.fm.authority ?? [];
+    const domains = this.actorMember(agent!)?.fm.authority ?? [];
     const scope = new Set([...entity.fm.tags.map((t) => t.toLowerCase()), entity.fm.type]);
     return domains.some((d) => scope.has(d.toLowerCase())) ? "authority" : "none";
   }
@@ -209,8 +231,8 @@ export class Vault {
   // ── Mutation ────────────────────────────────────────────────────────────────
 
   folderFor(type: string): string {
-    const def = this.config.types[type];
-    if (!def) throw new VaultError(`unknown entity type "${type}"; known: ${Object.keys(this.config.types).join(", ")}`);
+    const def = this.schema.type(type);
+    if (!def) throw new VaultError(`unknown entity type "${type}"; known: ${this.schema.types().map((t) => t.name).join(", ")}`);
     return def.folder;
   }
 

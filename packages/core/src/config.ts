@@ -6,7 +6,6 @@ export const CONFIG_PATH = "_hippo/config.yaml";
 export const CURATOR_RULES_PATH = "_hippo/curator.md";
 
 export const DEFAULT_CONFIG: HippoConfig = HippoConfig.parse({
-  campaign: "campaign",
   human: "human",
   types: {
     character: { folder: "characters", description: "People and NPCs, including the player character." },

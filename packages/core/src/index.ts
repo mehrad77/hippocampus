@@ -10,6 +10,7 @@ export * from "./migrations.ts";
 export * from "./ops.ts";
 export * from "./reconcile.ts";
 export * from "./schema.ts";
+export * from "./schema-registry.ts";
 export * from "./search.ts";
 export * from "./secrets.ts";
 export * from "./service.ts";

@@ -217,7 +217,7 @@ export class HippoService {
       status: e.fm.status,
       owner: e.fm.owner,
       deadline: e.fm.deadline,
-      objectives: e.fm.type === "quest" ? getObjectives(e) : undefined,
+      objectives: vault.schema.has(e.fm.type, "goal") ? getObjectives(e) : undefined,
       clocks: e.fm.clocks,
       relations: vault.neighbors(e.slug).map((n) => ({ rel: n.rel, dir: n.dir, ref: link(n.entity.slug), title: displayName(n.entity) })),
       disputes: vault
@@ -303,7 +303,7 @@ export class HippoService {
     }
 
     const updated = [...vault.entities.values()]
-      .filter((e) => e.fm.updated && e.fm.updated.slice(0, 10) >= since && e.fm.type !== "party")
+      .filter((e) => e.fm.updated && e.fm.updated.slice(0, 10) >= since && !vault.schema.has(e.fm.type, "actor"))
       .map((e) => ({ ref: link(e.slug), type: e.fm.type, title: displayName(e), updated: e.fm.updated!, by: e.fm.updated_by }));
 
     const upcoming = upcomingDates(vault, today, horizon).map(({ what, date, slug }) => ({ what, date, ref: link(slug) }));
@@ -322,7 +322,7 @@ export class HippoService {
     return this.mutate((vault) => {
       const by = actingAs(vault, agent, opts);
       const quest = vault.resolve(ref);
-      if (!quest || quest.fm.type !== "quest") throw new VaultError(`no quest "${ref}"`);
+      if (!quest || !vault.schema.has(quest.fm.type, "goal")) throw new VaultError(`no quest "${ref}"`);
       const changes = applyQuestUpdate(vault, quest, update, by);
       if (changes.length) vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
       return { message: signed(`quest(${quest.slug}): ${changes.join("; ")}`, opts.asHuman ? undefined : by), result: { quest: link(quest.slug), changes } };
@@ -427,7 +427,7 @@ export class HippoService {
     checkIntroduction(input);
     return this.mutate<IntroduceResult>((vault) => {
       const id = assertAgentId(vault, agent);
-      const member = vault.partyMember(id);
+      const member = vault.actorMember(id);
       if (member) {
         return { message: "", result: { status: "member", agent: id, path: member.path, message: `already in the party as ${displayName(member)} (${member.path})` } };
       }

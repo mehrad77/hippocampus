@@ -307,9 +307,9 @@ export function refOf(e: Entity): Ref {
   return { slug: e.slug, title: displayName(e), type: e.fm.type };
 }
 
-function refFor(vault: Vault, target: string, fallbackType = "unknown"): Ref {
+function refFor(vault: Vault, target: string, fallbackType?: string): Ref {
   const e = vault.resolve(target);
-  return e ? refOf(e) : { slug: unwrapLink(target), title: unwrapLink(target), type: fallbackType };
+  return e ? refOf(e) : { slug: unwrapLink(target), title: unwrapLink(target), type: fallbackType ?? "unknown" };
 }
 
 function emptyStatusCounts(): Record<FactStatus, number> {
@@ -337,11 +337,11 @@ function clockView(ctx: ViewContext, c: Clock): ClockView {
 }
 
 export function questCard(ctx: ViewContext, q: Entity): QuestCard {
-  const campaign = (ctx.rel.out.get(q.slug) ?? []).map((r) => ctx.vault.entities.get(r.slug)!).find((e) => e?.fm.type === "campaign");
+  const campaign = (ctx.rel.out.get(q.slug) ?? []).map((r) => ctx.vault.entities.get(r.slug)!).find((e) => e && ctx.vault.schema.has(e.fm.type, "arc"));
   return {
     ...entityCard(ctx, q),
     status: q.fm.status ?? "active",
-    owner: q.fm.owner ? refFor(ctx.vault, q.fm.owner, "party") : undefined,
+    owner: q.fm.owner ? refFor(ctx.vault, q.fm.owner, ctx.vault.schema.defaultTypeFor("actor")) : undefined,
     deadline: q.fm.deadline,
     daysLeft: q.fm.deadline && ISO_DAY.test(q.fm.deadline) ? daysBetween(ctx.today, q.fm.deadline) : undefined,
     objectives: getObjectives(q),
@@ -466,7 +466,7 @@ export function findings(ctx: ViewContext): Pick<Attention, "disputes" | "rumors
     }
   }
   const orphans = [...ctx.vault.entities.values()]
-    .filter((e) => e.fm.type !== "party" && !e.fm.relations.length && !ctx.rel.in.get(e.slug)?.length)
+    .filter((e) => !ctx.vault.schema.has(e.fm.type, "actor") && !e.fm.relations.length && !ctx.rel.in.get(e.slug)?.length)
     .map(refOf);
   return { disputes: ctx.vault.openDisputes().map((d) => disputeView(ctx, d)), rumors, stale, orphans };
 }
@@ -498,8 +498,8 @@ function partyMembers(ctx: ViewContext, chronicle30d: ChronicleEntryView[]): Par
   for (const ep of vault.episodes) seen(ep.agent, ep.at);
   for (const c of chronicle30d) seen(c.agent, c.at);
   for (const e of vault.entities.values()) for (const f of Object.values(e.fm.facts)) seen(f.by, f.at);
-  const quests = vault.ofType("quest");
-  return vault.ofType("party").map((p) => ({
+  const quests = vault.withCapability("goal");
+  return vault.withCapability("actor").map((p) => ({
     ...refOf(p),
     lane: p.fm.lane,
     authority: p.fm.authority ?? [],
@@ -513,14 +513,14 @@ function partyMembers(ctx: ViewContext, chronicle30d: ChronicleEntryView[]): Par
 
 function unknownAgents(vault: Vault, chronicle: ChronicleEntryView[]): string[] {
   const agents = new Set([...vault.episodes.map((e) => e.agent), ...chronicle.map((c) => c.agent)]);
-  return [...agents].filter((a) => !vault.isHuman(a) && !vault.party(a) && !vault.introductionOf(a)).sort();
+  return [...agents].filter((a) => !vault.isHuman(a) && !vault.actor(a) && !vault.introductionOf(a)).sort();
 }
 
 /** One per agent outside the party: a member's leftover introduction has nothing left to approve. */
 export function introductions(vault: Vault): IntroductionView[] {
   const latest = new Map(vault.introductions.map((i) => [i.agent, i]));
   return [...latest.values()]
-    .filter((i) => !vault.partyMember(i.agent))
+    .filter((i) => !vault.actorMember(i.agent))
     .sort((a, b) => a.at.localeCompare(b.at))
     .map(({ agent, title, lane, host, model, at, about }) => ({ agent, title, lane, host, model, at, about }));
 }
@@ -541,7 +541,7 @@ export async function overview(vault: Vault): Promise<Overview> {
   for (const e of vault.entities.values()) {
     byType[e.fm.type] = (byType[e.fm.type] ?? 0) + 1;
     for (const f of Object.values(e.fm.facts)) facts[f.status]++;
-    if (e.fm.type === "quest") questCounts[e.fm.status ?? "active"] = (questCounts[e.fm.status ?? "active"] ?? 0) + 1;
+    if (vault.schema.has(e.fm.type, "goal")) questCounts[e.fm.status ?? "active"] = (questCounts[e.fm.status ?? "active"] ?? 0) + 1;
   }
 
   const activity: ActivityDay[] = [];
@@ -567,7 +567,7 @@ export async function overview(vault: Vault): Promise<Overview> {
     version: { vault: config.version, tool: CURRENT_VAULT_VERSION, status: vaultVersionStatus(config) },
     counts: { entities: vault.entities.size, byType, facts, inbox: vault.episodes.length, disputes: vault.openDisputes().length, quests: questCounts },
     attention: { ...findings(ctx), waiting: inbox.filter((e) => e.waitedThroughSleep), unknownAgents: unknown, introductions: introductions(vault) },
-    quests: vault.ofType("quest").map((q) => questCard(ctx, q)),
+    quests: vault.withCapability("goal").map((q) => questCard(ctx, q)),
     upcoming: upcomingDates(vault, ctx.today, horizon).map((u) => ({ what: u.what, date: u.date, daysLeft: daysBetween(ctx.today, u.date), ref: refOf(vault.entities.get(u.slug)!) })),
     party: partyMembers(ctx, chronicle30d),
     inbox: [...inbox].reverse().slice(0, 200),
@@ -588,7 +588,7 @@ export function catalog(vault: Vault): Catalog {
   return {
     campaign: vault.config.campaign,
     human: vault.config.human,
-    types: Object.entries(vault.config.types).map(([name, def]) => ({ name, folder: def.folder, description: def.description, count: entities.filter((e) => e.type === name).length })),
+    types: vault.schema.types().map((t) => ({ name: t.name, folder: t.folder, description: t.description, count: entities.filter((e) => e.type === t.name).length })),
     domains: vault.config.domains,
     relations: vault.config.relations,
     entities,
@@ -599,7 +599,7 @@ export async function entityDetail(vault: Vault, e: Entity): Promise<EntityDetai
   const ctx = viewContext(vault);
   const lastSleep = await lastSleepAt(vault);
   const chronicle = await readChronicle(vault, addDays(ctx.today, -89), ctx.today);
-  const isParty = e.fm.type === "party";
+  const isParty = vault.schema.has(e.fm.type, "actor");
   const relations = [
     ...(ctx.rel.out.get(e.slug) ?? []).map((r) => ({ rel: r.rel, dir: "out" as const, ref: refOf(vault.entities.get(r.slug)!) })),
     ...(ctx.rel.in.get(e.slug) ?? []).map((r) => ({ rel: r.rel, dir: "in" as const, ref: refOf(vault.entities.get(r.slug)!) })),
@@ -613,7 +613,7 @@ export async function entityDetail(vault: Vault, e: Entity): Promise<EntityDetai
     facts: Object.entries(e.fm.facts).map(([field, f]) => factDetail(ctx, e, field, f)),
     relations,
     disputes: [...vault.disputes.values()].filter((d) => vault.resolve(d.fm.entity)?.slug === e.slug).map((d) => disputeView(ctx, d)),
-    quest: e.fm.type === "quest" ? questCard(ctx, e) : undefined,
+    quest: vault.schema.has(e.fm.type, "goal") ? questCard(ctx, e) : undefined,
     party: isParty ? partyMembers(ctx, chronicle.filter((c) => c.day >= addDays(ctx.today, -29))).find((p) => p.slug === e.slug) : undefined,
     mentions: chronicle.filter((c) => c.touched.includes(e.slug) || (isParty && c.agent === e.slug)).reverse().slice(0, 50),
     pending: vault.episodes.filter(aboutMe).map((ep) => episodeView(ep, lastSleep)),
@@ -628,7 +628,7 @@ export function graph(vault: Vault): Graph {
   });
   const edges = [...ctx.rel.out.entries()].flatMap(([from, rs]) => rs.map((r) => ({ from, rel: r.rel, to: r.slug })));
   // Quest ownership isn't a relation in the notes, but it's how the party connects to the story.
-  for (const q of vault.ofType("quest")) {
+  for (const q of vault.withCapability("goal")) {
     const owner = q.fm.owner ? vault.resolve(q.fm.owner) : undefined;
     if (owner && owner.slug !== q.slug) edges.push({ from: owner.slug, rel: "leads", to: q.slug });
   }

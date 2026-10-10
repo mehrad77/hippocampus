@@ -140,7 +140,7 @@ export function summaryTargets(vault: Vault, evidence: ReadonlyMap<string, reado
   const out: { entity: Entity; texts: string[] }[] = [];
   for (const [slug, texts] of evidence) {
     const entity = vault.entities.get(slug);
-    if (entity && entity.fm.type !== "party") out.push({ entity, texts: [...texts] });
+    if (entity && !vault.schema.has(entity.fm.type, "actor")) out.push({ entity, texts: [...texts] });
   }
   return out;
 }
@@ -215,22 +215,22 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
   // Hints the agent gave us are resolved without the model.
   for (const hint of ep.about) {
     const e = vault.resolve(hint);
-    if (e && e.fm.type !== "party") entities.set(e.slug, e);
+    if (e && !vault.schema.has(e.fm.type, "actor")) entities.set(e.slug, e);
   }
 
   // 1. Mentions
-  const { entities: mentions } = await llm.object({ name: "mentions", schema: mentionsSchema(vault.config), ...mentionsPrompt(vault, ep, o.houseRules) });
+  const { entities: mentions } = await llm.object({ name: "mentions", schema: mentionsSchema(vault.schema), ...mentionsPrompt(vault, ep, o.houseRules) });
 
   // 2. Resolve each mention to an existing entity, or create one.
   for (const m of mentions) {
-    if (!m.name.trim() || !vault.config.types[m.type]) continue;
-    let e = [m.name, ...m.aliases].map((n) => vault.resolve(n)).find((x) => x && x.fm.type !== "party");
+    if (!m.name.trim() || !vault.schema.type(m.type)) continue;
+    let e = [m.name, ...m.aliases].map((n) => vault.resolve(n)).find((x) => x && !vault.schema.has(x.fm.type, "actor"));
     if (!e) {
       // Built per mention: earlier mentions in this episode may have created entities.
       const index = await searcher(vault);
       const candidates = (await index.search(m.name, { kind: "entity", limit: 5 }))
         .map((h) => vault.entities.get(h.id)!)
-        .filter((c) => c && c.fm.type !== "party");
+        .filter((c) => c && !vault.schema.has(c.fm.type, "actor"));
       if (candidates.length) {
         const { match } = await llm.object({ name: "match", schema: matchSchema(candidates.map((c) => c.slug)), ...matchPrompt(m.name, m.type, ep, candidates, o.houseRules) });
         e = match === "new" ? undefined : vault.entities.get(match);
@@ -241,7 +241,7 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
     } else {
       const allowed = new Set(vault.config.domains.map((d) => d.toLowerCase()));
       let tags = m.domains.map((d) => d.toLowerCase()).filter((d) => allowed.has(d));
-      if (!tags.length) tags = (vault.partyMember(ep.agent)?.fm.authority ?? []).map((d) => d.toLowerCase());
+      if (!tags.length) tags = (vault.actorMember(ep.agent)?.fm.authority ?? []).map((d) => d.toLowerCase());
       e = vault.createEntity({ type: m.type, title: m.name, aliases: m.aliases, tags, by: ep.agent });
       report.created.push(e.slug);
     }

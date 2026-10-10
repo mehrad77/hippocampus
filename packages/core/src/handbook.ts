@@ -15,16 +15,17 @@ function questLine(q: Entity): string {
 }
 
 export function activeQuests(vault: Vault): Entity[] {
-  return vault.ofType("quest").filter((q) => !["done", "failed"].includes(q.fm.status ?? "active"));
+  return vault.withCapability("goal").filter((q) => !["done", "failed"].includes(q.fm.status ?? "active"));
 }
 
 /** The Player's Handbook: everything an agent needs to read and write this vault correctly. */
 export function renderHandbook(vault: Vault): string {
   const { config } = vault;
   const inbox = config.folders.inbox;
-  const party = vault.ofType("party");
-  const types = Object.entries(config.types)
-    .map(([name, def]) => `| \`${name}\` | \`${def.folder}/\` | ${def.description} |`)
+  const party = vault.withCapability("actor");
+  const types = vault.schema
+    .types()
+    .map((t) => `| \`${t.name}\` | \`${t.folder}/\` | ${t.description} |`)
     .join("\n");
   const partyRows = party
     .map((p) => `| \`${p.slug}\` | ${displayName(p)} | ${p.fm.lane ?? ""} | ${(p.fm.authority ?? []).join(", ")} |`)
@@ -139,7 +140,7 @@ function whoAmI(vault: Vault, agent: string): string {
 ${(err as Error).message}. Pick your own id (lowercase letters, digits and dashes, e.g. \`residency-agent\`) and pass it as \`agent\`.
 `;
   }
-  const me = vault.partyMember(id);
+  const me = vault.actorMember(id);
   if (me) {
     const mine = activeQuests(vault).filter((q) => q.fm.owner && unwrapLink(q.fm.owner) === me.slug);
     return `# You are ${displayName(me)} (\`${me.slug}\`)
