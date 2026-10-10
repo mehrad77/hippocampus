@@ -24,10 +24,11 @@ export interface Ref {
   type: string;
 }
 
-/** A value as shown to a human: secrets become `null` with `secret: true`. */
+/** A value as shown to a human: secrets become `null` with `secret: true`, confidential values `null` with `confidential: true`. */
 export interface Shown {
   value: string | null;
   secret: boolean;
+  confidential?: boolean;
 }
 
 export interface FactDetail extends Shown {
@@ -102,9 +103,10 @@ export interface EpisodeView {
   kind: EpisodeKind;
   at: string;
   path: string;
-  /** `null` for secret-bearing episodes: their plain text waits in the inbox until sleep encrypts it. */
+  /** `null` for secret-bearing episodes (their plain text waits in the inbox until sleep encrypts it) and confidential ones. */
   text: string | null;
   secret: boolean;
+  confidential?: boolean;
   about: string[];
   confidence?: number;
   /** Older than the last sleep: it failed or didn't fit the batch. */
@@ -253,9 +255,17 @@ const DAY = 86400_000;
 const DATEISH = /(date|deadline|expir|appointment|due|until|start|end)/;
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}/;
 
-export function shown(v: FactValue | undefined | null): Shown {
+export function shown(v: FactValue | undefined | null, opts: { confidential?: boolean } = {}): Shown {
   if (isSecretRef(v)) return { value: null, secret: true };
+  if (opts.confidential) return { value: null, secret: false, confidential: true };
   return { value: v === undefined || v === null ? null : String(v), secret: false };
+}
+
+/** Whether `field` of `e` is confidential: the fact says so, or its field is confidential or an identity key. */
+export function isConfidentialField(vault: Vault, e: Entity, field: string, f?: Pick<Fact, "confidential">): boolean {
+  if (f?.confidential) return true;
+  const def = vault.schema.fieldDef(e.fm.type, field);
+  return !!(def?.confidential || def?.identity_key);
 }
 
 export function daysBetween(from: string, to: string): number {
@@ -356,9 +366,10 @@ export function questCard(ctx: ViewContext, q: Entity): QuestCard {
 
 export function factDetail(ctx: ViewContext, e: Entity, field: string, f: Fact): FactDetail {
   const dispute = ctx.vault.disputes.get(ctx.vault.disputeSlug(e.slug, field));
+  const confidential = isConfidentialField(ctx.vault, e, field, f);
   return {
     field,
-    ...shown(f.value),
+    ...shown(f.value, { confidential }),
     status: f.status,
     by: f.by ?? ctx.vault.config.human,
     byHuman: ctx.vault.isHuman(f.by),
@@ -368,13 +379,14 @@ export function factDetail(ctx: ViewContext, e: Entity, field: string, f: Fact):
     src: f.src,
     seenBy: f.seen_by ?? [],
     dispute: dispute?.fm.status === "open" ? dispute.slug : undefined,
-    was: (f.was ?? []).map((w) => ({ ...shown(w.value), by: w.by, at: w.at })),
+    was: (f.was ?? []).map((w) => ({ ...shown(w.value, { confidential }), by: w.by, at: w.at })),
   };
 }
 
 export function disputeView(ctx: ViewContext, d: Dispute): DisputeView {
   const e = ctx.vault.resolve(d.fm.entity);
   const current = e?.fm.facts[d.fm.field];
+  const confidential = !!e && isConfidentialField(ctx.vault, e, d.fm.field, current);
   return {
     slug: d.slug,
     entity: refFor(ctx.vault, d.fm.entity),
@@ -383,7 +395,7 @@ export function disputeView(ctx: ViewContext, d: Dispute): DisputeView {
     opened: d.fm.opened,
     resolved: d.fm.resolved,
     claims: d.fm.claims.map((c) => ({
-      ...shown(c.value),
+      ...shown(c.value, { confidential }),
       by: c.by ?? ctx.vault.config.human,
       byHuman: ctx.vault.isHuman(c.by),
       authority: e ? shownAuthority(ctx.vault.authorityOf(c.by, e, d.fm.field)) : "none",
@@ -391,7 +403,7 @@ export function disputeView(ctx: ViewContext, d: Dispute): DisputeView {
       src: c.src,
     })),
     current: e && current ? factDetail(ctx, e, d.fm.field, current) : undefined,
-    ruling: d.fm.ruling === undefined || d.fm.ruling === "" ? undefined : shown(d.fm.ruling),
+    ruling: d.fm.ruling === undefined || d.fm.ruling === "" ? undefined : shown(d.fm.ruling, { confidential }),
     secretField: e ? isSecretField(ctx.vault, e, d.fm.field) : false,
   };
 }
@@ -403,9 +415,10 @@ export function episodeView(ep: Episode, lastSleep?: string): EpisodeView {
     kind: ep.kind,
     at: ep.at,
     path: ep.path,
-    text: ep.secret ? null : ep.text,
+    text: ep.secret || ep.confidential ? null : ep.text,
     secret: !!ep.secret,
-    about: ep.secret ? [] : ep.about,
+    ...(ep.confidential ? { confidential: true } : {}),
+    about: ep.secret || ep.confidential ? [] : ep.about,
     confidence: ep.confidence,
     waitedThroughSleep: !!lastSleep && ep.at < lastSleep,
   };
@@ -413,7 +426,7 @@ export function episodeView(ep: Episode, lastSleep?: string): EpisodeView {
 
 // ── Chronicle ───────────────────────────────────────────────────────────────────
 
-const ENTRY_RE = /> \[!episode\] (\d\d:\d\d) · \[\[([^\]|]+)[^\]]*\]\] · (\w+)\n((?:>.*\n?)*)\n*\^(ep-[\w-]+)/g;
+const ENTRY_RE = /> \[!episode\] (\d\d:\d\d) · \[\[([^\]|]+)[^\]]*\]\] · ([\w/-]+)\n((?:>.*\n?)*)\n*\^(ep-[\w-]+)/g;
 
 /** One chronicle day file → its entries, with full text and the entities each episode touched. */
 export function parseChronicleDay(day: string, content: string, timeZone = "UTC"): ChronicleEntryView[] {
@@ -464,7 +477,7 @@ export function findings(ctx: ViewContext): Pick<Attention, "disputes" | "rumors
   const stale: FactFinding[] = [];
   for (const e of ctx.vault.entities.values()) {
     for (const [field, f] of Object.entries(e.fm.facts)) {
-      const finding = { ref: refOf(e), field, ...shown(f.value), by: f.by ?? ctx.vault.config.human, at: f.at };
+      const finding = { ref: refOf(e), field, ...shown(f.value, { confidential: isConfidentialField(ctx.vault, e, field, f) }), by: f.by ?? ctx.vault.config.human, at: f.at };
       if (f.status === "rumor") rumors.push(finding);
       if (f.status === "canon" && f.at && f.at < ctx.staleBefore) stale.push(finding);
     }
@@ -482,6 +495,7 @@ export function upcomingDates(vault: Vault, today: string, horizon: string): { w
     if (e.fm.deadline && e.fm.deadline >= today && e.fm.deadline <= horizon) out.push({ what: "deadline", date: e.fm.deadline, slug: e.slug });
     for (const c of e.fm.clocks ?? []) if (c.deadline && c.deadline >= today && c.deadline <= horizon) out.push({ what: `clock ${c.name} ${c.filled}/${c.segments}`, date: c.deadline, slug: e.slug });
     for (const [field, f] of Object.entries(e.fm.facts)) {
+      if (isConfidentialField(vault, e, field, f)) continue;
       const v = String(f.value);
       if (DATEISH.test(field) && ISO_DAY.test(v) && v.slice(0, 10) >= today && v.slice(0, 10) <= horizon) out.push({ what: `${field} (${f.status})`, date: v, slug: e.slug });
     }

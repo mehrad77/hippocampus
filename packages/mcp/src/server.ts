@@ -121,8 +121,18 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
           "Submit one memory (episode) to the inbox. Hippocampus consolidates it into canon later, so this returns immediately. One concrete memory per call. Include exact values: ISO dates, amounts with currency, and IDs.",
         inputSchema: {
           ...agentArg,
-          text: z.string().min(1).describe("The memory, in plain language, self-contained"),
-          kind: z.enum(["observation", "fact", "decision", "task", "beat", "question"]).optional(),
+          text: z.string().optional().describe("The memory, in plain language, self-contained. Required unless the kind makes it optional or forbids it"),
+          kind: z
+            .string()
+            .max(60)
+            .optional()
+            .describe("One of this vault's kinds (the Handbook lists them), e.g. observation (default), fact, decision, task, question, interaction. An unknown kind is filed as an observation"),
+          data: z
+            .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number(), z.boolean()]))]))
+            .optional()
+            .describe('Typed fields the kind declares, e.g. { "with": "[[ana]]", "channel": "call" }'),
+          confidential: z.boolean().optional().describe("true to keep it out of search, prompts and the chronicle"),
+          scope: z.string().max(100).optional().describe("Context it holds in, e.g. lang:pt or org:harbor-university"),
           about: z.array(z.string()).optional().describe('Hints: entity names or [[links]], e.g. ["[[residence-permit]]", "Agência de Migração"]'),
           confidence: z.number().min(0).max(1).optional(),
           secret: z.boolean().optional().describe("true if it contains ID/passport/bank numbers or credentials"),
@@ -131,8 +141,8 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
       },
       (args) =>
         guard(async () => {
-          const { text: body, kind, about, confidence, secret, at } = args;
-          const r = await service.remember(who(args), { text: body, kind, about, confidence, secret, at });
+          const { text: body, kind, about, confidence, secret, at, data, confidential, scope } = args;
+          const r = await service.remember(who(args), { text: body, kind, about, confidence, secret, at, data, confidential, scope });
           return yaml({ stored: r, note: "Queued for consolidation. It shows up under `pending` in recall until then." });
         }),
     ),

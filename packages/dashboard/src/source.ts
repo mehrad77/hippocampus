@@ -1,4 +1,4 @@
-import type { Catalog, ChroniclePage, EntityDetail, EpisodeKind, Graph, NewPartyMember, Overview, QuestUpdate, SearchResult, Shown } from "@hippocampus/core";
+import type { Catalog, ChroniclePage, EntityDetail, EpisodeData, EpisodeKind, Graph, NewPartyMember, Overview, QuestUpdate, SearchResult, Shown } from "@hippocampus/core";
 
 /** Where the dashboard's data comes from. `setup` means no vault yet: only Session Zero works. */
 export type Mode = "local" | "github" | "mcp" | "worker" | "demo" | "setup";
@@ -48,8 +48,10 @@ export interface IntroductionDecision {
 export type IntroductionResult = { decision: "approve"; agent: string; path: string } | { decision: "dismiss"; agent: string };
 
 export interface Remember {
-  text: string;
+  text?: string;
   kind?: EpisodeKind;
+  data?: EpisodeData;
+  confidential?: boolean;
   about?: string[];
   confidence?: number;
   secret?: boolean;

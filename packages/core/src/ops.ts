@@ -1,9 +1,9 @@
 import { getObjectives, setObjectives, type Entity } from "./entity.ts";
 import { canonicalRelation } from "./config.ts";
-import { AUTHORITY_RANK, capWas, priorOf, reconcileFact, type Decision } from "./reconcile.ts";
+import { AUTHORITY_RANK, capWas, priorOf, reconcileFact, sameValue, type Decision } from "./reconcile.ts";
 import { QuestStatus, type Clock, type FactValue } from "./schema.ts";
 import { encryptSecret, isSecretRef, secretPath, secretRef } from "./secrets.ts";
-import { factKey, normalizeName, normalizeScope, parseFactKey, toFieldName } from "./text.ts";
+import { factKey, hash, normalizeName, normalizeScope, parseFactKey, slugify, toFieldName } from "./text.ts";
 import { VaultError, type Dispute, type Vault } from "./vault.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
@@ -31,6 +31,8 @@ export interface FactOptions {
   validFrom?: string;
   validUntil?: string;
   confidence?: number;
+  /** Why the value is believed, for a proposal the human reviews. */
+  evidence?: string;
 }
 
 /** Whether `a` and `b` are the same source: the same agent, or the same human (a missing `by` is the primary human). */
@@ -50,12 +52,23 @@ export async function applyFact(
   const field = factKey(rawField, opts.scope);
   const def = vault.schema.fieldDef(entity.fm.type, parseFactKey(field).field);
   const secret = opts.secret || !!def?.secret || isSecretRef(entity.fm.facts[field]?.value);
+  // A confidential (or identity-key) field marks its facts, so search, views and tables can tell without the schema.
+  if (def?.confidential) opts = { ...opts, confidential: true };
   const incomingAuthority = vault.authorityOf(prov.by, entity, field);
   const humanIn = AUTHORITY_RANK[incomingAuthority] >= AUTHORITY_RANK.human;
 
   if (def?.human_only && !humanIn && secret) {
-    // Ciphertext can't be compared, so any other source's secret for a human-only field waits for the human.
-    vault.warnings.push(`proposal for ${entity.slug}.${field} from ${prov.by} not stored: only a human sets it`);
+    // Ciphertext can't be compared, so the claim is stored encrypted beside the field's own secret
+    // (`secrets/<entity>/<field>.<episode>.age`) and waits for the human as a proposal.
+    const recipient = vault.config.secrets.recipient;
+    if (!recipient) {
+      vault.warnings.push(`proposal for ${entity.slug}.${field} from ${prov.by} not stored: set secrets.recipient in _hippo/config.yaml (hippo secrets keygen)`);
+      return { entity: entity.slug, field, decision: "propose", reason: "only a human sets this field; no secrets recipient configured", secret };
+    }
+    const suffix = slugify(prov.src[0] ?? `p-${hash(`${prov.by}|${prov.at}`)}`);
+    const ref = secretRef(entity.slug, field);
+    vault.writeFile(secretPath(vault.config.folders.secrets, ref, suffix), await encryptSecret(recipient, String(value)));
+    vault.openProposal(entity, field, { value: `${ref}.${suffix}`, by: prov.by, at: prov.at, src: prov.src, ...confidenceOf(opts) }, opts.evidence);
     return { entity: entity.slug, field, decision: "propose", reason: "only a human sets this field", secret };
   }
 
@@ -97,8 +110,7 @@ export async function applyFact(
     sameAuthor: !!existing && sameSource(vault, existing.by, prov.by),
   });
   if (decision.action === "propose") {
-    // The proposal note for the human comes with managed proposals; until then the claim is reported.
-    vault.warnings.push(`proposal for ${entity.slug}.${field} from ${prov.by}: ${String(value)} (only a human sets it)`);
+    vault.openProposal(entity, field, decision.claim, opts.evidence);
     return { entity: entity.slug, field, decision: decision.action, reason: decision.reason };
   }
   const fact = decision.fact;
@@ -117,6 +129,8 @@ export async function applyFact(
     reason: "reason" in decision ? decision.reason : undefined,
   };
 }
+
+const confidenceOf = (opts: FactOptions) => (opts.confidence !== undefined ? { confidence: opts.confidence } : {});
 
 function qualifiersOf(opts: FactOptions) {
   return {
@@ -266,21 +280,47 @@ function matchObjective<T extends { text: string }>(items: T[], text: string): T
   );
 }
 
-/** Apply human rulings written into dispute notes (`ruling:`), making them canon. */
+/**
+ * Apply what the human wrote into dispute notes: a `ruling:` makes its value canon (conflicts and
+ * proposals alike), `state: declined` closes a proposal or merge without a change, and a pending
+ * proposal whose value the human has since set themselves closes as `already_present`.
+ * Merges are only closed here; merging two notes is the human's to do.
+ */
 export function applyRulings(vault: Vault): string[] {
   const applied: string[] = [];
   for (const d of vault.openDisputes()) {
-    if (d.fm.ruling === undefined || d.fm.ruling === null || d.fm.ruling === "") continue;
+    if (d.fm.state === "declined" && (d.fm.kind === "proposal" || d.fm.kind === "merge")) {
+      declineProposal(vault, d);
+      applied.push(`${unwrapLink(d.fm.entity)}.${d.fm.field}: declined`);
+      continue;
+    }
+    if (d.fm.kind === "merge") continue;
+    if (d.fm.ruling === undefined || d.fm.ruling === null || d.fm.ruling === "") {
+      if (d.fm.kind === "proposal" && settleIfPresent(vault, d)) applied.push(`${unwrapLink(d.fm.entity)}.${d.fm.field}: already present`);
+      continue;
+    }
     const result = applyRuling(vault, d, d.fm.ruling);
     if (result) applied.push(result);
   }
   return applied;
 }
 
+/** A pending proposal the human has made moot by setting the same value: closed as `already_present`. */
+function settleIfPresent(vault: Vault, d: Dispute): boolean {
+  const entity = vault.resolve(d.fm.entity);
+  const f = entity?.fm.facts[d.fm.field];
+  if (!f || f.status === "retconned" || !vault.isHuman(f.by)) return false;
+  if (!d.fm.claims.some((c) => !isSecretRef(c.value) && sameValue(c.value, f.value))) return false;
+  d.fm.state = "already_present";
+  vault.resolveDispute(d);
+  return true;
+}
+
 /** Settle one dispute with `value` as canon by the human. Returns `entity.field = value`, or undefined if the entity is gone. */
 export function applyRuling(vault: Vault, d: Dispute, value: FactValue, by = vault.config.human): string | undefined {
   const entity = vault.resolve(d.fm.entity);
   if (!entity) return undefined;
+  if (d.fm.kind === "merge") throw new VaultError(`${d.slug} is a possible duplicate, not a value: merge the notes by hand, or decline it`);
   const existing = entity.fm.facts[d.fm.field];
   d.fm.ruling = value;
   entity.fm.facts[d.fm.field] = {
@@ -290,10 +330,19 @@ export function applyRuling(vault: Vault, d: Dispute, value: FactValue, by = vau
     at: vault.nowIso(),
     src: [...new Set(d.fm.claims.flatMap((c) => c.src))],
     was: existing ? capWas([...(existing.was ?? []), priorOf(existing, "ruled")]) : undefined,
+    ...(existing?.confidential ? { confidential: true } : {}),
   };
+  if (d.fm.kind === "proposal") d.fm.state = "applied";
   vault.touch(entity, by);
   vault.resolveDispute(d);
   return `${entity.slug}.${d.fm.field} = ${value}`;
+}
+
+/** The human turns a proposal (or a possible merge) down: it closes as `declined`, and nothing changes. */
+export function declineProposal(vault: Vault, d: Dispute): void {
+  if (d.fm.kind !== "proposal" && d.fm.kind !== "merge") throw new VaultError(`${d.slug} is a conflict between sources: it needs a ruling, not a decline`);
+  d.fm.state = "declined";
+  vault.resolveDispute(d);
 }
 
 /** Whether a field holds (or must hold) a secret, so its value may never be written in plain text. */

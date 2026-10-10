@@ -234,7 +234,7 @@ describe("applyFact rows that need a vault", () => {
     const p = await applyFact(v, pc, "stakes", "high", { by: "residency-agent", at: at2, src: ["ep-3"] });
     expect(p.decision).toBe("propose");
     expect(pc.fm.facts.stakes).toBeUndefined();
-    expect(v.warnings.some((w) => w.includes("player.stakes"))).toBe(true);
+    expect(v.disputes.get("proposal-player-stakes")?.fm).toMatchObject({ kind: "proposal", state: "pending", status: "open", claims: [{ value: "high", by: "residency-agent" }] });
     expect((await applyFact(v, pc, "stakes", "high", { by: "game-master", at: at2, src: ["ep-4"] })).decision).toBe("create");
   });
 

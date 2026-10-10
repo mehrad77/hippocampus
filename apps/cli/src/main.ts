@@ -232,9 +232,9 @@ program
   .description("Write an episode to the inbox from the command line (as the human by default).")
   .argument("<text...>")
   .option("-a, --agent <id>", "agent id")
-  .option("-k, --kind <kind>", "observation | fact | decision | task | beat | question", "fact")
+  .option("-k, --kind <kind>", "one of the vault's kinds (observation, fact, decision, task, question, …)", "fact")
   .option("--secret", "contains secret values")
-  .action(async (words: string[], opts: { agent?: string; kind: "fact"; secret?: boolean }) => {
+  .action(async (words: string[], opts: { agent?: string; kind: string; secret?: boolean }) => {
     const store = openStore();
     const agent = opts.agent ?? (await Vault.load(store)).config.human;
     const r = await new HippoService(store).remember(agent, { text: words.join(" "), kind: opts.kind, secret: opts.secret }, { asHuman: !opts.agent });

@@ -21,8 +21,13 @@ export function isSecretRef(value: unknown): value is string {
   return typeof value === "string" && value.startsWith(SECRET_SCHEME);
 }
 
-export function secretPath(secretsFolder: string, ref: string): string {
-  return `${secretsFolder}/${ref.slice(SECRET_SCHEME.length)}.age`;
+/**
+ * The file a ref's ciphertext lives in. A `suffix` names a sibling file for a value that isn't the
+ * field's own yet, like a proposal waiting for the human (`<field>.<episode>.age`); its ref is
+ * `${ref}.${suffix}`, so `secretPath(folder, ref, s) === secretPath(folder, `${ref}.${s}`)`.
+ */
+export function secretPath(secretsFolder: string, ref: string, suffix?: string): string {
+  return `${secretsFolder}/${ref.slice(SECRET_SCHEME.length)}${suffix ? `.${suffix}` : ""}.age`;
 }
 
 export async function encryptSecret(recipient: string, plaintext: string): Promise<string> {

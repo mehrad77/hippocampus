@@ -330,7 +330,7 @@ function looksLikeIdentifier(v: string): boolean {
 function renderReview(vault: Vault, report: SleepReport): string {
   const now = vault.nowIso();
   const found = findings(viewContext(vault));
-  const v = (f: { value: string | null; secret: boolean }) => (f.secret ? "🔒" : f.value);
+  const v = (f: { value: string | null; secret: boolean; confidential?: boolean }) => (f.secret ? "🔒" : f.confidential ? "◐ confidential" : f.value);
   const rumors = found.rumors.map((f) => `- ${link(f.ref.slug)} · **${f.field}** = ${v(f)} (${f.by})`);
   const stale = found.stale.map((f) => `- ${link(f.ref.slug)} · **${f.field}** = ${v(f)} (last seen ${f.at!.slice(0, 10)})`);
   const disputes = found.disputes.map((d) => `- ${link(d.slug)} — ${link(d.entity.slug)} · ${d.field}: ${d.claims.map((c) => `${v(c)} (${c.by})`).join(" vs ")}`);

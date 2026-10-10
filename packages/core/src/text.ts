@@ -125,3 +125,16 @@ export function fromLocal(date: string, time: string, timeZone: string): string 
   }
   return new Date(at).toISOString();
 }
+
+const DURATION_DAYS: Record<string, number> = { d: 1, w: 7, m: 30, y: 365 };
+
+/**
+ * A duration like `3d`, `2w`, `1m` or `1y` (also `2 weeks`, `1 month`) in days; months count 30 days
+ * and years 365. Undefined for anything else, including `none`.
+ */
+export function parseDuration(input: string | undefined): number | undefined {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(d|days?|w|weeks?|m|months?|y|years?)\s*$/i.exec(input ?? "");
+  if (!m) return undefined;
+  const days = Number(m[1]) * DURATION_DAYS[m[2]!.toLowerCase()[0]!]!;
+  return days > 0 ? days : undefined;
+}

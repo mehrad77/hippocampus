@@ -31,6 +31,17 @@ export function renderHandbook(vault: Vault): string {
     .map((p) => `| \`${p.slug}\` | ${displayName(p)} | ${p.fm.lane ?? ""} | ${(p.fm.authority ?? []).join(", ")} |`)
     .join("\n");
   const quests = activeQuests(vault).map((q) => questLine(q)).join("\n") || "- (none)";
+  const kinds = vault.schema.kinds();
+  const kindNames = kinds.map((k) => k.name).join(" | ");
+  const kindList = kinds.map((k) => `\`${k.name}\``).join(" | ");
+  const kindNotes = kinds
+    .filter((k) => k.text !== "required" || Object.keys(k.data).length)
+    .map((k) => {
+      const text = k.text === "required" ? "" : k.text === "gist" ? `text kept as a gist of ${k.gistMax ?? 280} characters` : `text ${k.text}`;
+      const data = Object.keys(k.data).length ? `\`data\`: ${Object.entries(k.data).map(([n, f]) => `\`${n}\`${f.required ? " (required)" : ""}`).join(", ")}` : "";
+      return `\n  - \`${k.name}\`: ${[text, data].filter(Boolean).join("; ")}`;
+    })
+    .join("");
   const disputes = vault.openDisputes().map((d) => `- ${link(d.slug)} — ${d.fm.entity} · ${d.fm.field}`).join("\n") || "- (none)";
 
   return `---
@@ -51,8 +62,9 @@ Use the Hippocampus MCP tools, and don't edit files in this vault yourself: the 
 
 Call **\`remember\`** once per memory:
 
-- \`text\` (required): the memory in plain language, self-contained, at most 8 KB.
-- \`kind\`: \`observation\` (default) | \`fact\` | \`decision\` | \`task\` | \`beat\` | \`question\`
+- \`text\`: the memory in plain language, self-contained, at most 8 KB. Required unless the kind says otherwise.
+- \`kind\`: ${kindList} (default \`observation\`).${kindNotes}
+- \`confidential: true\` keeps it out of search, prompts and the chronicle.
 - \`about\`: optional hints, as links or names, e.g. \`["[[residence-permit]]", "Agência de Migração"]\`
 - \`secret: true\` if it contains IDs, account numbers or credentials. They get encrypted.
 - \`confidence\` (0–1) and \`at\` (ISO 8601, when it happened; defaults to now).
@@ -76,7 +88,7 @@ A tool that can't use MCP writes **one new file per memory** to \`${inbox}/<agen
 \`\`\`markdown
 ---
 agent: residency-agent          # your agent id
-kind: fact               # observation | fact | decision | task | beat | question
+kind: fact               # ${kindNames}
 at: 2026-09-27T14:03:00+01:00
 about: ["[[residence-permit]]", "Agência de Migração"]   # optional hints: links or names
 secret: false            # true if it contains IDs/numbers that must be encrypted

@@ -1,6 +1,7 @@
 import { displayName, formatValue, getObjectives, getSummary, type Entity } from "./entity.ts";
 import { createEpisode, type NewEpisode } from "./episode.ts";
 import { HANDBOOK_PATH, renderHandbook, renderOnboarding } from "./handbook.ts";
+import { validateEpisode } from "./kinds.ts";
 import { INTRODUCTION_LIMITS, createIntroduction, type NewIntroduction } from "./introduction.ts";
 import { humanText } from "./markdown.ts";
 import { addPartyMember, applyQuestUpdate, applyRuling, assertAgentId, isSecretField, retractFact, type NewPartyMember, type QuestUpdate } from "./ops.ts";
@@ -17,6 +18,7 @@ import {
   entityDetail,
   episodeView,
   graph,
+  isConfidentialField,
   lastSleepAt,
   overview,
   parseChronicleDay,
@@ -74,10 +76,17 @@ export interface EpisodeBrief {
 
 export interface ChronicleEntry extends EpisodeBrief {}
 
-function factViews(e: Entity, human: string, limit = Infinity): FactView[] {
+// Confidential values stay masked until bound callers with authority can see them.
+function factViews(vault: Vault, e: Entity, limit = Infinity): FactView[] {
   return Object.entries(e.fm.facts)
     .slice(0, limit)
-    .map(([field, f]) => ({ field, value: formatValue(f.value), status: f.status, by: f.by ?? human, at: f.at }));
+    .map(([field, f]) => ({
+      field,
+      value: formatValue(f.value, { confidential: isConfidentialField(vault, e, field, f) }),
+      status: f.status,
+      by: f.by ?? vault.config.human,
+      at: f.at,
+    }));
 }
 
 /** Episode text limit: a memory is one concrete thing, and every byte goes through the curator's prompts. */
@@ -132,8 +141,8 @@ function checkIntroduction(input: NewIntroduction): void {
   }
 }
 
-function brief(e: Entity, human: string, factLimit = 8): EntityBrief {
-  return { ref: link(e.slug), type: e.fm.type, title: displayName(e), summary: truncate(getSummary(e), 400), facts: factViews(e, human, factLimit) };
+function brief(vault: Vault, e: Entity, factLimit = 8): EntityBrief {
+  return { ref: link(e.slug), type: e.fm.type, title: displayName(e), summary: truncate(getSummary(e), 400), facts: factViews(vault, e, factLimit) };
 }
 
 /** The operations agents perform on memory. Transport-agnostic: used by the MCP server and CLI. */
@@ -182,16 +191,21 @@ export class HippoService {
    * File one episode in the inbox. `agent` must be an agent's exact id; the human's own memories
    * (the dashboard, `hippo remember` without `-a`) pass `asHuman`, which files them under `config.human`.
    */
-  async remember(agent: string, input: Omit<NewEpisode, "agent">, opts: ActAs = {}): Promise<{ id: string; path: string }> {
-    if (!input.text?.trim()) throw new VaultError("text is required");
-    const bytes = new TextEncoder().encode(input.text).length;
+  async remember(
+    agent: string,
+    input: Omit<NewEpisode, "agent">,
+    opts: ActAs = {},
+  ): Promise<{ id: string; path: string; kind: string; warnings?: string[] }> {
+    const bytes = new TextEncoder().encode(input.text ?? "").length + (input.data ? new TextEncoder().encode(JSON.stringify(input.data)).length : 0);
     if (bytes > MAX_EPISODE_BYTES) throw new VaultError(`text is ${bytes} bytes; one memory can be at most ${MAX_EPISODE_BYTES} (8 KB), so split it into several`);
     const vault = await this.vault();
     const id = actingAs(vault, agent, opts);
-    const ep = createEpisode(vault.config.folders.inbox, { ...input, agent: id }, this.opts.now?.());
+    // The kind decides whether text is required, kept as a gist or forbidden, and what data it takes.
+    const { kind, text, data, warnings } = validateEpisode(vault.schema, input);
+    const ep = createEpisode(vault.config.folders.inbox, { ...input, kind, text, data, agent: id }, this.opts.now?.());
     vault.addEpisode(ep);
     await vault.flush({ message: signed(`remember(${id}): ${ep.id}`, opts.asHuman ? undefined : id) });
-    return { id: ep.id, path: ep.path };
+    return { id: ep.id, path: ep.path, kind: ep.kind, ...(warnings.length ? { warnings } : {}) };
   }
 
   async recall(query: string, opts: { types?: string[]; limit?: number } = {}) {
@@ -213,7 +227,7 @@ export class HippoService {
       .map((h) => vault.episodes.find((ep) => ep.id === h.id)!)
       .filter(Boolean)
       .map((ep) => ({ id: ep.id, agent: ep.agent, kind: ep.kind, at: ep.at, text: truncate(ep.text, 300) }));
-    return { entities: entities.map((e) => brief(e, vault.config.human)), related: related.slice(0, 10), pending: recent };
+    return { entities: entities.map((e) => brief(vault, e)), related: related.slice(0, 10), pending: recent };
   }
 
   async get(ref: string): Promise<EntityView> {
@@ -221,7 +235,7 @@ export class HippoService {
     const e = vault.resolve(ref);
     if (!e) throw new VaultError(`no entity "${ref}"${await this.suggest(vault, ref)}`);
     return {
-      ...brief(e, vault.config.human, Infinity),
+      ...brief(vault, e, Infinity),
       summary: getSummary(e),
       path: e.path,
       aliases: e.fm.aliases,
@@ -280,7 +294,7 @@ export class HippoService {
     const answers: (FactView & { entity: string; score: number })[] = [];
     for (const hit of await index.search(question, { kind: "entity", limit: 5 })) {
       const e = vault.entities.get(hit.id)!;
-      for (const f of factViews(e, vault.config.human)) {
+      for (const f of factViews(vault, e)) {
         const hay = fold(`${f.field.replace(/_/g, " ")} ${f.value}`);
         const overlap = terms.filter((t) => hay.includes(t)).length;
         answers.push({ ...f, entity: link(e.slug), score: hit.score * (1 + overlap) });
@@ -292,7 +306,11 @@ export class HippoService {
     const disputes = vault
       .openDisputes()
       .filter((d) => entities.has(unwrapLink(d.fm.entity)))
-      .map((d) => ({ ref: link(d.slug), entity: d.fm.entity, field: d.fm.field, claims: d.fm.claims.map((c) => `${c.value} (${c.by ?? "human"})`) }));
+      .map((d) => {
+        const e = vault.resolve(d.fm.entity);
+        const confidential = !!e && isConfidentialField(vault, e, d.fm.field, e.fm.facts[d.fm.field]);
+        return { ref: link(d.slug), entity: d.fm.entity, field: d.fm.field, claims: d.fm.claims.map((c) => `${formatValue(c.value, { confidential })} (${c.by ?? "human"})`) };
+      });
     return { facts: top, disputes, pending_inbox: vault.episodes.length };
   }
 

@@ -1,4 +1,4 @@
-import { EpisodeKind, QuestStatus } from "@hippocampus/core";
+import { QuestStatus } from "@hippocampus/core";
 import { z } from "zod";
 import { HttpError, errorResponse, json, readJson, type ErrorReport, type Guard, type GuardResult } from "./http.ts";
 import type { SetupPort } from "./setup.ts";
@@ -46,9 +46,14 @@ const QuestBody = z.object({
   owner: text(100).optional(),
 });
 
+const dataValue = z.union([z.string().max(500), z.number(), z.boolean()]);
+
 const RememberBody = z.object({
-  text: text(8000),
-  kind: EpisodeKind.optional(),
+  // Required unless the vault's kind says otherwise; the service checks.
+  text: z.string().trim().max(8000).optional(),
+  kind: text(60).optional(),
+  data: z.record(z.string().max(60), z.union([dataValue, z.array(dataValue).max(20)])).optional(),
+  confidential: z.boolean().optional(),
   about: z.array(text(200)).max(20).optional(),
   confidence: z.number().min(0).max(1).optional(),
   secret: z.boolean().optional(),

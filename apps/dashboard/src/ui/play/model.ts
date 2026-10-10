@@ -168,7 +168,8 @@ export function unwrapRef(ref: string): string {
   return (m ? (m[1] ?? "") : ref).trim().replace(/\.md$/, "");
 }
 
-export const KIND_LABEL: Record<EpisodeKind, readonly [plain: string, codex: string]> = {
+/** Labels of the core kinds; a vault's own kinds fall back to their name (see `kindLabel`). */
+export const KIND_LABEL: Readonly<Record<string, readonly [plain: string, codex: string]>> = {
   fact: ["Fact", "Fact"],
   observation: ["Observation", "Observation"],
   decision: ["Decision", "Decision"],
@@ -179,7 +180,7 @@ export const KIND_LABEL: Record<EpisodeKind, readonly [plain: string, codex: str
 
 /** An episode kind as a reader sees it; an unknown kind shows as written. */
 export function kindLabel(kind: string, look: Look = "plain"): string {
-  const pair = KIND_LABEL[kind as EpisodeKind];
+  const pair = Object.hasOwn(KIND_LABEL, kind) ? KIND_LABEL[kind] : undefined;
   return pair ? pair[look === "codex" ? 1 : 0] : kind;
 }
 

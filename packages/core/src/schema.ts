@@ -86,6 +86,64 @@ export type QuestStatus = z.infer<typeof QuestStatus>;
 
 const stringList = z.preprocess((v) => (v == null ? [] : Array.isArray(v) ? v : [v]), z.array(z.coerce.string()));
 
+// ── Managed memory (frontmatter, rendered into regions) ─────────────────────────
+
+/** A rule for how to treat an entity ("Write to her in Portuguese"), optionally only in a scope. */
+export const Guideline = z.preprocess(
+  // A bare string is a guideline the human wrote by hand.
+  (v) => (typeof v === "string" ? { rule: v } : v),
+  z.object({
+    rule: z.coerce.string(),
+    scope: opt(z.coerce.string()),
+    /** rumor until enough sources say it (or the human does); then canon. */
+    status: z.enum(["rumor", "canon"]).default("canon"),
+    /** Missing = the human. */
+    by: opt(z.coerce.string()),
+    at: opt(z.coerce.string()),
+    src: z.array(z.coerce.string()).default([]),
+    seen_by: opt(z.array(z.coerce.string())),
+  }),
+);
+export type Guideline = z.infer<typeof Guideline>;
+
+export const DecisionEntry = z.object({
+  id: z.coerce.string(),
+  what: z.coerce.string(),
+  why: opt(z.coerce.string()),
+  alternatives: stringList.default([]),
+  by: opt(z.coerce.string()),
+  at: opt(z.coerce.string()),
+  /** When to look at it again (ISO date). */
+  revisit: opt(z.coerce.string()),
+});
+export type DecisionEntry = z.infer<typeof DecisionEntry>;
+
+export const QuestionStatus = z.enum(["open", "answered", "dropped"]);
+export type QuestionStatus = z.infer<typeof QuestionStatus>;
+
+export const QuestionEntry = z.object({
+  id: z.coerce.string(),
+  q: z.coerce.string(),
+  by: opt(z.coerce.string()),
+  at: opt(z.coerce.string()),
+  status: QuestionStatus.default("open"),
+  answered_by: opt(z.coerce.string()),
+  answered_at: opt(z.coerce.string()),
+});
+export type QuestionEntry = z.infer<typeof QuestionEntry>;
+
+/** Contact counters. Frontmatter is the source of truth; the chronicle can rebuild them (reducers.ts). */
+export const Stats = z.object({
+  /** Local dates (YYYY-MM-DD). */
+  first_met: opt(z.coerce.string()),
+  last_contact: opt(z.coerce.string()),
+  /** Latest local date per kind (and `kind/channel`). */
+  last: z.record(z.string(), z.coerce.string()).default({}),
+  /** Episodes per kind (and `kind/channel`). */
+  counts: z.record(z.string(), z.coerce.number()).default({}),
+});
+export type Stats = z.infer<typeof Stats>;
+
 export const EntityFrontmatter = z.looseObject({
   id: opt(z.string()),
   type: z.string(),
@@ -94,6 +152,16 @@ export const EntityFrontmatter = z.looseObject({
   tags: stringList.default([]),
   relations: z.array(Relation).default([]),
   facts: z.record(z.string(), Fact).default({}),
+  /** Entity this one inherits defaults, guidelines and cadence from (`"[[colleague]]"`). */
+  extends: opt(z.coerce.string()),
+  /** Default fact values for entities that extend or tag this one. */
+  defaults: opt(z.record(z.string(), FactValue)),
+  /** How often to be in touch (`2w`, `1m`, `none`). */
+  cadence: opt(z.coerce.string()),
+  guidelines: opt(z.array(Guideline)),
+  decisions: opt(z.array(DecisionEntry)),
+  questions: opt(z.array(QuestionEntry)),
+  stats: opt(Stats),
   // quest
   status: opt(z.coerce.string()),
   owner: opt(z.coerce.string()),
@@ -111,17 +179,28 @@ export type EntityFrontmatter = z.infer<typeof EntityFrontmatter>;
 
 // ── Episodes (raw inbox memories) ─────────────────────────────────────────────
 
-export const EpisodeKind = z.enum(["observation", "fact", "decision", "task", "beat", "question"]);
-export type EpisodeKind = z.infer<typeof EpisodeKind>;
+/** An episode's kind as written. Any string: the vault's schema registry resolves it (unknown → observation). */
+export type EpisodeKind = string;
+
+/** Structured data an episode carries, typed by its kind's `data:` fields. */
+export const EpisodeData = z.record(z.string(), z.union([FactValue, z.array(FactValue)]));
+export type EpisodeData = z.infer<typeof EpisodeData>;
 
 export const EpisodeFrontmatter = z.looseObject({
   id: z.string().optional(),
   agent: z.string().optional(),
-  kind: EpisodeKind.catch("observation").default("observation"),
+  kind: z.preprocess((v) => (v == null || v === "" ? undefined : v), z.coerce.string().default("observation")).catch("observation"),
   at: z.coerce.string().optional(),
   about: stringList.default([]),
   confidence: z.coerce.number().min(0).max(1).optional(),
   secret: z.coerce.boolean().optional(),
+  /** Kept out of search, prompts and the chronicle. Lenient (`"yes"`, `1`), so a hand-written flag is never lost. */
+  confidential: z
+    .preprocess((v) => (typeof v === "string" ? ["true", "yes", "y", "1"].includes(v.trim().toLowerCase()) : typeof v === "number" ? v !== 0 : v), z.boolean().optional())
+    .catch(undefined),
+  /** Context the memory holds in, like a fact's `@scope`. */
+  scope: opt(z.coerce.string()),
+  data: opt(EpisodeData).catch(undefined),
 });
 export type EpisodeFrontmatter = z.infer<typeof EpisodeFrontmatter>;
 
@@ -136,11 +215,27 @@ export const Claim = z.object({
 });
 export type Claim = z.infer<typeof Claim>;
 
+/** conflict: sources disagree; proposal: someone suggests a value only a human may set; merge: two notes may be one thing. */
+export const DisputeKind = z.enum(["conflict", "proposal", "merge"]);
+export type DisputeKind = z.infer<typeof DisputeKind>;
+
+export const ProposalState = z.enum(["pending", "applied", "already_present", "declined"]);
+export type ProposalState = z.infer<typeof ProposalState>;
+
 export const DisputeFrontmatter = z.looseObject({
   type: z.literal("dispute"),
+  /** Missing = conflict, so v1 dispute notes keep their shape. */
+  kind: opt(DisputeKind),
   entity: z.string(),
   field: z.string(),
   status: z.enum(["open", "resolved"]).default("open"),
+  /** Proposals and merges: where they stand. */
+  state: opt(ProposalState),
+  /** Why the proposal or merge was raised, in plain words. */
+  evidence: opt(z.coerce.string()),
+  confidence,
+  /** Merges: the notes that may be the same thing (`[[a]]`, `[[b]]`). */
+  targets: opt(stringList),
   claims: z.array(Claim).default([]),
   /** Set by the human to settle the dispute; applied on the next sleep. */
   ruling: FactValue.optional(),
@@ -183,6 +278,8 @@ export const FieldDef = z.preprocess(
     recurs: z.enum(["yearly"]).optional(),
     /** Identifies one real-world thing (an email, a repo url); implies `confidential`. */
     identity_key: z.boolean().optional(),
+    /** In a kind's `data:`: episodes of that kind must carry it. */
+    required: z.boolean().optional(),
     default: FactValue.optional(),
     /** Lane domain whose agents are authoritative for this field. */
     domain: z.string().optional(),
@@ -227,7 +324,8 @@ export const KindDef = z.looseObject({
   gist_max: z.number().int().positive().optional(),
   /** Typed structured data the episode may carry. */
   data: z.record(z.string(), FieldDef).optional(),
-  counts_as_contact: z.boolean().optional(),
+  /** Whether it counts as contact with its targets (`stats.last_contact`): yes/no, or per `data.channel` (`*` for the rest). */
+  counts_as_contact: z.union([z.boolean(), z.record(z.string(), z.boolean())]).optional(),
   reducers: list(z.string()),
   description: opt(z.string()),
 });
@@ -291,6 +389,18 @@ const ConfigObject = z.object({
       summaries: z.boolean().default(true),
       /** Days after which a fact is considered stale and flagged for re-verification. */
       stale_after_days: z.number().int().positive().default(60),
+      /** Most guidelines kept per entity; the oldest rumor goes first. */
+      guidelines_cap: z.number().int().positive().default(12),
+      /** Most decisions kept per entity; the oldest go first. */
+      decisions_cap: z.number().int().positive().default(20),
+      /** Most questions kept per entity; the oldest closed ones go first. */
+      questions_cap: z.number().int().positive().default(20),
+    })
+    .prefault({}),
+  briefing: z
+    .object({
+      /** How many overdue contacts a briefing lists per day. */
+      overdue_per_day: z.number().int().nonnegative().default(3),
     })
     .prefault({}),
   secrets: z

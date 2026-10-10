@@ -1,14 +1,17 @@
 import { CONFIG_PATH, parseConfig } from "./config.ts";
 import { VaultError } from "./errors.ts";
 import { assertVaultVersion } from "./migrations.ts";
-import { basename, displayName, parseEntity, renderEntity, type Entity } from "./entity.ts";
+import { basename, displayName, formatValue, parseEntity, renderEntity, type Entity } from "./entity.ts";
 import { parseEpisode, renderEpisode, type Episode } from "./episode.ts";
 import { isIntroductionPath, parseIntroduction, renderIntroduction, type Introduction } from "./introduction.ts";
 import { parseDoc, renderDoc } from "./markdown.ts";
 import { DisputeFrontmatter, type Capability, type Claim, type HippoConfig, type HumanDef } from "./schema.ts";
+import { sameValue } from "./reconcile.ts";
 import { loadSchema, type SchemaRegistry } from "./schema-registry.ts";
+import { isSecretRef } from "./secrets.ts";
 import { applyChanges, type Change, type CommitMeta, type VaultStore } from "./store.ts";
-import { localParts, normalizeName, parseFactKey, slugify } from "./text.ts";
+import { channelOf, dataLine, gistMax } from "./kinds.ts";
+import { localParts, normalizeName, parseFactKey, slugify, truncate } from "./text.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
 export interface Dispute {
@@ -339,9 +342,87 @@ export class Vault {
     return d;
   }
 
+  /** Proposal note name for a `facts:` key (`proposal-x-greeting-lang-pt`). */
+  proposalSlug(entity: string, field: string): string {
+    return this.disputeSlug(entity, field).replace(/^dispute-/, "proposal-");
+  }
+
+  /**
+   * Someone suggests a value for a field only a human sets. The note waits for the human (`ruling:`
+   * applies it, `state: declined` turns it down). A value the human already holds closes it at once
+   * as `already_present`; one the human declined before isn't raised again.
+   */
+  openProposal(entity: Entity, field: string, claim: Claim, evidence?: string): Dispute {
+    const slug = this.proposalSlug(entity.slug, field);
+    const now = this.nowIso();
+    let d = this.disputes.get(slug);
+    if (!d) {
+      d = {
+        slug,
+        path: `${this.config.folders.disputes}/${slug}.md`,
+        fm: { type: "dispute", kind: "proposal", entity: link(entity.slug), field, status: "open", state: "pending", claims: [], opened: now },
+        body: "",
+      };
+      this.disputes.set(slug, d);
+    }
+    const declined = d.fm.status === "resolved" && d.fm.state === "declined" && d.fm.claims.some((c) => String(c.value) === String(claim.value));
+    if (declined) return d;
+    const current = entity.fm.facts[field];
+    const present = !!current && current.status !== "retconned" && this.isHuman(current.by) && !isSecretRef(claim.value) && sameValue(current.value, claim.value);
+    if (d.fm.status === "resolved" || present) {
+      d.fm.ruling = undefined;
+      d.fm.resolved = undefined;
+      d.fm.opened = d.fm.status === "resolved" ? now : d.fm.opened;
+      d.fm.status = "open";
+      d.fm.state = "pending";
+    }
+    const same = d.fm.claims.find((x) => String(x.value) === String(claim.value) && x.by === claim.by);
+    if (same) same.src = [...new Set([...same.src, ...claim.src])];
+    else d.fm.claims.push(claim);
+    if (evidence?.trim()) d.fm.evidence = evidence.trim();
+    if (claim.confidence !== undefined) d.fm.confidence = claim.confidence;
+    if (present) {
+      d.fm.state = "already_present";
+      d.fm.status = "resolved";
+      d.fm.resolved = now;
+    }
+    d.body = renderDisputeBody(d, displayName(entity));
+    this.dirty.add(d.path);
+    return d;
+  }
+
+  /**
+   * Two notes that look like one thing (an identity key says so, their names don't). The human merges
+   * them by hand or declines; a declined pair isn't raised again.
+   */
+  openMerge(a: Entity, b: Entity, field: string, evidence: string): Dispute {
+    const [x, y] = [a.slug, b.slug].sort();
+    const slug = `merge-${x}-${y}`;
+    let d = this.disputes.get(slug);
+    if (d?.fm.status === "resolved") return d;
+    if (!d) {
+      d = {
+        slug,
+        path: `${this.config.folders.disputes}/${slug}.md`,
+        fm: { type: "dispute", kind: "merge", entity: link(a.slug), field, status: "open", state: "pending", claims: [], targets: [link(x!), link(y!)], opened: this.nowIso() },
+        body: "",
+      };
+      this.disputes.set(slug, d);
+    }
+    d.fm.evidence = evidence;
+    d.body = renderDisputeBody(d, displayName(a));
+    this.dirty.add(d.path);
+    return d;
+  }
+
   resolveDispute(d: Dispute): void {
     d.fm.status = "resolved";
     d.fm.resolved = this.nowIso();
+    // A proposal's or merge's note says where it stands; a conflict's body stays as it was.
+    if (d.fm.kind === "proposal" || d.fm.kind === "merge") {
+      const e = this.resolve(d.fm.entity);
+      d.body = renderDisputeBody(d, e ? displayName(e) : unwrapLink(d.fm.entity));
+    }
     this.dirty.add(d.path);
   }
 
@@ -391,19 +472,25 @@ export class Vault {
     return `${this.config.folders.chronicle}/${day.slice(0, 4)}/${day.slice(5, 7)}/${day}.md`;
   }
 
-  /** Append an episode to its day's chronicle as a callout with a block id, so facts can cite it. */
+  /**
+   * Append an episode to its day's chronicle as a callout with a block id, so facts can cite it.
+   * A confidential episode shows only a placeholder, a gist kind its gist, and a kind without text
+   * (or an episode that has none) a line built from its data. The header names the kind, and its
+   * channel when the data has one (`interaction/call`).
+   */
   async appendChronicle(ep: Episode, touched: string[], text = ep.text): Promise<void> {
     const path = this.chroniclePath(ep.at);
     let content = this.pendingFiles.get(path) ?? (await this.store.read(path));
     const { date: day, time } = localParts(ep.at, this.config.timezone);
     if (!content) content = renderDoc({ type: "chronicle", date: day }, `# ${day}\n`);
     if (content.includes(`^${ep.id}\n`) || content.endsWith(`^${ep.id}`)) return;
-    const quoted = text
+    const { kind, body } = chronicleEntry(this.schema, ep, text);
+    const quoted = body
       .split("\n")
       .map((l) => `> ${l}`.trimEnd())
       .join("\n");
     const links = touched.length ? `\n>\n> ↳ ${touched.map((s) => link(s)).join(" · ")}` : "";
-    content = `${content.trimEnd()}\n\n> [!episode] ${time} · ${link(ep.agent)} · ${ep.kind}\n${quoted}${links}\n\n^${ep.id}\n`;
+    content = `${content.trimEnd()}\n\n> [!episode] ${time} · ${link(ep.agent)} · ${kind}\n${quoted}${links}\n\n^${ep.id}\n`;
     this.pendingFiles.set(path, content);
   }
 
@@ -495,15 +582,55 @@ export class Vault {
   }
 }
 
-function renderDisputeBody(d: Dispute, entityName: string): string {
-  const claims = d.fm.claims
-    .map((c) => `- **${c.value}** — ${c.by ? link(c.by) : "human"}${c.at ? ` on ${c.at.slice(0, 10)}` : ""}${c.src.length ? ` (${c.src.join(", ")})` : ""}`)
+/** What the chronicle shows of an episode: its header kind (`kind` or `kind/channel`) and its body. */
+export function chronicleEntry(schema: SchemaRegistry, ep: Episode, text = ep.text): { kind: string; body: string } {
+  const resolved = schema.kind(ep.kind);
+  const name = resolved.unknown ? slugify(ep.kind) : resolved.name;
+  const channel = channelOf(ep.data);
+  const kind = channel ? `${name}/${channel}` : name;
+  const def = resolved.def;
+  if (ep.confidential) return { kind, body: "(confidential)" };
+  if (def.text === "forbidden" || !text.trim()) return { kind, body: dataLine(def, ep.data) };
+  return { kind, body: def.text === "gist" ? truncate(text, gistMax(def)) : text };
+}
+
+function claimLines(d: Dispute, show: (v: Claim["value"]) => string = String): string {
+  return d.fm.claims
+    .map((c) => `- **${show(c.value)}** — ${c.by ? link(c.by) : "human"}${c.at ? ` on ${c.at.slice(0, 10)}` : ""}${c.src.length ? ` (${c.src.join(", ")})` : ""}`)
     .join("\n");
+}
+
+function renderDisputeBody(d: Dispute, entityName: string): string {
+  const evidence = d.fm.evidence ? `\n> ${d.fm.evidence.replace(/\n/g, "\n> ")}\n` : "";
+  if (d.fm.kind === "proposal") {
+    const footer =
+      d.fm.state === "already_present"
+        ? `> [!check] Already present\n> ${entityName} already has this value, set by a human. Nothing to do.`
+        : `> [!question] Your call\n> Only a human sets **${d.fm.field}**. Set \`ruling:\` in this note's properties to the value to apply (or pick one above), or set \`state: declined\` to turn it down. The next sleep applies it.`;
+    return `# ✎ ${entityName} · ${d.fm.field}
+
+Proposed value for **${d.fm.field}** of ${d.fm.entity}:
+
+${claimLines(d, (v) => formatValue(v))}
+${evidence}
+${footer}
+`;
+  }
+  if (d.fm.kind === "merge") {
+    const [a = d.fm.entity, b = ""] = d.fm.targets ?? [];
+    return `# ⇄ ${a} · ${b}
+
+${a} and ${b} may be the same ${d.fm.field ? `(same **${d.fm.field}**)` : "thing"}.
+${evidence}
+> [!question] Same or different?
+> If they're one, merge the notes by hand and delete this note. If not, set \`state: declined\` and they won't be raised again.
+`;
+  }
   return `# ⚖ ${entityName} · ${d.fm.field}
 
 Sources disagree about **${d.fm.field}** of ${d.fm.entity}.
 
-${claims}
+${claimLines(d)}
 
 > [!question] Ruling needed
 > Set \`ruling:\` in this note's properties to the correct value, and the next sleep will make it canon.

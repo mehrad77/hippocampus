@@ -45,7 +45,8 @@ export interface ResolvedKind {
   text: NonNullable<KindDef["text"]>;
   gistMax?: number;
   data: Record<string, FieldDef>;
-  countsAsContact: boolean;
+  /** Yes/no, or per `data.channel` (`*` for channels not listed); see `countsAsContact` in kinds.ts. */
+  countsAsContact: boolean | Record<string, boolean>;
   reducers: string[];
   description: string;
   examples: Examples;

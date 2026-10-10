@@ -240,6 +240,15 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
         flag(path, `human fact changed: ${field}`);
       }
     }
+    // A human-only field takes a value only from a ruling (a proposal's, or a dispute's) or the human's own episode.
+    for (const [field, f] of Object.entries(a.fm.facts)) {
+      if (!l.schema.fieldDef(a.fm.type, field)?.human_only) continue;
+      const prev = b?.fm.facts[field];
+      if (prev && String(prev.value) === String(f.value)) continue;
+      if (rulings.get(`${a.slug}.${field}`) === String(f.value)) continue;
+      if (isHumanId(config, f.by) && f.src.some((id) => humanEpisodes.has(id))) continue;
+      flag(path, `human-only field changed: ${field}`);
+    }
     for (const [field, f] of Object.entries(a.fm.facts)) {
       const prev = b?.fm.facts[field];
       if (!l.schema.isSecretField(a.fm.type, field) && !isSecretRef(prev?.value) && !isSecretRef(f.value)) continue;

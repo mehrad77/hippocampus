@@ -4,7 +4,7 @@ import { boostNeighbors, dot, fromBlob, normalize, rrf, toBlob } from "./hybrid.
 import type { SqlDriver, SqlStatement, SqlValue } from "./sql.ts";
 
 /** Bump when the tables change. The index is derived from the vault, so a mismatch just rebuilds it. */
-export const INDEX_SCHEMA_VERSION = 2;
+export const INDEX_SCHEMA_VERSION = 3;
 
 const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
