@@ -1,0 +1,18 @@
+{
+  "name": "@hippocampus/store-gitlab",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/fake-gitlab.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hippocampus/core": "workspace:*",
+    "@hippocampus/store-git": "workspace:*"
+  },
+  "license": "AGPL-3.0-only"
+}

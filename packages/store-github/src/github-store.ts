@@ -1,5 +1,5 @@
 import { StoreConflictError, VaultError, type Change, type CommitMeta, type VaultStore } from "@hippocampus/core";
-import { HttpError, IGNORED, MemoryBlobCache, SnapshotCache, base64, gitBlobSha, ignored, untar, type BlobCache, type Snapshot, type TreeFile } from "@hippocampus/store-git";
+import { EmptyRepositoryError, HttpError, IGNORED, MemoryBlobCache, SnapshotCache, base64, gitBlobSha, ignored, untar, type BlobCache, type Snapshot, type TreeFile } from "@hippocampus/store-git";
 
 export interface GitHubStoreOptions {
   /** `owner/name` of the (private) vault repo. */
@@ -46,14 +46,6 @@ export interface RepoInfo {
   empty: boolean;
   /** The commit reads are pinned to; none while the repo is empty. */
   head?: string;
-}
-
-/** The repo has no commits, so GitHub's Git Data API refuses it (409). `GitHubStore.initialize()` makes the first one. */
-export class EmptyRepositoryError extends VaultError {
-  constructor(readonly repo: string) {
-    super(`${repo} is empty: it has no commits yet`);
-    this.name = "EmptyRepositoryError";
-  }
 }
 
 interface TreeEntry {

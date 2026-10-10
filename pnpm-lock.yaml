@@ -312,6 +312,15 @@ importers:
         specifier: workspace:*
         version: link:../store-git
 
+  packages/store-gitlab:
+    dependencies:
+      '@hippocampus/core':
+        specifier: workspace:*
+        version: link:../core
+      '@hippocampus/store-git':
+        specifier: workspace:*
+        version: link:../store-git
+
   packages/template: {}
 
 packages:

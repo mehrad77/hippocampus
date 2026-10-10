@@ -2,9 +2,9 @@ import { HippoService, StoreConflictError, Vault, VaultError } from "@hippocampu
 import { describe, expect, it } from "vitest";
 import { storeContract } from "../../core/src/store.contract.ts";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
-import { MemoryBlobCache, SnapshotCache, gitBlobSha } from "@hippocampus/store-git";
+import { EmptyRepositoryError, MemoryBlobCache, SnapshotCache, gitBlobSha } from "@hippocampus/store-git";
 import { FakeGitHub } from "./fake-github.ts";
-import { EmptyRepositoryError, GitHubStore } from "./github-store.ts";
+import { GitHubStore } from "./github-store.ts";
 
 const now = () => new Date("2026-09-27T21:00:00.000Z");
 
