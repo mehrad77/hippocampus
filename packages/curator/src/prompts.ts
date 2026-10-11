@@ -35,7 +35,7 @@ export function mentionsSchema(schema: SchemaRegistry) {
         name: z.string().describe("Most specific proper name, in the original language/spelling"),
         type: oneOf(types),
         aliases: z.array(z.string()).describe("Other spellings, translations, abbreviations mentioned"),
-        domains: z.array(z.string()).describe("Applicable domains from the provided list"),
+        domains: z.array(z.string()).describe("Applicable domains from the provided list, plus at most one new lowercase-dashed area when none fits"),
       }),
     ),
   });
@@ -242,7 +242,7 @@ Rules:
 - IDs, numbers, codes, emails, and phone numbers are never entities or aliases. They are facts about an entity (a later step extracts them).
 - If the episode is progress on an existing goal, include that goal by its name.
 - name: the most specific proper name as written (keep the original-language spelling). Put translations/abbreviations in aliases.
-- domains: choose from [${config.domains.join(", ")}]; empty if none apply.
+- domains: choose from [${config.domains.join(", ")}]. Only when the entity clearly belongs to an area of the person's life that none of these covers, add one new area as a short lowercase word with dashes (like health or side-project): never a name, number or private detail. Empty if none apply.
 - Return an empty list if there is nothing durable to remember.`,
       houseRules,
     ),

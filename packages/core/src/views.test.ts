@@ -75,6 +75,14 @@ opened: "2026-09-11T00:00:00Z"
 }
 
 describe("dashboard views", () => {
+  it("offers the last sleep's domain suggestions that the config still lacks", async () => {
+    const review = `---\ntype: review\ngenerated: "2026-09-25T03:30:00.000Z"\nsuggested_domains: [pets, Housing, "side project", errands, 7]\n---\n# 🌙 Morning review\n`;
+    const service = new HippoService(fixtureStore({ "_hippo/review.md": review }), { now });
+    expect((await service.overview()).suggestedDomains).toEqual(["pets", "errands"]);
+    await service.addDomains(["pets"]);
+    expect((await service.overview()).suggestedDomains).toEqual(["errands"]);
+  });
+
   it("overview counts, attention, quests, party and activity", async () => {
     const o = await new HippoService(richStore(), { now }).overview();
     expect(o).toMatchObject({ campaign: "lisbon-arc", human: "player", today: "2026-09-27", lastSleep: "2026-09-25T03:30:00.000Z" });
