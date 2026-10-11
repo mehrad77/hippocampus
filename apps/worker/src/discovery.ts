@@ -1,6 +1,7 @@
 import { SERVER_VERSION } from "@hippocampus/mcp";
 import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 import { DEVICE_GRANT, DEVICE_PATH, DEVICE_TOKEN_PATH, DEVICE_VERIFY_PAGE } from "./hosted/device.ts";
+import { serverIcons } from "./icons.ts";
 
 // What this instance tells agents about itself before anyone signs in, in the conventions agents look
 // for. docs/AGENT-STANDARDS.md lists each one, how settled it is, and when to look at it again.
@@ -34,6 +35,7 @@ export function serverCard(publicUrl: string) {
     title: "Hippocampus",
     description: "Shared, curated memory for a person's AI agents. Each connection serves one vault.",
     websiteUrl: publicUrl,
+    icons: serverIcons(publicUrl),
     repository: { url: REPO, source: "github" },
     remotes: [
       {

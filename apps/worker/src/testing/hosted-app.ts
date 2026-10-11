@@ -152,6 +152,7 @@ export async function hostedApp(opts: { limits?: HostedAppDeps["limits"]; gitlab
       "/dashboard/index.html": "<!doctype html><title>Tavern</title>",
       "/dashboard/welcome/index.html": "<!doctype html><title>Welcome</title>",
       "/dashboard/404.html": "<!doctype html><title>Lost</title>",
+      "/dashboard/icon.png": "the icon",
     }),
     fetch: fetchAny,
     now: opts.now,

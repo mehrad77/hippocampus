@@ -3,6 +3,7 @@ import { SleepRelay, type RunStore } from "@hippocampus/curator/relay";
 import { HttpError, createDashboardApi, errorResponse, json, readOnlySource, serviceSource, type DashboardSource, type ErrorReport, type SourceInfo, type VaultUpgrade } from "@hippocampus/dashboard";
 import { HippoIndex, doSql, type DurableSqlLike, type SqlStorageLike } from "@hippocampus/index";
 import { createHippoServer, type Scope } from "@hippocampus/mcp";
+import { serverIcons } from "../icons.ts";
 import { GitHubStore, SnapshotCache, SqliteBlobCache, type BlobCache } from "@hippocampus/store-github";
 import { GitLabStore } from "@hippocampus/store-gitlab";
 import { TEMPLATE } from "@hippocampus/template";
@@ -110,6 +111,8 @@ export interface VaultRuntimeDeps {
   apiUrl?: string;
   /** GitHub's web origin, for links to the repo. */
   webUrl?: string;
+  /** This instance's address, for the icon the MCP server names itself with. */
+  publicUrl?: string;
   fetch?: typeof fetch;
   clock?: () => Date;
   /** Semantic recall; the runtime caps it per day. */
@@ -466,6 +469,7 @@ export class VaultRuntime {
         vault: { id: this.meta.vaultId, name: this.meta.fullName },
         agent: grant.agent,
         scopes: grant.scopes,
+        ...(this.d.publicUrl ? { icons: serverIcons(this.d.publicUrl) } : {}),
         // A shared connection's reads name their agent; only a name it holds sees confidential details.
         ...(!grant.agent && grant.credential ? { holds: (agent: string) => this.claims.holds(agent, grant.credential!) } : {}),
         relay: grant.scopes.includes("curate") ? this.relay : undefined,

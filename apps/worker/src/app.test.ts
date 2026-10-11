@@ -551,4 +551,18 @@ describe("what agents can read before signing in", () => {
     // The card isn't behind the OAuth guard; MCP itself still is.
     expect((await h.send(new Request(`${ORIGIN}/mcp`, { method: "POST", body: "{}" }))).status).toBe(401);
   });
+
+  it("names its icon in the server card and answers /favicon.ico with it", async () => {
+    const h = await hostedApp();
+    const card = (await (await h.send(new Request(`${ORIGIN}/mcp/server-card`))).json()) as { icons: { src: string; mimeType: string }[] };
+    expect(card.icons.map((i) => [i.src, i.mimeType])).toEqual([
+      [`${ORIGIN}/dashboard/icon.png`, "image/png"],
+      [`${ORIGIN}/dashboard/favicon.svg`, "image/svg+xml"],
+    ]);
+
+    const ico = await h.send(new Request(`${ORIGIN}/favicon.ico`));
+    expect(ico.status).toBe(200);
+    expect(await ico.text()).toBe("the icon");
+    expect((await h.send(new Request(`${ORIGIN}/favicon.ico`, { method: "POST" }))).status).toBe(405);
+  });
 });

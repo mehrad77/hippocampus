@@ -11,6 +11,7 @@ import { vaultMeta, type DashboardUser, type VaultHosts, type VaultMeta, type Va
 import { AUTHORIZE_PATH, MCP_PATH, PROTECTED_RESOURCE_PATH, REGISTER_PATH, addressedVault, authorizePage, canonicalResource, connectedApps, grantOf, invalidToken, keyProps, oauthCredential, protectedResource, providerOptions, type OAuthContext } from "./oauth.ts";
 import { page, plain } from "./pages.ts";
 import { AI_CATALOG_PATH, DISCOVERY_HEADERS, LLMS_PATH, SERVER_CARD_PATH, aiCatalog, llmsTxt, serverCard } from "./discovery.ts";
+import { ICON_PNG_PATH } from "./icons.ts";
 
 // The hosted Worker's request handling, independent of the Workers runtime: the OAuth provider in
 // front, then the hosted app's own routes, the consent page, and each vault's Durable Object for
@@ -252,6 +253,11 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
     }
     if (pathname === "/") return home(request);
     if (pathname === LLMS_PATH || pathname === AI_CATALOG_PATH) return discovery(request, pathname);
+    // Apps that look for a host's icon ask for this before anything else.
+    if (pathname === "/favicon.ico") {
+      if (request.method !== "GET" && request.method !== "HEAD") return plain(405, "Method not allowed", { allow: "GET, HEAD" });
+      return serveAsset(deps.assets, new Request(new URL(ICON_PNG_PATH, request.url), request));
+    }
     // The hosted routes answer the API until the account has a ready vault; then it's the vault's.
     if (isDashboardApi(pathname)) return dashboardApi(request, url);
     if (isDashboardPath(pathname)) return serveAsset(deps.assets, request);

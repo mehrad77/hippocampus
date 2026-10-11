@@ -14,6 +14,8 @@ export interface HippoServerOptions {
   /** What this connection may do. Absent means everything (local use). */
   scopes?: readonly Scope[];
   version?: string;
+  /** Icons clients may show next to the server's name (a connector's page, a tool list). Absolute URLs. */
+  icons?: { src: string; mimeType?: string; sizes?: string[] }[];
   /** JSON Schema validator for the SDK; Workers need one that doesn't compile code at runtime. */
   jsonSchemaValidator?: jsonSchemaValidator;
   /** Lets the agent run sleep itself (the `curate` scope). A factory is called per tool call. */
@@ -123,11 +125,11 @@ function param(v: string | string[] | undefined, form = false): string {
 /** The server's version, as it introduces itself (and as its server card says). */
 export const SERVER_VERSION = "0.1.0";
 
-export function createHippoServer({ service, agent, scopes, version = SERVER_VERSION, jsonSchemaValidator, relay, vault, holds, curation }: HippoServerOptions): McpServer {
+export function createHippoServer({ service, agent, scopes, version = SERVER_VERSION, icons, jsonSchemaValidator, relay, vault, holds, curation }: HippoServerOptions): McpServer {
   const granted = scopes ? normalizeScopes(scopes) : undefined;
   const curates = !!relay && (!granted || granted.includes("curate"));
   const instructions = INSTRUCTIONS + (agent ? "" : NAMING_INSTRUCTIONS) + (curates ? CURATE_INSTRUCTIONS : curation ? `\n${curation}` : "") + (vault ? vaultInstructions(vault) : "");
-  const server = new McpServer({ name: "hippocampus", version }, { instructions, jsonSchemaValidator });
+  const server = new McpServer({ name: "hippocampus", version, ...(icons?.length ? { icons } : {}) }, { instructions, jsonSchemaValidator });
   // Out-of-scope tools are removed outright, so clients never see them.
   const scoped = (scope: CurrentScope, registered: { remove(): void }) => {
     if (granted && !granted.includes(scope)) registered.remove();
