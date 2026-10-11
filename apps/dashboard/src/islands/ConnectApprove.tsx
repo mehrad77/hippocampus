@@ -2,21 +2,18 @@ import { useEffect, useState } from "react";
 import type { HostedDeviceRequest } from "@hippocampus/dashboard";
 import { ACCESS } from "@hippocampus/dashboard/connect";
 import { ApiError, getJson, postJson } from "../lib/api.ts";
-import { useTerms } from "../lib/prefs.ts";
 import { href } from "../lib/routes.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { PageGate } from "../ui/PageGate.tsx";
 import { RelTime, SkeletonPanel } from "../ui/Parts.tsx";
 import { ErrorCallout, Field, useAction } from "./setup/common.tsx";
-import { humanIdFor } from "./setup/hosted.ts";
-import { agentIdProblem } from "./setup/model.ts";
 
-type Access = "remember" | "read" | "curate";
 const CODE = /^[BCDFGHJKLMNPQRSTVWXZ]{4}-?[BCDFGHJKLMNPQRSTVWXZ]{4}$/;
 
 /**
  * Device sign-in's approval page (`/dashboard/connect/?code=…`): an app or agent asked to connect on
- * the person's behalf; they choose the vault, the agent it acts as and what it may do, or refuse.
+ * the person's behalf; they choose the vault, or refuse. What it may do is what it asked for, and the
+ * agents in it name themselves.
  */
 export default function ConnectApprove() {
   return <PageGate allowSetup>{() => <Approve />}</PageGate>;
@@ -49,13 +46,9 @@ function Approve() {
 }
 
 function Request({ code }: { code: string }) {
-  const { v } = useTerms();
   const [req, setReq] = useState<HostedDeviceRequest>();
   const [gone, setGone] = useState<string>();
   const [vault, setVault] = useState("");
-  const [access, setAccess] = useState<Access>("remember");
-  const [agent, setAgent] = useState("");
-  const [seat, setSeat] = useState(true);
   const [done, setDone] = useState<"approved" | "denied">();
   const load = useAction();
   const act = useAction();
@@ -66,9 +59,6 @@ function Request({ code }: { code: string }) {
         const r = await getJson<HostedDeviceRequest>(`/connect?code=${encodeURIComponent(code)}`);
         setReq(r);
         setVault(r.current ?? r.vaults[0]?.id ?? "");
-        setAccess(r.access ?? "remember");
-        // An id from the app's name, unless it asked for one.
-        setAgent(r.agent ?? (humanIdFor(r.client) || "my-agent"));
       } catch (err) {
         if (err instanceof ApiError && err.status === 410) setGone(err.message);
         else void load.run(() => Promise.reject(err));
@@ -99,10 +89,9 @@ function Request({ code }: { code: string }) {
   if (!req) return <SkeletonPanel lines={5} />;
 
   const picked = req.vaults.find((x) => x.id === vault);
-  const owner = picked?.role === "owner";
-  const problem = access === "curate" ? undefined : agentIdProblem(agent);
+  const access = req.access ?? "remember";
   const answer = async (approve: boolean) => {
-    const res = await act.run(() => (approve ? postJson("/connect/approve", { code: req.code, vault, agent, access, seat }) : postJson("/connect/deny", { code: req.code })));
+    const res = await act.run(() => (approve ? postJson("/connect/approve", { code: req.code, vault }) : postJson("/connect/deny", { code: req.code })));
     if (res) setDone(approve ? "approved" : "denied");
   };
 
@@ -133,44 +122,23 @@ function Request({ code }: { code: string }) {
               </select>
             )}
           </Field>
-          <fieldset className="sz-fieldset">
-            <legend className="label">What it may do</legend>
-            {(["remember", "read", ...(owner ? (["curate"] as const) : [])] as Access[]).map((a) => (
-              <label key={a} className="check sz-scope">
-                <input type="radio" name="hz-device-access" checked={access === a} onChange={() => setAccess(a)} />
-                <span>
-                  <strong>{ACCESS[a].title}</strong>
-                  <span className="small muted"> · {ACCESS[a].help}</span>
-                </span>
-              </label>
-            ))}
-          </fieldset>
-          {access === "curate" ? (
+          <p className="small">
+            It asked to <strong>{ACCESS[access].title.toLowerCase()}</strong>. {ACCESS[access].help} {access === "curate" ? "" : "The agents in it name themselves, and join your Agents page with no authority until you give them some."}
+          </p>
+          {access === "curate" && (
             <div className="callout callout--warn" role="note">
               <Icon name="lock" />
               <div>
                 <strong>The curator sees secret memories.</strong> Approve it only for a bot that only curates, with an AI provider you trust with your secrets.
+                {picked && picked.role !== "owner" ? " Only this vault's owner can approve that." : ""}
               </div>
             </div>
-          ) : (
-            <>
-              <Field label="It shows in your memory as" hint="Its agent id: lowercase letters, digits and dashes." problem={problem}>
-                {(f) => <input id={f.id} className="input mono" value={agent} onChange={(e) => setAgent(e.target.value.toLowerCase())} aria-describedby={f.describedBy} aria-invalid={f.invalid} autoComplete="off" spellCheck={false} />}
-              </Field>
-              <label className="check sz-scope">
-                <input type="checkbox" checked={seat} onChange={(e) => setSeat(e.target.checked)} />
-                <span>
-                  <strong>{v("Add it to your agents now", "Seat it in the party now")}</strong>
-                  <span className="small muted"> · so what it saves counts from the start.</span>
-                </span>
-              </label>
-            </>
           )}
         </>
       )}
       {act.error !== undefined && <ErrorCallout error={act.error} />}
       <div className="row">
-        <button type="button" className="btn btn--primary" disabled={act.busy || !picked || !!problem} onClick={() => void answer(true)}>
+        <button type="button" className="btn btn--primary" disabled={act.busy || !picked || (access === "curate" && picked.role !== "owner")} onClick={() => void answer(true)}>
           <Icon name="check" /> Approve
         </button>
         <button type="button" className="btn btn--ghost" disabled={act.busy} onClick={() => void answer(false)}>

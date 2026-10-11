@@ -1,5 +1,6 @@
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { DurableObject } from "cloudflare:workers";
+import type { AgentClaim } from "./agent-claims.ts";
 import { hostedEmbedding } from "./embed-cap.ts";
 import type { HostedEnv } from "./env.ts";
 import { d1 } from "@hippocampus/index";
@@ -76,6 +77,11 @@ export class VaultHost extends DurableObject<HostedEnv> {
   /** Connections were revoked: free the agent names they held. */
   releaseClaims(credentials: string[]): Promise<number> {
     return this.host.releaseClaims(credentials);
+  }
+
+  /** Which connection holds which agent name. */
+  claims(): Promise<AgentClaim[]> {
+    return this.host.claims();
   }
 
   /** Stop serving; storage stays until `destroy`. */

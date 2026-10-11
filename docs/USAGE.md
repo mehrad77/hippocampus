@@ -290,7 +290,7 @@ The tool refuses to write to a vault whose format version differs from its own. 
 
 **Inviting people to the app.** Anyone approved can invite someone to the hosted app itself (**Setup → Invite someone to Hippocampus**): it lets them in without the waitlist and shares nothing. Ten open invites at a time; admins have no cap, and can turn a person's invites off.
 
-**Connecting apps.** **Setup → Connected apps → Connect an app** asks which app, what it may do (**Remember and recall**: `read`, `remember`, `goal`; or **Only look things up**: `read`), and what it's called in the memory (its agent id, which it can be seated as right away). It shows the snippet for that app with the key in it, once (only a hash is stored), then waits for the app's first call. A key opens only its own vault: used at another vault's address, it's refused (`403 wrong_vault`), so a mixed-up config fails loudly instead of writing to the wrong vault. The list shows every connection, keys and sign-in apps alike, and disconnects any of them at once.
+**Connecting apps.** **Setup → Connected apps → Connect an app** asks only which app. The app gets one key (`read`, `remember`, `goal`), and the agents in it name themselves on each call, so one key can carry several. It shows the snippet for that app with the key in it, once (only a hash is stored), then waits for the app's first call. A key opens only its own vault: used at another vault's address, it's refused (`403 wrong_vault`), so a mixed-up config fails loudly instead of writing to the wrong vault. The list shows every connection, keys and sign-in apps alike, and disconnects any of them at once.
 
 | Kind | Scopes | For |
 | --- | --- | --- |

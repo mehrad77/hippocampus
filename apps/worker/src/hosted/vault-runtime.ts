@@ -16,7 +16,7 @@ import type { InstallationToken, Narrowing, Permissions } from "./github-app.ts"
 import { logEvent } from "./limits.ts";
 import { DailyCounter, QUOTAS, limitRuns, quotaOverrides, sizeGuard, type Quotas, type SizeGuarded } from "./quotas.ts";
 import { SqlRunStore, onPut } from "./run-store.ts";
-import { AgentClaims } from "./agent-claims.ts";
+import { AgentClaims, type AgentClaim } from "./agent-claims.ts";
 
 // One hosted vault, served from its own Durable Object. Everything here is plain TypeScript over
 // ports (the object's storage, a token minter, fetch), so it runs under Node in tests; vault-host.ts
@@ -522,6 +522,11 @@ export class VaultRuntime {
     return credentials.reduce((n, c) => n + this.claims.release(c), 0);
   }
 
+  /** Which connection holds which agent name (the credential is `key:<hash>` or `oauth:<grant>`). */
+  async claimList(): Promise<AgentClaim[]> {
+    return this.claims.list().map(({ agent, credential, since }) => ({ agent, credential, since }));
+  }
+
   /** Links (or, with `null`, unlinks) a person's logins to one of the vault's humans: someone joining or leaving a shared vault. */
   async linkHuman(id: string, logins: HumanLogins, via: string, create?: { domains?: string[] }): Promise<{ changed: boolean }> {
     await this.ready();
@@ -697,6 +702,10 @@ export class HostedVault {
 
   async releaseClaims(credentials: string[]): Promise<number> {
     return this.require().releaseClaims(credentials);
+  }
+
+  async claims(): Promise<AgentClaim[]> {
+    return this.require().claimList();
   }
 
   /** Stop serving; storage stays until `destroy`, so a reconnect picks up where it left off. */

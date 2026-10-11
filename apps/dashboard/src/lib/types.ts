@@ -47,6 +47,7 @@ export type {
   AgentConnect,
   Capabilities,
   CuratorStatus,
+  HostedAgentClaim,
   HostedConnectedApp,
   HostedCuratorActionsResult,
   HostedInitRequest,

@@ -919,7 +919,7 @@ function AgentsStep({ status }: HostedStepProps) {
             <Icon name="link" />
             <strong>Connect an app</strong>
           </div>
-          <p className="small">Claude Code, Claude Desktop, Cursor, VS Code, Windsurf or any MCP app. Pick the app and what it may do; you get exactly what to paste into it.</p>
+          <p className="small">Claude Code, Claude Desktop, Cursor, VS Code, Windsurf or any MCP app. Pick the app; you get exactly what to paste into it. One connection per app: the agents in it name themselves.</p>
           <div className="row">
             <button type="button" className="btn btn--primary" onClick={() => setConnecting(true)} disabled={status.vault?.status !== "ready"}>
               <Icon name="plus" /> Connect an app
@@ -933,7 +933,7 @@ function AgentsStep({ status }: HostedStepProps) {
             <strong>Claude.ai or ChatGPT (beta)</strong>
           </div>
           <p className="small">These sign in with your account instead of a key: add a custom connector with this address. Sign-in is still in beta; if it fails, connect another app with a key.</p>
-          <CopyLine value={status.mcpUrl} label="MCP URL" />
+          <CopyLine value={`${status.publicUrl}/mcp`} label="MCP address for sign-in" />
         </div>
       </div>
       {status.vault && <ConnectDialog open={connecting} onClose={() => setConnecting(false)} status={status} />}

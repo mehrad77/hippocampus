@@ -165,6 +165,27 @@ describe("VaultRuntime: MCP", () => {
     expect(trailers(repo.log()[0]!.message)).toContain("Hippo-Actor: agent:job-scout");
   });
 
+  it("lets one shared key (a Grok bot, say) introduce several agents, each filed and signed as itself", async () => {
+    const { repo, connect } = await setup();
+    const bot = await connect({ ...AGENT_KEY, credential: "key:grok-bot" });
+    for (const [agent, title, lane] of [
+      ["grok-bot-trip-planner", "Trip Planner", "Plans trips and bookings"],
+      ["grok-bot-budget-keeper", "Budget Keeper", "Tracks spending"],
+    ] as const) {
+      const r = await bot.call("introduce", { agent, title, lane, host: "Grok bot (xAI API)" });
+      expect(r.isError, agent).toBeFalsy();
+      expect((await bot.call("remember", { agent, text: `${title} is checking in.` })).isError, agent).toBeFalsy();
+    }
+    const files = Object.keys(repo.files());
+    for (const agent of ["grok-bot-trip-planner", "grok-bot-budget-keeper"]) {
+      expect(files.filter((p) => p.startsWith(`inbox/${agent}/_introduction-`)), agent).toHaveLength(1);
+      expect(files.filter((p) => p.startsWith(`inbox/${agent}/`) && !p.includes("_introduction-")), agent).toHaveLength(1);
+    }
+    expect(repo.log().map((c) => trailers(c.message).find((t) => t.startsWith("Hippo-Actor")))).toEqual(
+      expect.arrayContaining(["Hippo-Actor: agent:grok-bot-trip-planner", "Hippo-Actor: agent:grok-bot-budget-keeper"]),
+    );
+  });
+
   it("binds a bound key's memories to its agent, whatever the call says", async () => {
     const { repo, connect } = await setup();
     const { call } = await connect(bound("home-finder"));

@@ -38,17 +38,7 @@ Every connection is to **one vault**. If you have several, each has its own addr
 
 ### Connect an app
 
-On the **Setup** page, for the vault the dashboard shows (switch vaults from the menu at the top of the sidebar), press **Connect an app**. Three steps:
-
-1. **Which app:** Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, any other MCP app, or a script.
-2. **What it may do:**
-
-   | Choice | Scopes | For |
-   | --- | --- | --- |
-   | Remember and recall | read, remember, goal | Most apps: read the memory, add what they learn, update goals |
-   | Only look things up | read | An app that should never add to the memory |
-
-3. **What it's called in your memory:** its agent id, suggested from the app (`claude-code`, or `claude-code-laptop` if you say where it runs). Leave **Add it to your agents now** on, and what it saves counts from the start, with no introduction to approve. If the id is already one of your agents, the app acts as them, with their lane.
+On the **Setup** page, for the vault the dashboard shows (switch vaults from the menu at the top of the sidebar), press **Connect an app** and pick the app: Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Grok (CLI), a Grok bot (xAI API), any other MCP app, or a script. That's the only question. The app gets **one key** (scopes read, remember and goal), and the agents that run in it name themselves.
 
 You get exactly what to paste into that app, with the key already in it, shown **once** (only a hash is stored). The dialog then waits for the app's first call and says when it's **Connected**. Snippets for every other app sit underneath.
 
@@ -56,15 +46,11 @@ You get exactly what to paste into that app, with the key already in it, shown *
 claude mcp add --transport http hippo-vault https://<your-instance>/mcp/<vault id> --header "Authorization: Bearer hippo_…"
 ```
 
-The **Connected apps** list shows everything connected to the vault, keys and sign-in apps alike: which agent each acts as, what it may do, and when it was last used. **Details** shows the exact kind and scopes; **Disconnect** stops it at once.
+The **Connected apps** list shows everything connected to the vault, keys and sign-in apps alike: the agents that have spoken through each, what it may do, and when it was last used. **Details** shows the exact kind and scopes; **Disconnect** stops it at once.
 
-<Aside kind="tip" title="Advanced: one key for several agents">
+One key can carry many agents (a Grok bot with several personalities, Claude Code with several roles): each names itself with the `agent` argument on every call. An agent can't take a name another app or key already uses: the first connection to write as a name holds it. Agents in one app share its key, so to keep one apart, make it a single-agent key through the API.
 
-Under **Advanced** you can make a **shared key** instead: several agents use it, each naming itself with the `agent` argument on every call. An agent can't take a name another app or key already uses: the first connection to write as a name holds it, and a single-agent connection always holds its own. Prefer one connection per agent; you can trust and revoke them one by one.
-
-</Aside>
-
-**Or let the agent connect itself.** An agent that can run commands (Claude Code with the plugin's `/hippocampus:connect`, or any agent that reads `https://<your-instance>/llms.txt`) asks for a code, shows it to you, and you approve it at **/dashboard/connect/**: which vault, which agent, what it may do. It then picks up its key by itself.
+**Or let the agent connect itself.** An agent that can run commands (Claude Code with the plugin's `/hippocampus:connect`, or any agent that reads `https://<your-instance>/llms.txt`) asks for a code, shows it to you, and you approve it at **/dashboard/connect/**: just which vault. It then picks up its key by itself.
 
 The curator's key is made under **Nightly curation**, not here: see <Link guide="nightly-sleep">the nightly sleep</Link>.
 

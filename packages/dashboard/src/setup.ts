@@ -22,7 +22,7 @@
 //   hosted  POST access            { note } → { ok: true }  (waitlisted accounts ask to be let in)
 //   hosted  GET  repos             → { installation: { id }, repos: HostedRepo[] }  (the just-installed app's repos)
 //   hosted  POST init              HostedInitRequest → HostedInitResult  (initializes or adopts the repo)
-//   hosted  GET  keys              → { keys: HostedKeyInfo[] }
+//   hosted  GET  keys              → { keys: HostedKeyInfo[], agents?: HostedAgentClaim[] }
 //   hosted  POST keys              HostedKeyRequest → HostedMintedKey
 //   hosted  POST keys/revoke       { id } → { ok: true }
 //   hosted  POST curator-actions   { enable: boolean } → { enabled, path }  (the vault's nightly sleep on GitHub Actions)
@@ -328,6 +328,13 @@ export interface HostedGitLab {
   newRepoUrl: string;
 }
 
+/** An agent name and the connection that holds it: `key:<key id>` or `oauth:<grant id>`. Who has spoken through what. */
+export interface HostedAgentClaim {
+  agent: string;
+  credential: string;
+  since: string;
+}
+
 /** A vault key, without the key: only its SHA-256 is stored. */
 export interface HostedKeyInfo {
   id: string;
@@ -336,6 +343,8 @@ export interface HostedKeyInfo {
   agent?: string;
   scopes: string[];
   label: string;
+  /** The app it was made for (`claude-code`, `cursor`…), when known. */
+  app?: string;
   created: string;
   lastUsed?: string;
 }

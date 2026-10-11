@@ -166,6 +166,7 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
       revokeOAuthGrants: (accountId) => apps.revokeAll(accountId),
       revokeVaultGrants: (accountId, vaultId) => apps.revokeVault(accountId, vaultId),
       releaseCredentials: (vaultId, credentials) => releaseClaims(vaultId, credentials),
+      claims: async (vault) => (await stubFor(vaultMeta(vault))).claims(),
       seatAgent: async (vault, agent, via) => {
         const stub = await stubFor(vaultMeta(vault));
         if (!(await stub.party()).some((p) => p.id === agent.id)) await stub.addParty(agent, via);

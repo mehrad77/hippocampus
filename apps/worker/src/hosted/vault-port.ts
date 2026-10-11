@@ -1,3 +1,4 @@
+import type { AgentClaim } from "./agent-claims.ts";
 import type { VaultRecord } from "./registry.ts";
 import type { DashboardUser, VaultGrant, VaultMeta } from "./vault-runtime.ts";
 
@@ -5,7 +6,7 @@ import type { DashboardUser, VaultGrant, VaultMeta } from "./vault-runtime.ts";
 // it calls, typed structurally so the Worker's routing and its tests stay free of Workers-only
 // modules. worker.ts hands the real namespace in, so the compiler holds these to the class.
 
-export type { DashboardUser, VaultGrant, VaultMeta };
+export type { AgentClaim, DashboardUser, VaultGrant, VaultMeta };
 
 export interface PartyMember {
   id: string;
@@ -24,6 +25,8 @@ export interface VaultStub {
   linkHuman(id: string, logins: { github?: string | null; gitlab?: string | null }, via: string, create?: { domains?: string[] }): Promise<{ changed: boolean }>;
   /** Connections were revoked (`key:<hash>`, `oauth:<grant>`): free the agent names they held. */
   releaseClaims(credentials: string[]): Promise<number>;
+  /** Which connection holds which agent name, for the Connections panel. */
+  claims(): Promise<AgentClaim[]>;
   disconnect(reason: string): Promise<void>;
   /** Wipe the vault's Durable Object (account deletion). The repo stays. */
   destroy(): Promise<void>;
