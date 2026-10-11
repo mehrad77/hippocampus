@@ -505,9 +505,9 @@ async function main(): Promise<void> {
       const theirs = await gmAgent.whoami();
       check(mine.name === "Lisbon relocation" && mine.human === "player", `player's key: ${JSON.stringify(mine)}`);
       check(theirs.name === "Harbor term" && theirs.human === "game-master", `game-master's key: ${JSON.stringify(theirs)}`);
-      // Whoever set the vault up is its first human, linked to their GitHub login.
-      check(mine.humans.length === 1 && mine.humans[0]!.github === "player", `player's humans: ${JSON.stringify(mine.humans)}`);
-      check(theirs.humans.length === 1 && theirs.humans[0]!.github === "game-master", `game-master's humans: ${JSON.stringify(theirs.humans)}`);
+      // Whoever set the vault up is its first human; their GitHub login stays off the wire (routes.test checks it's set).
+      check(mine.humans.length === 1 && mine.humans[0]!.id === "player" && mine.humans[0]!.github === undefined, `player's humans: ${JSON.stringify(mine.humans)}`);
+      check(theirs.humans.length === 1 && theirs.humans[0]!.id === "game-master" && theirs.humans[0]!.github === undefined, `game-master's humans: ${JSON.stringify(theirs.humans)}`);
       const recall = await gmAgent.call("recall", { query: "migration agency residence permit" });
       check(!recall.isError && !recall.text.includes("migration-agency"), "game-master's key found player's notes");
       const o = await gm.api<{ campaign: string }>("overview");

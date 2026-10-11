@@ -1,4 +1,4 @@
-import { VaultError, type Catalog, type ChroniclePage, type EntityDetail, type Graph, type HippoService, type Overview, type SearchResult, type Vault } from "@hippocampus/core";
+import { VaultError, type HippoService, type Vault } from "@hippocampus/core";
 import type { DashboardSource, Mode, VaultInfo } from "./source.ts";
 
 export interface ServiceSourceOptions {
@@ -8,19 +8,8 @@ export interface ServiceSourceOptions {
   curator?: DashboardSource["curator"];
 }
 
-/** How the dashboard reads: as the vault's human, who sees their own confidential values (core's `ReadAs.human`). */
+/** The dashboard reads as the vault's human, who sees their own confidential values. */
 export const HUMAN_READ = { human: true } as const;
-type HumanRead = typeof HUMAN_READ;
-
-/** The service's human views with core's read option. Core's own signatures, once they take it, satisfy this as they are. */
-interface HumanReads {
-  overview(opts: HumanRead): Promise<Overview>;
-  catalog(opts: HumanRead): Promise<Catalog>;
-  graph(opts: HumanRead): Promise<Graph>;
-  chronicle(month: string | undefined, opts: HumanRead): Promise<ChroniclePage>;
-  entityDetail(ref: string, opts: HumanRead): Promise<EntityDetail>;
-  search(query: string, opts: { limit?: number } & HumanRead): Promise<SearchResult>;
-}
 
 /**
  * A dashboard over a `HippoService`: a local vault, a GitHub repo, the Worker, or the demo.
@@ -36,7 +25,6 @@ export function serviceSource(service: HippoService, info: { mode: Mode; vault: 
     return h.id;
   };
   const whoami = () => (human ??= service.vault().then(pick));
-  const reads = service as HippoService & HumanReads;
   return {
     async info() {
       const vault = await service.vault();
@@ -52,13 +40,13 @@ export function serviceSource(service: HippoService, info: { mode: Mode; vault: 
         actor: { kind: "human", id },
       };
     },
-    overview: () => reads.overview(HUMAN_READ),
-    catalog: () => reads.catalog(HUMAN_READ),
-    entity: (ref) => reads.entityDetail(ref, HUMAN_READ),
-    graph: () => reads.graph(HUMAN_READ),
-    chronicle: (month) => reads.chronicle(month, HUMAN_READ),
-    search: (query, limit) => reads.search(query, { limit, ...HUMAN_READ }),
-    rule: (dispute, choice, via) => service.rule(dispute, choice, { via }),
+    overview: () => service.overview(HUMAN_READ),
+    catalog: () => service.catalog(HUMAN_READ),
+    entity: (ref) => service.entityDetail(ref, HUMAN_READ),
+    graph: () => service.graph(HUMAN_READ),
+    chronicle: (month) => service.chronicle(month, HUMAN_READ),
+    search: (query, limit) => service.search(query, { limit, ...HUMAN_READ }),
+    rule: async (dispute, choice, via) => service.rule(dispute, choice, { via, as: await whoami() }),
     goal: async (ref, update) => {
       const id = await whoami();
       return service.updateGoal(id, ref, update, { asHuman: id });
