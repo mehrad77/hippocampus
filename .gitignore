@@ -24,3 +24,7 @@ apps/worker/wrangler.deploy.json
 
 # Astro generated types and cache
 .astro/
+
+# Claude Code's per-session state; .claude/launch.json is shared and committed
+.claude/worktrees/
+.claude/scheduled_tasks.lock

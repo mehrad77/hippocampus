@@ -28,16 +28,17 @@ Run the CLI from source (tsx, no build):
 
 ## Try changes safely
 
-- Work on a copy: `cp -r ~/vaults/my-campaign /tmp/vault-copy && ./apps/cli/bin/hippo -v /tmp/vault-copy sleep --no-git`.
+- Work on a copy: `cp -r ~/vaults/my-vault /tmp/vault-copy && ./apps/cli/bin/hippo -v /tmp/vault-copy sleep --no-git`.
 - Or run `hippo sleep --dry-run` on the real vault. It runs the curator but writes nothing.
-- Never point tests at your real vault. Tests use in-memory fixtures (`packages/core/src/__fixtures__/vault.ts`).
+- Never point tests at your real vault. Tests use in-memory fixtures: `packages/core/src/__fixtures__/` (`vault.ts`, `managed.ts`, and `v1-vault.ts` for migrations), `packages/curator/src/__fixtures__/night.ts` with `ScriptedLLM` for golden nights, and `packages/dashboard/src/__fixtures__/`.
 
 ## Demos
 
 Use these for UI work, screenshots and bug reports. Everything in them is fictional.
 
-- `pnpm dev:dashboard` runs the dashboard UI with hot reload against the demo campaign. `HIPPO_VAULT=<dir> pnpm dev:dashboard` uses a local vault instead, which is private data: never commit or share what it shows.
+- `pnpm dev:dashboard` runs the dashboard UI with hot reload against the demo campaign, under `/dashboard/` (not `/`). `HIPPO_VAULT=<dir> pnpm dev:dashboard` uses a local vault instead, which is private data: never commit or share what it shows.
 - `HIPPO_DEMO_HOSTED=1 pnpm dev:dashboard` puts a pretend hosted app in front of the demo: sign-in, waitlist, GitHub App install, vault setup, keys, curator, admin and account pages, with nothing touching GitHub. `GET /dashboard/api/__demo/stage?to=<stage>` jumps to a stage (`signed-out`, `waitlisted`, `requested`, `approved`, `installed`, `ready`); add `&provider=gitlab` to walk the GitLab path.
+- `.claude/launch.json` names these for preview tools: `dashboard` (port 4400), `dashboard-hosted` (4401, with `HIPPO_DEMO_HOSTED=1`), `fake-github` (8786) and `worker` (8787).
 - `./apps/cli/bin/hippo dashboard --demo` serves the built dashboard with the demo campaign, as users see it.
 
 ## The hosted app
@@ -60,9 +61,15 @@ pnpm --filter @hippocampus/worker dev:github
 pnpm --filter @hippocampus/worker dev
 ```
 
-Open http://127.0.0.1:8787/. `dev` builds the dashboard and applies the registry migrations to a local D1 first. Pass `--choose` to the fake to pick the user at each sign-in (use two browser profiles), or `--login game-master` to be the other one. Tests use the same pieces in memory (`apps/worker/src/hosted/testing.ts`, `FakeGitHub` in `packages/store-github`).
+Open http://127.0.0.1:8787/. `dev` builds the dashboard and applies the registry migrations to a local D1 first. Pass `--choose` to the fake to pick the user at each sign-in (use two browser profiles), or `--login game-master` to be the other one. Tests use the same pieces in memory: `apps/worker/src/hosted/testing.ts` (the registry on `node:sqlite`, a GitHub App key pair, `FakeGitHub` from `packages/store-github`), and `apps/worker/src/testing/hosted-app.ts`, the whole hosted app as a harness, with `FakeGitLab` from `packages/store-gitlab` when asked.
 
 Never point the dev Worker at a real GitHub App or a real vault repo.
+
+Worker runtime notes:
+
+- **Assets.** The dashboard build is the Worker's asset directory. `run_worker_first` sends `/dashboard` and `/dashboard/*` through the Worker (security headers, the API), except the hashed `/dashboard/_astro/*` files, which the asset store serves directly. There's no `not_found_handling`, so any other path that isn't a file (`/mcp`, `/authorize`, the OAuth callbacks) reaches the Worker.
+- **Settings.** `wrangler dev` reads `apps/worker/.dev.vars`. The smoke test passes `--env-file` instead, which makes wrangler skip `.dev.vars` entirely, so your own settings stay out of it.
+- **The OAuth library's routes.** `@cloudflare/workers-oauth-provider` owns `/mcp` as a prefix (so `/mcp/<vault id>` needs a token too, and the library answers its CORS), the token and registration endpoints (`/oauth/token`, `/oauth/register`) and the `.well-known` OAuth metadata. Everything else, `/authorize` included, goes to the app's own routes (`site` in `apps/worker/src/app.ts`). The server card sits under `/mcp` but is public, so the app answers it before the library sees the request.
 
 ## The template bundle
 
@@ -179,7 +186,7 @@ The Worker's own secrets (`HIPPO_PUBLIC_URL`, `HIPPO_ADMINS`, the GitHub App's) 
    pnpm exec wrangler d1 migrations apply REGISTRY --remote -c wrangler.deploy.json
    pnpm exec wrangler deploy -c wrangler.deploy.json --tag bootstrap
    ```
-5. Set the Worker's secrets ([USAGE.md §8](USAGE.md#running-your-own-instance), step 3), with `HIPPO_PUBLIC_URL=https://<host>`: `pnpm exec wrangler secret bulk -c wrangler.deploy.json <file>`, from a file outside the repo that you delete afterwards.
+5. Set the Worker's secrets ([USAGE.md §8](USAGE.md#running-your-own-instance), step 3), with `HIPPO_PUBLIC_URL=https://<host>`: `pnpm exec wrangler secret bulk -c wrangler.deploy.json <file>`, from a file outside the repo that you delete afterwards. Secrets attach to the Worker by name, and `wrangler.deploy.json` (from `scripts/deploy.mjs`) keeps `wrangler.jsonc`'s, so `wrangler secret put` and `wrangler secret bulk` reach the same Worker with or without `-c wrangler.deploy.json`.
 6. Check it: `HIPPO_HOST=<host> node scripts/deploy.mjs probe`. Then by hand:
    - sign in;
    - install the app on a throwaway private repo;

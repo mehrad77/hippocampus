@@ -28,6 +28,7 @@ export interface HippoServerOptions {
   holds?: (agent: string) => boolean | Promise<boolean>;
 }
 
+// Also defined in apps/worker/src/hosted/registry.ts (KIND_SCOPES) and apps/worker/src/oauth.ts (SCOPE_LABELS).
 /**
  * `read`: every read tool and resource. `remember`: write episodes. `goal`: update goals.
  * `curate`: run sleep, which shows the agent every episode in full, secret values included.
@@ -405,6 +406,9 @@ export function createHippoServer({ service, agent, scopes, version = SERVER_VER
     ),
   );
 
+  // How the SDK resolves a read (shared/uriTemplate.js): an exact URI first, then templates in
+  // registration order, first whole-URI match wins. `{slug}` matches `[^/,]+`, so never a `/`;
+  // `{?q,limit}` needs every listed param, in order. Matches come back percent-encoded: see `param`.
   scoped(
     "read",
     server.registerResource(

@@ -179,7 +179,10 @@ export interface ProviderHandlers {
 /** The library's options. The env it's given needs only `OAUTH_KV`. */
 export function providerOptions(publicUrl: string, handlers: ProviderHandlers): OAuthProviderOptions<{ OAUTH_KV: unknown }> {
   const resource = `${publicUrl}${MCP_PATH}`;
+  // The library's own docs: apps/worker/node_modules/@cloudflare/workers-oauth-provider/docs/.
   return {
+    // Matched as a prefix (`/mcp` and `/mcp/…`), so `/mcp/<vault id>` needs a token too. The library
+    // answers CORS for this route itself: OPTIONS gets a 204, responses reflect the Origin.
     apiRoute: MCP_PATH,
     apiHandler: { fetch: (request: Request, _env: unknown, ctx: OAuthContext) => handlers.mcp(request, ctx) },
     defaultHandler: { fetch: (request: Request) => handlers.site(request) },
@@ -189,12 +192,15 @@ export function providerOptions(publicUrl: string, handlers: ProviderHandlers): 
     scopesSupported: [...SCOPES, LEGACY_GOAL_SCOPE],
     requiredScopes: ["read"],
     resourceMetadata: { resource, authorization_servers: [publicUrl], resource_name: "Hippocampus", bearer_methods_supported: ["header"] },
-    // Vault keys are ours too, just not issued through OAuth.
+    // Vault keys are ours too, just not issued through OAuth. A token in the library's own
+    // `<user>:<grant>:<secret>` shape never gets here. Null is a 401 with a challenge; a throw (other
+    // than ExternalTokenError) escapes to app.ts's 500. Props land on ctx.props; ctx.auth.scope is [].
     resolveExternalToken: async ({ token }: { token: string }) => {
       const props = await handlers.resolveKey(token);
       return props ? { props, audience: resource } : null;
     },
     // Instead of the library's own log line, whose descriptions can quote what a client sent.
+    // Returning nothing keeps the library's own error response.
     onError: ({ status, code }: { status: number; code: string }) => handlers.error({ status, code }),
   };
 }
@@ -365,6 +371,7 @@ function notReady(caller: Caller): Response | undefined {
   return undefined;
 }
 
+// Scopes are also defined in packages/mcp/src/server.ts (SCOPES) and apps/worker/src/hosted/registry.ts (KIND_SCOPES).
 /** What a connector app gets: what a shared key has (registry's `KIND_SCOPES.agent`). */
 const SHARED_SCOPES = KIND_SCOPES.agent.filter((x): x is Scope => isScope(x) && x !== LEGACY_GOAL_SCOPE);
 

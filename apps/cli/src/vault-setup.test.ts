@@ -67,8 +67,7 @@ describe("initVault", () => {
   });
 
   it("writes exactly the files buildVaultFiles builds, the same vault the hosted app creates", async () => {
-    // The repo's own template, not assetRoot(): that can be a stale copy left by a local `pnpm build`.
-    const repo = join(import.meta.dirname, "../../..");
+    const repo = assetRoot();
     const template = readTree(join(repo, "vault-template"));
     const seed = readTree(join(repo, "seeds", "example-relocation"));
     // As published: npm strips .gitignore files, so the package ships it as `gitignore`.

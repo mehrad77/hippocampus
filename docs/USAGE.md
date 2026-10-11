@@ -39,7 +39,7 @@ If the current directory (or `-v`, or `HIPPO_VAULT`) is not a vault yet, the das
 
 Settings that Session Zero saves (curator model and key, default vault, hosted app URL) go to `~/.config/hippocampus/env` (mode 0600; set `HIPPO_CONFIG_DIR` to move it). The CLI reads that file after the shell environment and a local `.env`, so those still win. Keys are never sent back to the browser.
 
-After setup, the same command opens your campaign: the **Tavern** (what happened, what needs you, who you're overdue to contact), **Goals**, the **Council** (disputes, proposals and possible duplicates), the **Satchel** (the inbox), the **Codex** with entity sheets, the relation **Map**, the **Chronicle**, the **Party**, and **Guides**. Use `--github you/my-campaign` for a vault on GitHub, or `--mcp https://…/mcp` with `HIPPO_MCP_TOKEN` for any Hippocampus MCP server. Over MCP, writes are filed as that token's agent and rulings aren't available. `--demo` opens a fictional campaign to explore.
+After setup, the same command opens your campaign: the **Tavern** (what happened, what needs you, who you're overdue to contact), **Goals**, the **Council** (disputes, proposals and possible duplicates), the **Satchel** (the inbox), the **Codex** with entity sheets, the relation **Map**, the **Chronicle**, the **Party**, and **Guides**. Use `--github you/my-vault` for a vault on GitHub, or `--mcp https://…/mcp` with `HIPPO_MCP_TOKEN` for any Hippocampus MCP server. Over MCP, writes are filed as that token's agent and rulings aren't available. `--demo` opens a fictional campaign to explore.
 
 The dashboard has two looks, set under **Setup & health → Personalization** (the last card) and saved in your browser:
 - **Plain** (the default): IBM Carbon design, everyday names (Home, Goals, Disputes, Inbox, Records, Timeline, Agents) and Confirmed/Unverified for fact status.
@@ -55,7 +55,7 @@ Start from the empty template, the fictional example campaign, or your own seed 
 
 ```bash
 npx @mehrad77/hippocampus init ~/vaults/my-memory --name "Harbor term" --human sam --preset people student
-npx @mehrad77/hippocampus init ~/vaults/my-campaign --seed example-relocation
+npx @mehrad77/hippocampus init ~/vaults/my-vault --seed example-relocation
 ```
 
 | Flag | |
@@ -103,7 +103,7 @@ npx @mehrad77/hippocampus -v ~/vaults/my-memory domain add health side-project
 Create an **empty private** repository on GitHub, then:
 
 ```bash
-cd ~/vaults/my-campaign && git add -A && git commit -m "chore: new vault" && git remote add origin git@github.com:<you>/<your-vault>.git && git push -u origin main
+cd ~/vaults/my-vault && git add -A && git commit -m "chore: new vault" && git remote add origin git@github.com:<you>/<your-vault>.git && git push -u origin main
 ```
 
 Optionally, use the [obsidian-git](https://github.com/Vinzent03/obsidian-git) plugin to sync your own edits.
@@ -111,13 +111,13 @@ Optionally, use the [obsidian-git](https://github.com/Vinzent03/obsidian-git) pl
 ## 3. Secrets
 
 ```bash
-npx @mehrad77/hippocampus -v ~/vaults/my-campaign secrets keygen
+npx @mehrad77/hippocampus -v ~/vaults/my-vault secrets keygen
 ```
 
 This writes the public key into `_hippo/config.yaml` and the private identity to `~/.config/hippocampus/age-identity.txt`. **Back the identity up** (e.g. in a password manager). Without it, secret facts can't be decrypted. To read secrets:
 
 ```bash
-npx @mehrad77/hippocampus -v ~/vaults/my-campaign secrets show passport
+npx @mehrad77/hippocampus -v ~/vaults/my-vault secrets show passport
 ```
 
 ## 4. Connect your agents
@@ -127,13 +127,13 @@ Every agent should first call `onboard` (or read `HANDBOOK.md` in the vault). Th
 **MCP (local agents):**
 
 ```bash
-claude mcp add hippocampus -- npx -y @mehrad77/hippocampus -v ~/vaults/my-campaign serve --agent game-master
+claude mcp add hippocampus -- npx -y @mehrad77/hippocampus -v ~/vaults/my-vault serve --agent game-master
 ```
 
 Or serve over local HTTP at `http://127.0.0.1:8765/mcp?agent=<id>`:
 
 ```bash
-npx @mehrad77/hippocampus -v ~/vaults/my-campaign serve --http 8765
+npx @mehrad77/hippocampus -v ~/vaults/my-vault serve --http 8765
 ```
 
 Tools: `onboard`, `introduce`, `remember`, `recall`, `get`, `neighbors`, `ask_canon`, `briefing` (with `about`, a brief on one person before contacting them), `update_goal` (`update_quest` still works), plus the curator's `sleep_*` tools (§5).
@@ -142,7 +142,7 @@ Tools: `onboard`, `introduce`, `remember`, `recall`, `get`, `neighbors`, `ask_ca
 
 **Confidential** values stay in your notes but out of search, summaries, the chronicle and every agent's view, except an agent bound to its id (a single-agent key, an OAuth connection, `serve --agent`) with authority over them. The curator sees them while curating. For remote agents and Claude.ai or ChatGPT connectors, use the hosted app (§8).
 
-Agent ids are exact: lowercase letters, digits and dashes, matching `party/<id>.md`. Your own id (the config's `human`) and the reserved ids `human`, `curator`, `unknown` and `hippocampus` are refused. An agent without a party sheet can still write, but its memories count as rumors until you approve it (§6). One `remember` call takes at most 8 KB; split longer memories.
+Agent ids are exact: lowercase letters, digits and dashes, matching `party/<id>.md`. Your humans' ids (the config's `humans:`) and the reserved ids `human`, `curator`, `unknown` and `hippocampus` are refused. An agent without a party sheet can still write, but its memories count as rumors until you approve it (§6). One `remember` call takes at most 8 KB; split longer memories.
 
 **Inbox files (local tools without MCP):** a tool that can't speak MCP may write one new file per memory to `inbox/<its-id>/`, in the format `HANDBOOK.md` shows. It must never edit other files. The vault's `AGENTS.md` tells agents to use MCP instead, since the tools run the checks.
 
@@ -151,7 +151,7 @@ Search uses a persistent index in `~/.cache/hippocampus/` (or `$XDG_CACHE_HOME`)
 **Semantic recall (optional).** Load an embedding model in LM Studio or Ollama and set `HIPPO_EMBED_MODEL`. Recall then also finds notes by meaning ("accommodation" finds the apartment hunt), fused with keyword matches and re-ranked along relations:
 
 ```bash
-HIPPO_EMBED_PROVIDER=ollama HIPPO_EMBED_MODEL=bge-m3 npx @mehrad77/hippocampus -v ~/vaults/my-campaign index
+HIPPO_EMBED_PROVIDER=ollama HIPPO_EMBED_MODEL=bge-m3 npx @mehrad77/hippocampus -v ~/vaults/my-vault index
 ```
 
 Notes are embedded once and again only when they change. A multilingual model such as `bge-m3` suits vaults that mix languages. If the model server is down, search falls back to keywords. Raise `HIPPO_EMBED_MIN_SIMILARITY` (default 0.35) if unrelated notes show up. Changing the model re-embeds everything on the next run.
@@ -159,7 +159,7 @@ Notes are embedded once and again only when they change. A multilingual model su
 **Without a checkout:** every command except `init` and `audit` can work on the GitHub repo directly. Each write becomes one commit through the GitHub API. If someone pushed to the same file in the meantime, the write is refused instead of overwriting their change. Use a fine-grained token with **Contents: read and write** on the vault repo only:
 
 ```bash
-HIPPO_GITHUB_TOKEN=github_pat_… npx @mehrad77/hippocampus --github you/my-campaign serve --agent game-master
+HIPPO_GITHUB_TOKEN=github_pat_… npx @mehrad77/hippocampus --github you/my-vault serve --agent game-master
 ```
 
 Append `#branch` to use a branch other than `main`, or set `HIPPO_GITHUB_REPO` instead of passing `--github`.
@@ -179,10 +179,10 @@ Failed or skipped episodes stay in the inbox for the next run. There are two way
 `hippo sleep` runs the pipeline with a model you configure, and adds git around it (pull first, then commit and push):
 
 ```bash
-HIPPO_LLM_PROVIDER=lmstudio HIPPO_LLM_MODEL=google/gemma-4-26b-a4b-qat npx @mehrad77/hippocampus@0.1 -v ~/vaults/my-campaign sleep
+HIPPO_LLM_PROVIDER=lmstudio HIPPO_LLM_MODEL=google/gemma-4-26b-a4b-qat npx @mehrad77/hippocampus@0 -v ~/vaults/my-vault sleep
 ```
 
-With `--github you/my-campaign`, the pull and push collapse into a single commit made through the API, with no clone needed. Pin the version (`@0.1`) so upgrades are deliberate. To schedule it on macOS, let Session Zero install it (Setup → Nightly sleep), or use [ops/com.hippocampus.sleep.plist](../ops/com.hippocampus.sleep.plist). Elsewhere, use cron or systemd. Models that worked well locally are MoE models with ~4B active parameters. Very long "thinking" models can hit the per-call timeout (`HIPPO_LLM_TIMEOUT_MS`). See [.env.example](../.env.example) for all settings.
+With `--github you/my-vault`, the pull and push collapse into a single commit made through the API, with no clone needed. Pin the major version (`@0`) so upgrades are deliberate. To schedule it on macOS, let Session Zero install it (Setup → Nightly sleep), or use [ops/com.hippocampus.sleep.plist](../ops/com.hippocampus.sleep.plist). Elsewhere, use cron or systemd. Models that worked well locally are MoE models with ~4B active parameters. Very long "thinking" models can hit the per-call timeout (`HIPPO_LLM_TIMEOUT_MS`). See [.env.example](../.env.example) for all settings.
 
 Before it writes, `hippo sleep` audits its own changes (§9) and refuses the commit if, for example, a secret value would land in a note in plain text.
 
@@ -202,7 +202,7 @@ Each question is one step of the pipeline above, with instructions, input and a 
 
 The curator sees every new memory in full, secret ones in plain text, so its model's provider does too. Pick an agent and provider you'd trust with that.
 
-**The Claude Code plugin.** This repo is also a Claude Code plugin marketplace. The plugin connects Claude Code to a vault over HTTP (it reads `HIPPO_MCP_URL` and `HIPPO_KEY`) and adds three skills: `/hippocampus:memory` for everyday agents, `/hippocampus:sleep` for the curator, and `/hippocampus:sleep-setup` to set up nightly sleep.
+**The Claude Code plugin.** This repo is also a Claude Code plugin marketplace. The plugin connects Claude Code to a vault over HTTP (it reads `HIPPO_MCP_URL` and `HIPPO_KEY`) and adds four skills: `/hippocampus:memory` for everyday agents, `/hippocampus:connect` for an agent to connect itself (§8), `/hippocampus:sleep` for the curator, and `/hippocampus:sleep-setup` to set up nightly sleep.
 
 ```bash
 claude plugin marketplace add mehrad77/hippocampus
@@ -221,7 +221,7 @@ Then run `/hippocampus:sleep` in Claude Code. Without the plugin, the server's p
 **On a schedule.** Once a day suits most vaults; every hour suits agents that write a lot. A cron line on a machine that's on at that hour:
 
 ```bash
-30 3 * * * HIPPO_MCP_URL=https://<your-instance>/mcp HIPPO_KEY=<your curator key> claude -p "/hippocampus:sleep" --allowedTools "mcp__hippocampus__*"
+30 3 * * * HIPPO_MCP_URL=https://<your-instance>/mcp/<vault id> HIPPO_KEY=<your curator key> claude -p "/hippocampus:sleep" --allowedTools "mcp__hippocampus__*"
 ```
 
 Scheduled tasks in Claude Code, Claude Desktop or Cursor work too. Schedule this prompt where the server is connected with the curator key: "Run the Hippocampus sleep procedure as the vault's curator: call sleep_start with your model name, then answer its questions until the run is done."
@@ -238,7 +238,7 @@ Scheduled tasks in Claude Code, Claude Desktop or Cursor work too. Schedule this
 
 Turning it off on the setup page removes the file.
 
-**Locally.** `hippo serve` offers the same tools, with no key: connect your agent with `claude mcp add hippocampus -- npx -y @mehrad77/hippocampus -v ~/vaults/my-campaign serve` and run `/mcp__hippocampus__sleep`. Commit and push the result yourself, or keep using `hippo sleep`.
+**Locally.** `hippo serve` offers the same tools, with no key: connect your agent with `claude mcp add hippocampus -- npx -y @mehrad77/hippocampus -v ~/vaults/my-vault serve` and run `/mcp__hippocampus__sleep`. Commit and push the result yourself, or keep using `hippo sleep`.
 
 ### House rules
 
@@ -258,7 +258,7 @@ Turning it off on the setup page removes the file.
 Bump the pinned version in your schedule and CI, then run:
 
 ```bash
-npx @mehrad77/hippocampus@<new> -v ~/vaults/my-campaign migrate
+npx @mehrad77/hippocampus@<new> -v ~/vaults/my-vault migrate
 ```
 
 The tool refuses to write to a vault whose format version differs from its own. `hippo validate` reports the mismatch (this release still passes a v1 vault, with a hint, so pinned CI keeps working), and `migrate` upgrades the files and `_hippo/config.yaml`'s `version`. In a git vault it commits exactly the files it changed, as `Hippo-Actor: migration`; `--dry-run` lists them. It prints what it couldn't carry over as it was (an extra clock becomes an objective, for example). The hosted app never migrates by itself: until the owner clicks Upgrade on the dashboard, agents get `VAULT_UPGRADE_NEEDED` and the dashboard shows only the Upgrade banner. Read [CHANGELOG.md](../CHANGELOG.md) for format changes.
@@ -312,7 +312,7 @@ The setup page has snippets for Claude Code, Claude Desktop, Cursor, VS Code, Wi
 
 **Reconnecting.** If the app is uninstalled or suspended, the repo is removed from the installation or deleted, or the repo is made public, the vault is disconnected and stops answering. The setup page says why. Undo it on GitHub (install again, make the repo private) and it reconnects. On GitLab, make the project private again, or connect GitLab again if you revoked the app.
 
-**Limits.** Per vault: 2,000 episodes waiting in the inbox, 20 waiting introductions, 20,000 files, 50 MB of text, 24 sleep runs a day, and 50 keys. Requests are rate-limited per key, account and IP. An admin can raise these for one vault (`POST /dashboard/api/admin/vaults/quotas` with `{"id", "quotas": {"sleepRunsPerDay": 96}}`); `null` restores the defaults.
+**Limits.** Per vault: 2,000 episodes waiting in the inbox, 20 waiting introductions, 20,000 files, 50 MB of text, 24 sleep runs a day, and 50 keys. An admin can raise these for one vault (`POST /dashboard/api/admin/vaults/quotas` with `{"id", "quotas": {"sleepRunsPerDay": 96}}`); `null` restores the defaults. A vault also holds at most 20 people (the owner and 19 others) and 20 open invites, and a person owns at most 5 vaults and has 10 open invites to the app. Requests per minute (`ratelimits` in `wrangler.jsonc`): 10 sign-ins or device connects per IP (`RL_SIGNIN`), 120 dashboard writes per account (`RL_API`), 240 MCP requests per key or connected app (`RL_MCP`), and 3 client registrations per IP (`RL_REGISTER`).
 
 **Deleting your account.** Your account menu deletes everything the app holds for you, after you type your GitHub login: keys stop working, connected apps are signed out, the GitHub App is uninstalled (or your GitLab connection is revoked), and your account and every vault's index and cache are erased. Your vault repos stay where they are, untouched.
 
@@ -347,7 +347,7 @@ pnpm exec wrangler kv namespace create OAUTH_KV
 
 The rate limiters' `namespace_id`s only need to be unique within your account.
 
-**3. Set the secrets.** Each with `pnpm exec wrangler secret put <NAME>`:
+**3. Set the secrets.** Each with `pnpm exec wrangler secret put <NAME>`, from `apps/worker`. Secrets attach to the Worker by name, and `wrangler.deploy.json` (from `scripts/deploy.mjs`) keeps `wrangler.jsonc`'s, so `wrangler secret put` and `wrangler secret bulk` reach the same Worker with or without `-c wrangler.deploy.json`.
 
 | Secret | Value |
 | --- | --- |
@@ -357,7 +357,7 @@ The rate limiters' `namespace_id`s only need to be unique within your account.
 | `GITHUB_APP_WEBHOOK_SECRET` | The webhook secret you chose |
 | `GITHUB_APP_PRIVATE_KEY` | The PKCS#8 key: `pnpm exec wrangler secret put GITHUB_APP_PRIVATE_KEY < app.pkcs8.pem` |
 
-Until they're all set, the Worker answers with a page naming the missing ones (names only, never values).
+Until they're all set, the Worker answers with a page naming the missing ones (names only, never values). Every setting the Worker reads, optional ones included, is listed in [`apps/worker/src/hosted/env.ts`](../apps/worker/src/hosted/env.ts); the CLI's are in [`.env.example`](../.env.example).
 
 **3b. GitLab (optional).** To let people keep their vault in a GitLab project, create an OAuth application on gitlab.com (User Settings → Applications, or Admin → Applications on a self-managed instance) with the redirect URI `https://<your-host>/oauth/gitlab/callback`, the `api` scope, and **Confidential** ticked. Then set all three, plus `GITLAB_URL` for a self-managed instance:
 
@@ -402,7 +402,7 @@ Every commit Hippocampus makes names its actor in a trailer: `Hippo-Actor: agent
 - the human (no trailer, or `human`) may change anything.
 
 ```bash
-npx @mehrad77/hippocampus -v ~/vaults/my-campaign audit --since "7 days ago"
+npx @mehrad77/hippocampus -v ~/vaults/my-vault audit --since "7 days ago"
 ```
 
 `--range a..b` audits a revision range instead. It prints commit, path and rule, never content, and exits 1 on a violation. The hosted app runs the same checks before every commit, so a violation in a hosted vault means a commit that didn't come through the app. Trailers are claims: they catch bugs and misbehaving models, not someone who can push to the repo.

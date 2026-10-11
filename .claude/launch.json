@@ -1,0 +1,43 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@hippocampus/dashboard-ui",
+        "dev",
+        "--port",
+        "4400"
+      ],
+      "port": 4400
+    },
+    {
+      "name": "dashboard-hosted",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "HIPPO_DEMO_HOSTED=1",
+        "pnpm",
+        "--filter",
+        "@hippocampus/dashboard-ui",
+        "dev",
+        "--port",
+        "4401"
+      ],
+      "port": 4401
+    },
+    {
+      "name": "fake-github",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@hippocampus/worker", "dev:github"],
+      "port": 8786
+    },
+    {
+      "name": "worker",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--filter", "@hippocampus/worker", "dev"],
+      "port": 8787
+    }
+  ]
+}
