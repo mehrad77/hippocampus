@@ -268,6 +268,8 @@ describe("dashboard API: actions", () => {
     expect(await store.read("_hippo/config.yaml")).toContain(a.recipient);
     expect(await post("actions/secrets", { recipient: a.recipient })).toMatchObject({ status: 200, body: { changed: false } });
     expect(await post("actions/secrets", { recipient: b.recipient })).toMatchObject({ status: 400, body: { code: "VAULT" } });
+    expect(await post("actions/secrets", { recipient: b.recipient, replace: true })).toMatchObject({ status: 200, body: { changed: true } });
+    expect(await store.read("_hippo/config.yaml")).toContain(b.recipient);
   });
 
   it("domain: adds the new ones to the config, then lets an agent hold them", async () => {

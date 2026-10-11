@@ -5,7 +5,7 @@ import { useTerms } from "../../lib/prefs.ts";
 import type { Overview } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Panel } from "../../ui/Parts.tsx";
-import { ErrorCallout, Facts, Field, ToneTag, useAction } from "./common.tsx";
+import { ConfirmDialog, ErrorCallout, Facts, Field, ToneTag, useAction } from "./common.tsx";
 import { identityFileName, identityFileText } from "./hosted.ts";
 import { truncateKey } from "./model.ts";
 
@@ -22,6 +22,9 @@ export function SecretsPanel({ vaultName }: { vaultName: string }) {
   const [pasted, setPasted] = useState("");
   const [saved, setSaved] = useState(false);
   const [done, setDone] = useState(false);
+  // Replacing a key already set: the warning first, then the same make-or-paste flow as for a first key.
+  const [asking, setAsking] = useState(false);
+  const [replacing, setReplacing] = useState(false);
   const [makeError, setMakeError] = useState<unknown>();
 
   const file = identityFileName(vaultName);
@@ -46,24 +49,35 @@ export function SecretsPanel({ vaultName }: { vaultName: string }) {
   };
 
   const save = async (key: string) => {
-    const res = await action.run(() => postJson<{ changed: boolean }>("/actions/secrets", { recipient: key }));
+    const res = await action.run(() => postJson<{ changed: boolean }>("/actions/secrets", { recipient: key, ...(replacing ? { replace: true } : {}) }));
     if (!res) return;
     setDone(true);
+    setReplacing(false);
+    setIdentity(undefined);
+    setRecipient(undefined);
+    setPasted("");
     await overview.reload();
   };
 
-  const ok = has || done;
+  const ok = (has || done) && !replacing;
   // A made key must be saved by the person before the vault locks to it; a pasted public key has no file to save.
   const ready = identity ? saved : false;
 
   return (
     <Panel title="Secrets key" icon="key" id="secrets">
       <div className="stack">
-        <Facts rows={[["State", ok ? <ToneTag tone="done" word="Set" compact /> : <ToneTag tone="warn" word="Not set" compact />]]} />
+        <Facts rows={[["State", ok ? <ToneTag tone="done" word="Set" compact /> : <ToneTag tone="warn" word={replacing ? "Replacing" : "Not set"} compact />]]} />
         {ok ? (
-          <p className="small">
-            {v("Secret facts (passport numbers, account ids, passwords) are encrypted to this vault's key before they're stored.", "Secret facts are sealed to this vault's key before they're stored.")} To change the key, replace it from a clone with <code>hippo secrets keygen</code>.
-          </p>
+          <>
+            <p className="small">
+              {v("Secret facts (passport numbers, account ids, passwords) are encrypted to this vault's key before they're stored.", "Secret facts are sealed to this vault's key before they're stored.")} Lost the key file? Nobody can recover it, but you can replace the key and have your agents send the secrets again.
+            </p>
+            <div className="row">
+              <button type="button" className="btn btn--sm" onClick={() => setAsking(true)}>
+                <Icon name="key" /> Replace the key…
+              </button>
+            </div>
+          </>
         ) : (
           <>
             <p className="small">
@@ -71,6 +85,13 @@ export function SecretsPanel({ vaultName }: { vaultName: string }) {
             </p>
             {!recipient ? (
               <div className="stack sz-tight">
+                {replacing && (
+                  <div className="row">
+                    <button type="button" className="btn btn--ghost btn--sm" onClick={() => setReplacing(false)}>
+                      Cancel, keep the current key
+                    </button>
+                  </div>
+                )}
                 <div className="row">
                   <button type="button" className="btn btn--primary" onClick={() => void make()}>
                     <Icon name="key" /> {v("Make a key in this browser", "Forge a key in this browser")}
@@ -126,9 +147,28 @@ export function SecretsPanel({ vaultName }: { vaultName: string }) {
             )}
           </>
         )}
+        {replacing && <p className="small sz-warn-text">Replacing the key: secrets saved so far stay locked to the old key.</p>}
         {makeError !== undefined && <ErrorCallout error={makeError} />}
         {action.error !== undefined && <ErrorCallout error={action.error} />}
       </div>
+      <ConfirmDialog
+        open={asking}
+        onClose={() => setAsking(false)}
+        title="Replace the secrets key?"
+        confirmLabel="Replace the key"
+        danger
+        onConfirm={async () => {
+          setAsking(false);
+          setReplacing(true);
+        }}
+      >
+        <p>This is for a key file you lost, or one that leaked. The new key can't open anything the old one locked.</p>
+        <ul className="sz-howto">
+          <li>Secrets already saved (passport, ID and account numbers) stay locked to the old key. With the old key file you can still read them; without it, they're gone.</li>
+          <li>Secrets saved from now on are locked to the new key.</li>
+          <li>Ask your agents to send the old secrets again. A new one replaces the unreadable one.</li>
+        </ul>
+      </ConfirmDialog>
     </Panel>
   );
 }

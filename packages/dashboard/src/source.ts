@@ -115,8 +115,8 @@ export interface DashboardSource {
   addParty?(input: NewPartyMember, via?: string): Promise<{ slug: string; path: string }>;
   /** Add domains to the vault's config: the ones that were new. */
   addDomains?(ids: string[], via?: string): Promise<{ added: string[] }>;
-  /** Set the vault's secrets recipient (an age public key; the private key never comes here). `changed` is false when it already was that one. */
-  setSecretsRecipient?(recipient: string, via?: string): Promise<{ changed: boolean }>;
+  /** Set the vault's secrets recipient (an age public key; the private key never comes here). `changed` is false when it already was that one. A different recipient already set is refused unless `replace`. */
+  setSecretsRecipient?(recipient: string, via?: string, replace?: boolean): Promise<{ changed: boolean }>;
   /** Set what an agent is responsible for (its authority domains). */
   setAuthority?(agent: string, domains: string[], via?: string): Promise<{ agent: string; authority: string[] }>;
   /** Hosted: where each agent's name stands (agent-claims.ts): held by a connection, free, or released when its app was disconnected. */
