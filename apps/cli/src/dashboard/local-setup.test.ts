@@ -95,6 +95,9 @@ describe("local setup routes that reach the network", () => {
     await expect(setup.handle("GET", "tokens", undefined, url)).rejects.toMatchObject({ status: 501 });
     await expect(setup.handle("POST", "vault", { action: "github", repo: "player/lisbon-arc" }, url)).rejects.toMatchObject({ status: 400, code: "TOKEN_REQUIRED" });
     await expect(setup.handle("POST", "vault", { action: "open", dir: join(tmp, "nothing-here") }, url)).rejects.toMatchObject({ status: 400, code: "NOT_A_VAULT" });
+    // A preset is a bundled one, not a property every object has.
+    const create = { action: "create", dir: join(tmp, "new-vault"), campaign: "Lisbon arc", human: "player", timezone: "Europe/Lisbon", domains: ["housing"] };
+    await expect(setup.handle("POST", "vault", { ...create, presets: ["constructor"] }, url)).rejects.toMatchObject({ status: 400, code: "INVALID", message: 'No preset "constructor"' });
     const status = await setup.status();
     expect(status.vault).toBeUndefined();
     expect(status.items.find((i) => i.id === "vault")?.state).toBe("todo");

@@ -1,8 +1,7 @@
 ## Guidelines
-<!-- How you write, per language: register, script, length, emoji, greetings and sign-offs, and up to five habits that make it sound like you. One line each, scoped with (lang:xx). Agents read these before drafting in your name. For example:
-- (lang:fa) Finglish (Persian in Latin letters), casual, short; "salam" to open, no sign-off
+<!-- How you write, per language: register, script, length, emoji, greetings and sign-offs, and up to five habits that make it sound like you. One line each, scoped with (lang:xx); any language code works. Agents read these before drafting in your name. For example:
+- (lang:pt) "você" until they switch to "tu"; "Olá" to open, "Obrigado" to close
 - (lang:en) Plain and brief, first names, no emoji with people I don't know
-- (lang:tr) "siz" until they switch to "sen"; sign off with "iyi günler"
 -->
 
 ## Never say

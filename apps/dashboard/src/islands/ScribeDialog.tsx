@@ -63,12 +63,15 @@ export function ScribeDialog() {
   const [raw, setRaw] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const canRemember = !!session.data?.capabilities.remember;
+  // An MCP server from before these inputs refuses them, so they aren't offered (a session from before the flags has both).
+  const canConfidential = session.data?.capabilities.confidential !== false;
+  const canData = session.data?.capabilities.data !== false;
   const catalog = useResource<Catalog>(open && canRemember ? "/catalog" : null);
   // Aliases (`beat` → observation) stay accepted but aren't offered.
   const registry = catalog.data?.kinds;
   const kinds = (registry?.length ? registry : FALLBACK_KINDS).filter((k) => !k.aliasOf || k.name === kind);
   const current = kinds.find((k) => k.name === kind) ?? registry?.find((k) => k.name === kind) ?? FALLBACK_KINDS[0]!;
-  const problem = scribeProblem(current, text, raw);
+  const problem = scribeProblem(canData ? current : { ...current, data: {} }, text, raw);
 
   useEffect(
     () =>
@@ -94,14 +97,14 @@ export function ScribeDialog() {
     if (problem) return;
     setBusy(true);
     try {
-      const data = dataOf(current.data, raw);
+      const data = canData ? dataOf(current.data, raw) : {};
       await postJson("/actions/remember", {
         ...(current.text !== "forbidden" && text.trim() ? { text } : {}),
         kind,
         ...(Object.keys(data).length ? { data } : {}),
         about: about.map((s) => `[[${s}]]`),
         secret: secret || undefined,
-        confidential: confidential || undefined,
+        confidential: (canConfidential && confidential) || undefined,
       });
       toast(
         session.data?.actor?.kind === "agent"
@@ -201,7 +204,7 @@ export function ScribeDialog() {
             )}
           </label>
         )}
-        {Object.keys(current.data).length > 0 && (
+        {canData && Object.keys(current.data).length > 0 && (
           <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
             <legend>{v("Details", "Particulars")}</legend>
             <div className="stack" style={{ ["--gap" as string]: "8px" }}>
@@ -247,15 +250,17 @@ export function ScribeDialog() {
           <input type="checkbox" checked={secret} onChange={(e) => setSecret(e.target.checked)} />
           Contains an ID, document or account number, or a password
         </label>
-        <label className="check" title={v("Kept out of search, summaries and the agents' views; only agents trusted with it see it", "Kept from the table: out of search, summaries and agents' views")}>
-          <input type="checkbox" checked={confidential} onChange={(e) => setConfidential(e.target.checked)} />
-          <span>
-            <span className="conf" aria-hidden>
-              ◐
-            </span>{" "}
-            {v("Confidential: keep it out of search and other agents' views", "Confidential: keep it from the table")}
-          </span>
-        </label>
+        {canConfidential && (
+          <label className="check" title={v("Kept out of search, summaries and the agents' views; only agents trusted with it see it", "Kept from the table: out of search, summaries and agents' views")}>
+            <input type="checkbox" checked={confidential} onChange={(e) => setConfidential(e.target.checked)} />
+            <span>
+              <span className="conf" aria-hidden>
+                ◐
+              </span>{" "}
+              {v("Confidential: keep it out of search and other agents' views", "Confidential: keep it from the table")}
+            </span>
+          </label>
+        )}
         {secret && (
           <div className="callout callout--warn small">
             <Icon name="lock" />

@@ -252,7 +252,7 @@ Bump the pinned version in your schedule and CI, then run:
 npx @mehrad77/hippocampus@<new> -v ~/vaults/my-campaign migrate
 ```
 
-The tool refuses to write to a vault whose format version differs from its own. `hippo validate` reports the mismatch (this release still passes a v1 vault, with a hint, so pinned CI keeps working), and `migrate` upgrades the files and `_hippo/config.yaml`'s `version`. In a git vault it commits exactly the files it changed, as `Hippo-Actor: migration`; `--dry-run` lists them. It prints what it couldn't carry over as it was (an extra clock becomes an objective, for example). The hosted app migrates a vault the first time it opens it. Read [CHANGELOG.md](../CHANGELOG.md) for format changes.
+The tool refuses to write to a vault whose format version differs from its own. `hippo validate` reports the mismatch (this release still passes a v1 vault, with a hint, so pinned CI keeps working), and `migrate` upgrades the files and `_hippo/config.yaml`'s `version`. In a git vault it commits exactly the files it changed, as `Hippo-Actor: migration`; `--dry-run` lists them. It prints what it couldn't carry over as it was (an extra clock becomes an objective, for example). The hosted app never migrates by itself: until the owner clicks Upgrade on the dashboard, agents get `VAULT_UPGRADE_NEEDED` and the dashboard shows only the Upgrade banner. Read [CHANGELOG.md](../CHANGELOG.md) for format changes.
 
 ## 8. The hosted app
 

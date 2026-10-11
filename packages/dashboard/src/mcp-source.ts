@@ -4,7 +4,7 @@ import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { parse } from "yaml";
 import { goalToQuest, questToGoal } from "./api.ts";
 import { HttpError } from "./http.ts";
-import type { DashboardSource, SourceInfo } from "./source.ts";
+import type { DashboardSource, RememberFields, SourceInfo } from "./source.ts";
 
 /** `hippo://dashboard/whoami`, as `@hippocampus/mcp` serves it. */
 interface Whoami {
@@ -76,8 +76,13 @@ export async function mcpSource(client: Client, opts: { url?: string } = {}): Pr
   const can = (scope: string) => !!me?.agent && me.scopes.includes(scope);
   // Servers from before goals have only `update_quest` (and the `quest` scope).
   const canGoal = can("goal") || can("quest");
-  const tools = canGoal ? new Set((await upstream(() => client.listTools())).tools.map((t) => t.name)) : new Set<string>();
+  const canRemember = can("remember");
+  const listed = canGoal || canRemember ? (await upstream(() => client.listTools())).tools : [];
+  const tools = new Set(listed.map((t) => t.name));
   const hasGoalTool = tools.has("update_goal");
+  // Servers from before confidential episodes and kinds' data don't take those inputs; say so instead of dropping them.
+  const rememberInputs = listed.find((t) => t.name === "remember")?.inputSchema.properties ?? {};
+  const rememberFields: RememberFields = { confidential: "confidential" in rememberInputs, data: "data" in rememberInputs };
 
   return {
     async info(): Promise<SourceInfo> {
@@ -98,7 +103,14 @@ export async function mcpSource(client: Client, opts: { url?: string } = {}): Pr
     graph: () => read("hippo://dashboard/graph"),
     chronicle: (month) => read(`hippo://dashboard/chronicle/${encodeURIComponent(month || "latest")}`),
     search: (query, limit) => read(`hippo://dashboard/search?q=${encodeURIComponent(query)}${limit ? `&limit=${limit}` : ""}`),
-    remember: can("remember") ? async (input) => (await call<{ stored: { id: string; path: string } }>("remember", { ...input })).stored : undefined,
+    remember: canRemember
+      ? async (input) => {
+          const unsupported = (["confidential", "data"] as const).filter((f) => input[f] !== undefined && !rememberFields[f]);
+          if (unsupported.length) throw new HttpError(501, `This MCP server's remember doesn't take ${unsupported.join(" or ")}; upgrade the server`, "UNSUPPORTED");
+          return (await call<{ stored: { id: string; path: string } }>("remember", { ...input })).stored;
+        }
+      : undefined,
+    ...(canRemember ? { rememberFields } : {}),
     goal: canGoal
       ? async (ref, update) => {
           if (hasGoalTool) return call("update_goal", { goal: ref, ...update });

@@ -18,7 +18,14 @@ export interface DashboardApiOptions {
 }
 
 const text = (max: number) => z.string().trim().min(1).max(max);
-const day = z.string().regex(/^\d{4}-\d{2}-\d{2}/, "use YYYY-MM-DD");
+/** A real calendar day as YYYY-MM-DD (no time, no 2026-02-30). */
+const day = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "use YYYY-MM-DD")
+  .refine((d) => {
+    const t = new Date(`${d}T00:00:00Z`);
+    return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === d;
+  }, "not a real date");
 
 const RuleBody = z.object({
   dispute: text(200),
@@ -202,6 +209,8 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
             return json(200, await need(source.introduction, "introductions").call(source, IntroductionBody.parse(body), via));
           case "actions/curator":
             return json(200, await need(source.curator, "aborting sleep runs").abort(CuratorBody.parse(body).abort, via));
+          case "actions/upgrade-vault":
+            return json(200, await need(source.upgradeVault, "upgrading the vault").call(source, via));
         }
       }
       throw new HttpError(404, `No such API route: ${method} ${path}`, "NOT_FOUND");

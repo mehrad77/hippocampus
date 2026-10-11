@@ -238,7 +238,8 @@ export function draftProblems(d: CampaignDraft): { campaign?: string; human?: st
 
 export const draftReady = (d: CampaignDraft) => Object.values(draftProblems(d)).every((p) => !p);
 
-export function initRequest(d: CampaignDraft, repoId: number): HostedInitRequest {
+/** The init request for the picked repo. A repo that already holds a vault (`adopt`) is adopted as it is: presets only shape new vaults. */
+export function initRequest(d: CampaignDraft, repoId: number, opts: { adopt?: boolean } = {}): HostedInitRequest {
   return {
     repoId,
     campaign: d.campaign.trim(),
@@ -246,7 +247,7 @@ export function initRequest(d: CampaignDraft, repoId: number): HostedInitRequest
     timezone: d.timezone.trim(),
     domains: d.domains,
     ...(d.seed ? { seed: "example-relocation" as const } : {}),
-    ...(d.presets?.length ? { presets: d.presets } : {}),
+    ...(d.presets?.length && !opts.adopt ? { presets: d.presets } : {}),
     ...(d.secrets === "create" && d.recipient ? { recipient: d.recipient } : {}),
   };
 }

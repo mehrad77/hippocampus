@@ -12,7 +12,7 @@ data:
     description: Where (whatsapp, email, signal, call).
   lang:
     kind: text
-    description: Language of the conversation (fa, en, tr, pt).
+    description: Language of the conversation, as a language code (pt, en, or any other).
   messages_in:
     kind: number
     description: Messages they sent.

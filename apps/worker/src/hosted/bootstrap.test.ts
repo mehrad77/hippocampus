@@ -29,7 +29,7 @@ async function setup(opts: { permissions?: Record<string, "read" | "write"> } = 
     installation.repos.push(fullName);
     return { id, fullName };
   };
-  const run = (repo: { id: number; fullName: string }, extra: { seed?: string } = {}) =>
+  const run = (repo: { id: number; fullName: string }, extra: { seed?: string; presets?: string[] } = {}) =>
     bootstrapVault({ app, registry, accountId: 4242, installationId: installation.id, repo, settings: SETTINGS, now: NOW, ...extra });
   return { gh, app, registry, installation, addRepo, run };
 }
@@ -116,7 +116,27 @@ describe("bootstrapVault", () => {
     expect(err.message).toMatch(/newer than this Hippocampus/);
   });
 
-  it("adopts a v1 vault without migrating it: the runtime migrates it when first opened", async () => {
+  it("refuses presets for a repo that already holds a vault, before writing anything", async () => {
+    const { gh, registry, run, addRepo } = await setup();
+    const existing = await buildVaultFiles(TEMPLATE, { ...SETTINGS, now: NOW });
+    const repo = await addRepo("player/old-vault", 9004, existing);
+    const err = await refusal(run(repo, { presets: ["people"] }));
+    expect(err).toMatchObject({ status: 400, code: "PRESETS_NEW_ONLY" });
+    expect(err.message).toMatch(/presets apply only to new vaults/);
+    expect(gh.at("player/old-vault").log()).toHaveLength(1);
+    expect(await registry.vaultOf(4242)).toBeUndefined();
+    // A new vault takes them.
+    await run({ id: 9001, fullName: "player/vault" }, { presets: ["people"] });
+    expect(gh.at("player/vault").files()["_hippo/config.yaml"]).toMatch(/^presets: \[people\]$/m);
+  });
+
+  it("knows only its own presets and seeds, not an object's properties", async () => {
+    const { run } = await setup();
+    expect(await refusal(run({ id: 9001, fullName: "player/vault" }, { presets: ["constructor"] }))).toMatchObject({ status: 400, code: "INVALID" });
+    expect(await refusal(run({ id: 9001, fullName: "player/vault" }, { seed: "toString" }))).toMatchObject({ status: 400, code: "INVALID" });
+  });
+
+  it("adopts a v1 vault without migrating it: its owner upgrades it from the dashboard", async () => {
     const { gh, run, addRepo } = await setup();
     const result = await run(await addRepo("player/v1-vault", 9009, V1_FILES));
     expect(result.mode).toBe("adopted");

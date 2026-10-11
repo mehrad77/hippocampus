@@ -66,7 +66,7 @@ export function validateVaultSettings(s: VaultSettings): void {
 export function validatePresetNames(names: string[], bundle: Record<string, Record<string, string>>): void {
   const seen = new Set<string>();
   for (const n of names) {
-    if (!bundle[n]) throw new Error(`no preset "${n}" (available: ${Object.keys(bundle).sort().join(", ") || "none"})`);
+    if (!Object.hasOwn(bundle, n)) throw new Error(`no preset "${n}" (available: ${Object.keys(bundle).sort().join(", ") || "none"})`);
     if (seen.has(n)) throw new Error(`preset "${n}" is listed twice`);
     seen.add(n);
   }

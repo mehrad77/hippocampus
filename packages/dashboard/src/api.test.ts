@@ -81,7 +81,7 @@ describe("dashboard API: reads", () => {
       humans: ["player"],
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
-      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, party: true, introductions: true, curator: false, setup: "none" },
+      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, introductions: true, curator: false, upgrade: false, setup: "none" },
     });
   });
 
@@ -163,6 +163,9 @@ describe("dashboard API: actions", () => {
     });
     expect(await post("actions/goal", { goal: "residence-permit", repeat: {} })).toMatchObject({ status: 400, body: { code: "INVALID" } });
     expect(await post("actions/goal", { goal: "residence-permit", due: "soon" })).toMatchObject({ status: 400, body: { code: "INVALID" } });
+    // A whole calendar day only: no trailing time or junk, no day that doesn't exist.
+    for (const due of ["2026-12-01T10:00", "2026-12-01junk", "2026-02-30", "2026-13-01", "26-12-01"])
+      expect(await post("actions/goal", { goal: "residence-permit", due }), due).toMatchObject({ status: 400, body: { code: "INVALID" } });
     expect(await post("actions/goal", { goal: "no-such-goal", status: "done" })).toMatchObject({ status: 400, body: { code: "VAULT" } });
   });
 
@@ -313,7 +316,7 @@ describe("dashboard API: errors", () => {
     expect((await get("session")).body).toEqual({
       mode: "setup",
       user: { login: "player" },
-      capabilities: { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, party: false, introductions: false, curator: false, setup: "none" },
+      capabilities: { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, confidential: false, data: false, party: false, introductions: false, curator: false, upgrade: false, setup: "none" },
     });
     expect(await get("setup/status")).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
   });
@@ -340,9 +343,10 @@ describe("dashboard API: errors", () => {
 
   it("501 when the source lacks a capability", async () => {
     const { get, post } = harness({ source: (full) => ({ ...full, rule: undefined, addParty: undefined, introduction: undefined, proposal: undefined, retract: undefined }) });
-    expect((await get("session")).body.capabilities).toEqual({ rule: false, goal: true, quest: true, proposal: false, retract: false, remember: true, party: false, introductions: false, curator: false, setup: "none" });
+    expect((await get("session")).body.capabilities).toEqual({ rule: false, goal: true, quest: true, proposal: false, retract: false, remember: true, confidential: true, data: true, party: false, introductions: false, curator: false, upgrade: false, setup: "none" });
     expect(await post("actions/proposal", { dispute: "x", decision: "decline" })).toMatchObject({ status: 501 });
     expect(await post("actions/retract", { entity: "migration-agency", field: "phone" })).toMatchObject({ status: 501 });
+    expect(await post("actions/upgrade-vault", {})).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
     expect(await post("actions/rule", { dispute: "dispute-migration-agency-office-address", claim: 0 })).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
     expect(await post("actions/party", { id: "job-scout", title: "Job Scout" })).toMatchObject({ status: 501 });
     expect(await post("actions/introduction", { agent: "job-scout", decision: "dismiss" })).toMatchObject({ status: 501 });

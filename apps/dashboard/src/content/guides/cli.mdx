@@ -118,7 +118,7 @@ npx @mehrad77/hippocampus@<new> -v ~/vaults/my-vault migrate --dry-run
 npx @mehrad77/hippocampus@<new> -v ~/vaults/my-vault migrate
 ```
 
-Format 2 renames quests to goals (`goals/`) and campaigns to arcs (`arcs/`), turns clocks into progress, moves the types and kinds into notes under `_hippo/schema/`, and lists the humans under `humans:`. `migrate` prints anything it couldn't carry over as is. On the hosted app, a vault is migrated by itself the first time it's opened, as one audited commit.
+Format 2 renames quests to goals (`goals/`) and campaigns to arcs (`arcs/`), turns clocks into progress, moves the types and kinds into notes under `_hippo/schema/`, and lists the humans under `humans:`. `migrate` prints anything it couldn't carry over as is. On the hosted app, the dashboard offers an Upgrade button for an older vault; clicking it makes the same changes as one audited commit. Agents can't use the vault until then.
 
 Bump the pinned version in your schedule and vault CI at the same time. The CI workflow that `init` (and the hosted app) adds runs `validate` on every push that changes more than the inbox, and `audit` once a day.
 

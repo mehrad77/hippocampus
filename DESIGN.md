@@ -270,7 +270,7 @@ presets/             people, developer, business, student, household: schema not
 
 | Area | State | Notes |
 | --- | --- | --- |
-| Vault spec + template + example seed | ✅ | `vault-template/`, `seeds/example-relocation/`, `hippo init --seed <name-or-path>`; format v2 with `hippo migrate` from v1 (the hosted app migrates on open) |
+| Vault spec + template + example seed | ✅ | `vault-template/`, `seeds/example-relocation/`, `hippo init --seed <name-or-path>`; format v2 with `hippo migrate` from v1 (on the hosted app, the owner clicks Upgrade on the dashboard) |
 | Core model | ✅ | zod schemas, managed regions, alias/ID/link resolution, typed relations (roles, scopes, inverses) as Dataview inline fields |
 | Schema registry | ✅ | Type and kind notes in `_hippo/schema/`, inline overrides in the config, `extends`, capabilities instead of type names (a grep test keeps it that way), advisory shape validation |
 | Presets | ✅ | `presets/` (people, developer, business, student, household), `hippo init --preset`, `hippo preset add`, the Session Zero picker; golden nights per preset |

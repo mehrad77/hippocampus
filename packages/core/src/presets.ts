@@ -61,7 +61,7 @@ export function presetCatalog(bundle: Record<string, Record<string, string>>): {
 
 /** The preset `name` from `bundle`, or a VaultError listing the ones there are. */
 export function pickPreset(bundle: Record<string, Record<string, string>>, name: string): Preset {
-  const files = bundle[name];
+  const files = Object.hasOwn(bundle, name) ? bundle[name] : undefined;
   if (!files) throw new VaultError(`no preset "${name}" (available: ${Object.keys(bundle).sort().join(", ") || "none"})`);
   return loadPreset(name, files);
 }
@@ -169,11 +169,39 @@ function unionList(doc: Document, key: string, items: unknown[], same: (node: un
 const scalarValue = (n: unknown) => (isScalar(n) ? String(n.value) : undefined);
 const relationName = (n: unknown) => (isMap(n) ? scalarValue(n.get("name", true)) : scalarValue(n));
 
+/**
+ * A relation the vault lists by name only gains the preset's inverse (`depends_on` → `{name: depends_on,
+ * inverse: used_by}`), so the reverse direction reads right; a different inverse the vault chose stays, with a note.
+ */
+function upgradeInverses(doc: Document, relations: RelationDef[], notes: string[]): boolean {
+  const seq = doc.get("relations", true);
+  if (!isSeq(seq)) return false;
+  let changed = false;
+  for (const r of relations) {
+    if (typeof r === "string" || !r.inverse) continue;
+    const i = seq.items.findIndex((n) => relationName(n) === r.name);
+    const node = seq.items[i];
+    if (i < 0) continue;
+    if (isScalar(node)) {
+      seq.items[i] = doc.createNode({ name: r.name, inverse: r.inverse }, { flow: true });
+      changed = true;
+    } else if (isMap(node)) {
+      const theirs = scalarValue(node.get("inverse", true));
+      if (theirs === undefined) {
+        node.set("inverse", r.inverse);
+        changed = true;
+      } else if (theirs !== r.inverse) notes.push(`relation "${r.name}": the vault's inverse "${theirs}" kept; the preset's is "${r.inverse}"`);
+    }
+  }
+  return changed;
+}
+
 /** The config with the preset's domains, relations and name added, comments kept; undefined when nothing changes. */
-function patchConfig(raw: string, preset: Preset): string | undefined {
+function patchConfig(raw: string, preset: Preset, notes: string[]): string | undefined {
   const doc = parseDocument(raw);
   const { domains, relations } = preset.manifest.config;
   let changed = unionList(doc, "domains", domains, (n, d) => scalarValue(n) === d);
+  changed = upgradeInverses(doc, relations, notes) || changed;
   changed = unionList(doc, "relations", relations, (n, r) => relationName(n) === (typeof r === "string" ? r : (r as { name: string }).name)) || changed;
   changed = unionList(doc, "presets", [preset.name], (n, p) => scalarValue(n) === p) || changed;
   return changed ? renderConfig(doc) : undefined;
@@ -194,13 +222,19 @@ export async function applyPreset(store: VaultStore, preset: Preset, opts: Apply
   const config = parseConfig(raw);
   const missing = preset.manifest.requires.filter((r) => !config.presets.includes(r));
   if (missing.length) throw new VaultError(`preset "${preset.name}" needs ${missing.map((m) => `"${m}"`).join(", ")} first`);
-  // Load once up front, so an old or newer vault is refused before anything is planned.
-  await Vault.load(buffer.store);
+  // Load once up front, so an old or newer vault is refused before anything is planned. Its warnings
+  // are the baseline: only warnings the preset brings are reported.
+  const before = await Vault.load(buffer.store);
 
   const schema = schemaFolder(config);
   const target = (path: string) => (path.startsWith(`${DEFAULT_SCHEMA_FOLDER}/`) ? `${schema}/${path.slice(DEFAULT_SCHEMA_FOLDER.length + 1)}` : path);
   const isSchemaNote = (path: string) => /^(types|kinds)\/[^/]+\.md$/.test(path.slice(schema.length + 1)) && path.startsWith(`${schema}/`);
   const entityPaths: string[] = [];
+  // Notes are linked by name, so a starter note whose name the vault already uses elsewhere would make links ambiguous.
+  const isNote = (path: string) => path.endsWith(".md") && !path.startsWith("_hippo/") && !path.startsWith(`${schema}/`);
+  const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1, -".md".length).toLowerCase();
+  const named = new Map<string, string>();
+  for (const path of await buffer.store.list()) if (isNote(path) && !named.has(baseName(path))) named.set(baseName(path), path);
 
   for (const [src, content] of Object.entries(preset.files).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     if (src === PRESET_MANIFEST || src === PRESET_HUMAN_SECTIONS) continue;
@@ -228,6 +262,12 @@ export async function applyPreset(store: VaultStore, preset: Preset, opts: Apply
       }
       continue;
     }
+    const clash = existing === undefined && isNote(path) ? named.get(baseName(path)) : undefined;
+    if (clash) {
+      result.skipped.push(path);
+      result.notes.push(`${path}: skipped; the vault already has a note named "${baseName(path)}" (${clash})`);
+      continue;
+    }
     if (existing !== undefined && !opts.force) {
       if (existing !== content) result.skipped.push(path);
       continue;
@@ -238,7 +278,7 @@ export async function applyPreset(store: VaultStore, preset: Preset, opts: Apply
     if (path.endsWith(".md") && !path.startsWith("_hippo/")) entityPaths.push(path);
   }
 
-  const patched = patchConfig(raw, preset);
+  const patched = patchConfig(raw, preset, result.notes);
   if (patched !== undefined) await buffer.store.write(CONFIG_PATH, patched);
 
   const vault = await Vault.load(buffer.store);
@@ -264,7 +304,7 @@ export async function applyPreset(store: VaultStore, preset: Preset, opts: Apply
   for (const e of after.entities.values()) if (entityPaths.includes(e.path)) after.markDirty(e);
   after.writeFile(HANDBOOK_PATH, renderHandbook(after));
   await after.flush();
-  result.notes.push(...after.warnings.filter((w) => !vault.warnings.includes(w)));
+  result.notes.push(...after.warnings.filter((w) => !before.warnings.includes(w)));
 
   result.changes = await buffer.changes();
   return result;

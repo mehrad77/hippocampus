@@ -87,16 +87,16 @@ describe("MCP source parity", () => {
 
   it("offers only what the agent's scopes allow, and never the human's actions", async () => {
     const caps = async (opts: { agent?: string; scopes?: Scope[] }) => capabilities((await linked(opts)).remote, "none");
-    const none = { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, party: false, introductions: false, curator: false, setup: "none" };
-    expect(await caps({ agent: "residency-agent" })).toEqual({ ...none, goal: true, quest: true, remember: true });
+    const none = { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, confidential: false, data: false, party: false, introductions: false, curator: false, upgrade: false, setup: "none" };
+    expect(await caps({ agent: "residency-agent" })).toEqual({ ...none, goal: true, quest: true, remember: true, confidential: true, data: true });
     expect(await caps({ agent: "residency-agent", scopes: ["read"] })).toEqual(none);
-    expect(await caps({ agent: "residency-agent", scopes: ["read", "remember"] })).toEqual({ ...none, remember: true });
+    expect(await caps({ agent: "residency-agent", scopes: ["read", "remember"] })).toEqual({ ...none, remember: true, confidential: true, data: true });
     expect(await caps({ agent: "residency-agent", scopes: ["read", "goal"] })).toEqual({ ...none, goal: true, quest: true });
     // Keys from before goals carry `quest`.
     expect(await caps({ agent: "residency-agent", scopes: ["read", "quest"] })).toEqual({ ...none, goal: true, quest: true });
     // Unbound, every write would need an agent id the dashboard can't choose.
     expect(await caps({})).toEqual(none);
-    expect(capabilities((await linked()).local, "none")).toEqual({ rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, party: true, introductions: true, curator: false, setup: "none" });
+    expect(capabilities((await linked()).local, "none")).toEqual({ rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, introductions: true, curator: false, upgrade: false, setup: "none" });
   });
 
   it("files writes under the agent", async () => {
@@ -146,6 +146,28 @@ describe("MCP source parity", () => {
     expect(await remote.info()).toMatchObject({ name: "lisbon-arc", humans: ["player"] });
     expect(await remote.goal!("residence-permit", { progress: { tick: 1 }, due: "2026-12-01" })).toEqual({ goal: "[[residence-permit]]", changes: expect.arrayContaining(["progress 3/6"]) });
     await expect(remote.goal!("residence-permit", { repeat: { every: "1m" } })).rejects.toMatchObject({ status: 501 });
+  });
+
+  it("says when a server's remember predates confidential episodes and data, and refuses them rather than dropping them", async () => {
+    const store = richStore();
+    const server = createHippoServer({ service: new HippoService(store, { now }), agent: "residency-agent" });
+    const client = new Client({ name: "parity", version: "0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const listTools = client.listTools.bind(client);
+    client.listTools = async (...args) => {
+      const r = await listTools(...args);
+      const old = (t: (typeof r.tools)[number]) => {
+        const { confidential: _c, data: _d, ...properties } = t.inputSchema.properties ?? {};
+        return { ...t, inputSchema: { ...t.inputSchema, properties } };
+      };
+      return { ...r, tools: r.tools.map((t) => (t.name === "remember" ? old(t) : t)) };
+    };
+    const remote = await mcpSource(client);
+    expect(capabilities(remote, "none")).toMatchObject({ remember: true, confidential: false, data: false });
+    await expect(remote.remember!({ text: "The agency's private line.", confidential: true })).rejects.toMatchObject({ status: 501, code: "UNSUPPORTED" });
+    await expect(remote.remember!({ text: "Rent paid.", kind: "fact", data: { amount: 900 } })).rejects.toMatchObject({ status: 501, message: expect.stringContaining("data") });
+    expect((await remote.remember!({ text: "Agency confirmed the appointment by email." })).path).toMatch(/^inbox\/residency-agent\//);
   });
 
   it("serves the API over MCP", async () => {

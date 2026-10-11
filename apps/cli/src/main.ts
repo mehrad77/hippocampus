@@ -16,6 +16,7 @@ import {
   fieldUsage,
   isSecretRef,
   migrate,
+  parseConfig,
   pickPreset,
   presetCatalog,
   readChronicle,
@@ -41,6 +42,7 @@ import { loadEnv } from "./env-file.ts";
 import { Git } from "./git.ts";
 import { assetRoot, expandHome, identityFile, indexKey, userEnvFile } from "./paths.ts";
 import { openIndex, openSearcher as searcherFor, openStore as storeFor } from "./stores.ts";
+import { boundAgent } from "./serve.ts";
 import { initVault, keygen, templateFiles } from "./vault-setup.ts";
 
 // Settings: the shell, then a gitignored .env in the working directory, then the user env file
@@ -164,8 +166,16 @@ program
         res.writeHead(404).end();
         return;
       }
-      const agent = url.searchParams.get("agent") ?? opts.agent;
-      const server = createHippoServer({ service, agent: agent ?? undefined, relay });
+      const humans = await store
+        .read(CONFIG_PATH)
+        .then((raw) => parseConfig(raw).humans.map((h) => h.id))
+        .catch(() => undefined);
+      const bound = boundAgent(humans, url.searchParams.get("agent"), opts.agent);
+      if ("refused" in bound) {
+        res.writeHead(403, { "content-type": "application/json" }).end(JSON.stringify({ error: bound.refused, code: "NOT_AN_AGENT" }));
+        return;
+      }
+      const server = createHippoServer({ service, agent: bound.agent, relay });
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on("close", () => void transport.close().then(() => server.close()));
       await server.connect(transport);
@@ -299,7 +309,7 @@ program
   .argument("[text...]", "the memory; a kind that takes only data needs none")
   .option("-a, --agent <id>", "agent id")
   .option("-k, --kind <kind>", "one of the vault's kinds (observation, fact, decision, task, question, or one a preset adds)", "fact")
-  .option("--data <key=value>", "a data field of the kind, e.g. --data with=[[ana]]; repeat it, and repeat a key for a list", repeatable)
+  .option("--data <key=value>", "a data field of the kind, e.g. --data with=[[migration-agency]]; repeat it, and repeat a key for a list", repeatable)
   .option("--secret", "contains secret values")
   .option("--confidential", "keep it out of search, summaries and the chronicle")
   .action(async (words: string[], opts: { agent?: string; kind: string; data?: string[]; secret?: boolean; confidential?: boolean }) => {

@@ -183,6 +183,60 @@ describe("applyPreset", () => {
     expect(() => pickPreset(PRESETS, "pirates")).toThrow(/no preset "pirates" \(available: business, developer/);
   });
 
+  it("reports the warnings the preset brings, not the ones the vault had", async () => {
+    const store = await fresh();
+    // Already there: two notes with one name.
+    store.files.set("factions/lisbon.md", "---\ntype: faction\ntitle: Lisbon\n---\n");
+    store.files.set("locations/lisbon.md", "---\ntype: location\ntitle: Lisbon\n---\n");
+    expect((await Vault.load(store)).warnings).toContainEqual(expect.stringContaining('duplicate note name "lisbon"'));
+    const robots = loadPreset("robots", {
+      "preset.yaml": "description: x\n",
+      "_hippo/schema/types/robot.md": "---\nfolder: robots\ntemplate: _hippo/templates/robot.md\n---\nRobots.\n",
+    });
+    const r = await applyPreset(store, robots);
+    expect(r.notes).toContainEqual(expect.stringContaining('type "robot": template _hippo/templates/robot.md not found'));
+    expect(r.notes.join("\n")).not.toContain("duplicate note name");
+  });
+
+  it("skips a starter note whose name the vault already uses elsewhere, even when forced", async () => {
+    const store = await fresh();
+    const mine = "---\ntype: character\ntitle: Stranger\n---\nThe man at the tram stop.\n";
+    store.files.set("characters/Stranger.md", mine);
+    for (const force of [false, true]) {
+      const r = await applyPreset(store, pickPreset(PRESETS, "people"), { force });
+      expect(r.skipped).toContain("archetypes/stranger.md");
+      expect(r.changes.map((c) => c.path)).not.toContain("archetypes/stranger.md");
+      expect(r.notes).toContainEqual('archetypes/stranger.md: skipped; the vault already has a note named "stranger" (characters/Stranger.md)');
+    }
+    expect(store.files.get("characters/Stranger.md")).toBe(mine);
+  });
+
+  it("gives a relation the vault lists by name the preset's inverse, and keeps an inverse the vault chose", async () => {
+    const store = await fresh();
+    const raw = store.files.get(CONFIG_PATH)!;
+    store.files.set(CONFIG_PATH, raw.replace(/^relations: \[/m, "relations: [depends_on, "));
+    const r = await applyPreset(store, pickPreset(PRESETS, "developer"));
+    apply(store, r.changes);
+    const config = store.files.get(CONFIG_PATH)!;
+    expect(config).toMatch(/^relations: \[\{ ?name: depends_on, inverse: used_by ?\}, member_of/m);
+    expect(config.match(/depends_on/g)).toHaveLength(1);
+    expect(parseConfig(config).relation_inverses).toMatchObject({ depends_on: "used_by" });
+
+    const other = await fresh();
+    other.files.set(CONFIG_PATH, other.files.get(CONFIG_PATH)!.replace(/^relations: \[/m, "relations: [{name: depends_on, inverse: needed_by}, "));
+    const kept = await applyPreset(other, pickPreset(PRESETS, "developer"));
+    apply(other, kept.changes);
+    expect(kept.notes).toContainEqual('relation "depends_on": the vault\'s inverse "needed_by" kept; the preset\'s is "used_by"');
+    expect(other.files.get(CONFIG_PATH)).toContain("{name: depends_on, inverse: needed_by}");
+  });
+
+  it("knows only its own presets, not an object's properties", async () => {
+    for (const name of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(() => pickPreset(PRESETS, name)).toThrow(`no preset "${name}"`);
+      await expect(buildVaultFiles(template, { human: "player", presets: [name], presetFiles: PRESETS })).rejects.toThrow(`no preset "${name}"`);
+    }
+  });
+
   it("refuses a vault in an older format", async () => {
     const store = await fresh();
     store.files.set(CONFIG_PATH, store.files.get(CONFIG_PATH)!.replace(/^version: \d+$/m, "version: 1"));

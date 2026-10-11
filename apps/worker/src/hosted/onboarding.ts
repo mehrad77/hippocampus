@@ -225,9 +225,9 @@ export function initRequest(body: unknown, login?: string): VaultSettings & { re
   if (typeof b.timezone !== "string" || !validTimezone(b.timezone)) bad("timezone: an IANA name like Europe/Lisbon");
   if (!Array.isArray(b.domains)) bad("domains: a list of up to 30 ids");
   const domains = slugs(b.domains, "domains");
-  if (b.seed !== undefined && (typeof b.seed !== "string" || !SEEDS[b.seed])) bad(`seed: choose from ${Object.keys(SEEDS).join(", ")}`);
+  if (b.seed !== undefined && (typeof b.seed !== "string" || !Object.hasOwn(SEEDS, b.seed))) bad(`seed: choose from ${Object.keys(SEEDS).join(", ")}`);
   const presets = b.presets === undefined ? [] : slugs(b.presets, "presets");
-  for (const p of presets) if (!PRESETS[p]) bad(`presets: "${p}" isn't one; choose from ${Object.keys(PRESETS).sort().join(", ")}`);
+  for (const p of presets) if (!Object.hasOwn(PRESETS, p)) bad(`presets: "${p}" isn't one; choose from ${Object.keys(PRESETS).sort().join(", ")}`);
   // An age X25519 recipient: `age1` and 58 bech32 characters.
   if (b.recipient !== undefined && (typeof b.recipient !== "string" || !/^age1[02-9ac-hj-np-z]{58}$/.test(b.recipient))) bad("recipient: an age public key (age1…)");
   return {

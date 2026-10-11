@@ -499,7 +499,7 @@ export function localSetup(opts: LocalSetupOptions): LocalSetupPort {
         const req = VaultRequest.parse(body);
         if (req.action === "create") {
           if (req.seed && !seeds().includes(req.seed)) throw new HttpError(400, `No bundled seed "${req.seed}"`, "INVALID");
-          for (const p of req.presets ?? []) if (!PRESETS[p]) throw new HttpError(400, `No preset "${p}"`, "INVALID");
+          for (const p of req.presets ?? []) if (!Object.hasOwn(PRESETS, p)) throw new HttpError(400, `No preset "${p}"`, "INVALID");
           const created = await attempt(() =>
             initVault({ target: req.dir, seed: req.seed, assets, campaign: req.campaign, human: req.human, presets: req.presets, timezone: req.timezone, domains: req.domains }),
           );

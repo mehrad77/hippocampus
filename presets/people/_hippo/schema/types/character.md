@@ -9,7 +9,7 @@ fields:
     description: A phone number, international format.
   handle:
     identity_key: true
-    description: A chat or social handle, with its network (`signal:@ana`).
+    description: A chat or social handle, with its network (`signal:@player`).
   birthday:
     kind: date
     recurs: yearly
