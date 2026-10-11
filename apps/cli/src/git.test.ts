@@ -67,4 +67,26 @@ describe("Git commitPaths", () => {
     // Nothing left to commit: no empty commit.
     expect(await git.commitPaths(["preset.md"], "again")).toBe(false);
   });
+
+  it("leaves a file the human staged out of the commit, and still staged", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "hippo-git-"));
+    execFileSync("git", ["init", "--quiet", "-b", "main"], { cwd: tmp });
+    execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: tmp });
+    writeFileSync(join(tmp, "old.md"), "o");
+    const git = new Git(tmp);
+    expect(await git.commitPaths(["old.md"], "chore: first")).toBe(true);
+    writeFileSync(join(tmp, "preset.md"), "p");
+    writeFileSync(join(tmp, "mine [draft].md"), "m");
+    rmSync(join(tmp, "old.md"));
+    execFileSync("git", ["add", "--", "mine [draft].md"], { cwd: tmp });
+    expect(await git.commitPaths(["preset.md", "old.md", "missing.md"], withTrailers("chore: migrate", { [ACTOR_TRAILER]: "migration" }))).toBe(true);
+    const [, last] = await git.commits();
+    expect(await git.changedPaths(last!.sha, last!.parents[0])).toEqual([
+      { status: "D", path: "old.md" },
+      { status: "A", path: "preset.md" },
+    ]);
+    expect(await git.run("diff", "--cached", "--name-only")).toBe("mine [draft].md");
+    // Only the human's staged edit is left: nothing of ours to commit.
+    expect(await git.commitPaths(["preset.md"], "again")).toBe(false);
+  });
 });

@@ -292,6 +292,31 @@ describe("auditChanges: confidential values", () => {
     ]);
   });
 
+  it("ignore the chronicle's own dates and headers, and values too short or common to look for", async () => {
+    const ana = (value: string) => `---\ntype: character\ntitle: Ana\nfacts:\n  code: { value: "${value}", status: canon, confidential: true }\n---\n\n## Notes\n`;
+    const day = (text: string): Change => ({ path: DAY, content: `---\ntype: chronicle\ndate: 2026-09-27\n---\n# 2026-09-27\n\n> [!episode] 10:00 · [[home-finder]] · observation\n> ${text}\n\n^ep-x\n` });
+    const touch = (raw: string): Change => ({ path: "characters/ana.md", content: raw.replace("title: Ana", "title: Ana\ntags: [housing]") });
+    // A year: in every chronicle's frontmatter and heading, and in ordinary prose.
+    const year = managedStore({ "characters/ana.md": ana("2026") });
+    expect(await audit([touch(ana("2026")), day("Viewed a flat built in 2026.")], curator, [], year)).toEqual([]);
+    // A distinctive value still counts, but not in the generated lines.
+    const date = managedStore({ "characters/ana.md": ana("2026-09-27") });
+    expect(await audit([touch(ana("2026-09-27")), day("Called the landlord.")], curator, [], date)).toEqual([]);
+    expect(await audit([touch(ana("2026-09-27")), day("Ana's code is 2026-09-27.")], curator, [], date)).toEqual([{ path: DAY, rule: "confidential value in the chronicle" }]);
+    // Six digits are an identifier, not a year.
+    const long = managedStore({ "characters/ana.md": ana("482913") });
+    expect(await audit([touch(ana("482913")), day("Her code is 482913.")], curator, [], long)).toEqual([{ path: DAY, rule: "confidential value in the chronicle" }]);
+  });
+
+  it("come from every note when the chronicle or a summary is written, not only the notes touched", async () => {
+    const s = managedStore();
+    expect(await audit([{ path: DAY, content: `# 2026-09-27\n\n> Wrote to ${EMAIL}.\n\n^ep-x\n` }], curator, [], s)).toEqual([{ path: DAY, rule: "confidential value in the chronicle" }]);
+    const player = "characters/player.md";
+    expect(await audit([{ path: player, content: `---\ntype: character\ntitle: Player\n---\n%% hippo:begin summary %%\nRents from ${EMAIL}.\n%% hippo:end summary %%\n` }], curator, [], s)).toEqual([
+      { path: player, rule: "confidential value in a summary" },
+    ]);
+  });
+
   it("keep a confidential episode's text out of the chronicle", async () => {
     const EP = "inbox/home-finder/2026-09-27T100000-offer.md";
     const s = managedStore({ [EP]: "---\nid: ep-offer\nagent: home-finder\nat: 2026-09-27T10:00:00Z\nconfidential: true\n---\nThe owner would drop the rent to 900 EUR for a two-year lease.\n" });

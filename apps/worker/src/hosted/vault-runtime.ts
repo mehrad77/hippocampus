@@ -96,6 +96,9 @@ const MIGRATION: Principal = { kind: "migration" };
 
 /** The vault is being brought to the current format, or that failed: the request can be retried. */
 const migrating = () => new HttpError(503, "This vault is being updated to the current format. Try again in a moment.", "VAULT_MIGRATING");
+/** The update can't be done here (the audit refused it): only the owner, locally, can. Says nothing about the vault's content. */
+const migrationRefused = () =>
+  new HttpError(503, "This vault needs an update to the current format that can't be applied automatically. The owner can run `hippo migrate` in a local clone and push.", "VAULT_MIGRATING");
 
 export const grantPrincipal = (grant: VaultGrant): Principal => ({ kind: "agent", agent: grant.agent, scopes: grant.scopes });
 
@@ -305,7 +308,7 @@ export class VaultRuntime {
     } catch (err) {
       if (err instanceof AuditError || err instanceof StoreConflictError) {
         await logEvent({ route: "vault/migrate", vault: this.meta.vaultId, status: 503, code: "VAULT_MIGRATING", ms: Date.now() - started }, this.d.log).catch(() => undefined);
-        throw migrating();
+        throw err instanceof AuditError ? migrationRefused() : migrating();
       }
       throw err;
     }

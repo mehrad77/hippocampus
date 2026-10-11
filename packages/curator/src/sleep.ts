@@ -26,6 +26,7 @@ import {
   identityFields,
   isHiddenFact,
   isSecretRef,
+  isTrackedConfidential,
   link,
   logDecision,
   matchIdentity,
@@ -617,7 +618,8 @@ function confidentialValues(vault: Vault): string[] {
       if (!isHiddenFact(vault.schema, e.fm.type, k, f)) continue;
       for (const v of [f.value, ...(f.was ?? []).map((w) => w.value)]) {
         const s = String(v).trim();
-        if (!isSecretRef(v) && s.length >= 3) out.add(s);
+        // The audit's own rule: a value too short or common to look for isn't redacted either.
+        if (!isSecretRef(v) && isTrackedConfidential(s)) out.add(s);
       }
     }
   }

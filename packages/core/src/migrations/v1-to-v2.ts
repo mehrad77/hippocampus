@@ -221,13 +221,18 @@ async function writeTypeNotes(store: VaultStore, types: Obj, schemaDir: string, 
     // A vault that already has a type by the new name keeps the old name (with its capability).
     const name = r && !(r.name in types) ? r.name : oldName;
     const from = String(def.folder ?? oldName).replace(/\/+$/, "");
-    const to = r && name === r.name && from === r.from ? r.to : from;
-    moves.set(oldName, { name, from, to });
+    let to = r && name === r.name && from === r.from ? r.to : from;
     const path = `${schemaDir}/types/${name}.md`;
-    if ((await store.read(path)) !== undefined) {
+    const existing = await store.read(path);
+    if (existing !== undefined) {
+      // The type's notes go where its existing note says, or they'd be in no type's folder.
+      const folder = parseDoc(existing).data.folder;
+      if (typeof folder === "string" && folder.trim()) to = folder.trim().replace(/\/+$/, "");
+      moves.set(oldName, { name, from, to });
       ctx.note(`${path} already exists; kept it (the config's \`${oldName}\` entry was not merged)`);
       continue;
     }
+    moves.set(oldName, { name, from, to });
     await store.write(path, typeNote(oldName, def, to, ctx.template?.[`${DEFAULT_SCHEMA_FOLDER}/types/${name}.md`]));
     if (name !== oldName) ctx.note(`type \`${oldName}\` is now \`${name}\` (${to}/)`);
   }
@@ -252,7 +257,10 @@ function reshapeGoal(path: string, fm: Obj, body: string, ctx: MigrationContext)
   const e = parseEntity(path, renderDoc(fm, body));
   const raw = e.fm as Obj;
   const empty = (v: unknown) => v === undefined || v === null || v === "";
-  if (empty(raw.due) && !empty(raw.deadline)) raw.due = String(raw.deadline);
+  // Both set and different: `due` wins, and the old deadline stays as an objective rather than vanish.
+  const deadline = empty(raw.deadline) ? undefined : String(raw.deadline);
+  const lostDeadline = deadline !== undefined && !empty(raw.due) && String(raw.due) !== deadline ? deadline : undefined;
+  if (empty(raw.due) && deadline !== undefined) raw.due = deadline;
   delete raw.deadline;
   const clocks = legacyClocks(e);
   let extra = clocks;
@@ -262,14 +270,16 @@ function reshapeGoal(path: string, fm: Obj, body: string, ctx: MigrationContext)
     extra = clocks.slice(1);
   }
   delete raw.clocks;
-  if (extra.length) {
+  if (extra.length || lostDeadline) {
     const objectives = getObjectives(e);
-    for (const c of extra) {
-      const text = `⏱ ${c.name} ${c.filled}/${c.segments}${c.deadline ? ` · due ${c.deadline}` : ""}`;
-      if (!objectives.some((o) => o.text === text)) objectives.push({ text, done: c.filled >= c.segments });
-    }
+    const add = (text: string, done: boolean) => {
+      if (!objectives.some((o) => o.text === text)) objectives.push({ text, done });
+    };
+    for (const c of extra) add(`⏱ ${c.name} ${c.filled}/${c.segments}${c.deadline ? ` · due ${c.deadline}` : ""}`, c.filled >= c.segments);
+    if (lostDeadline) add(`⏱ Deadline ${lostDeadline}`, false);
     setObjectives(e, objectives);
-    ctx.note(`${path}: clocks ${extra.map((c) => `"${c.name}"`).join(", ")} kept as objectives (a goal has one progress)`);
+    if (extra.length) ctx.note(`${path}: clocks ${extra.map((c) => `"${c.name}"`).join(", ")} kept as objectives (a goal has one progress)`);
+    if (lostDeadline) ctx.note(`${path}: \`deadline\` differed from \`due\`; kept \`due\`, and the deadline as an objective`);
   }
   e.body = removeRegion(e.body, "clocks");
   return renderEntity(e, { goal: true });
@@ -279,8 +289,12 @@ async function migrateNotes(store: VaultStore, moves: Map<string, TypeMove>, ski
   const renamed = [...moves].filter(([old, m]) => old in RENAMED && m.name !== old);
   if (!renamed.length) return;
   const byOld = new Map(renamed);
+  // Only notes in the v1 type folders are v1 notes: a `type: quest` elsewhere (an Obsidian template,
+  // a folder the vault never declared) was never loaded as one, and isn't the migration's to move.
+  const typeFolders = [...moves.values()].map((m) => m.from);
   for (const path of await store.list("")) {
     if (!path.endsWith(".md") || path.startsWith("_hippo/") || path.startsWith(".") || skip.some((f) => under(path, f))) continue;
+    if (!typeFolders.some((f) => under(path, f))) continue;
     const raw = await store.read(path);
     if (raw === undefined) continue;
     let doc: ReturnType<typeof parseDoc>;
@@ -294,6 +308,23 @@ async function migrateNotes(store: VaultStore, moves: Map<string, TypeMove>, ski
     const old = declared ?? renamed.find(([, m]) => under(path, m.from))?.[0];
     const move = old === undefined ? undefined : byOld.get(old);
     if (!old || !move) continue;
+    // A file v1 couldn't read as a note (a README, a note without a type) isn't one: it stays as it was.
+    try {
+      parseEntity(path, raw);
+    } catch {
+      ctx.note(`${path}: left as it was (not a readable note)`);
+      continue;
+    }
+    let target = path;
+    if (move.to !== move.from && under(path, move.from)) {
+      const moved = `${move.to}/${path.slice(move.from.length + 1)}`;
+      // Retyped but left behind, it would sit in no type's folder and never load: leave it whole instead.
+      if ((await store.read(moved)) !== undefined) {
+        ctx.note(`${path}: left as it was (still \`${old}\`), ${moved} already exists; rename one, then move it to ${move.to}/ as \`type: ${move.name}\``);
+        continue;
+      }
+      target = moved;
+    }
     const fm = { ...doc.data, type: move.name };
     let content: string;
     try {
@@ -301,12 +332,6 @@ async function migrateNotes(store: VaultStore, moves: Map<string, TypeMove>, ski
     } catch (err) {
       ctx.note(`${path}: left as it was (${(err as Error).message})`);
       continue;
-    }
-    let target = path;
-    if (move.to !== move.from && under(path, move.from)) {
-      const moved = `${move.to}/${path.slice(move.from.length + 1)}`;
-      if ((await store.read(moved)) === undefined) target = moved;
-      else ctx.note(`${path}: not moved, ${moved} already exists`);
     }
     if (target !== path) await store.remove(path);
     await store.write(target, content);

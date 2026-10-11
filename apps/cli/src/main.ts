@@ -203,9 +203,8 @@ program
     printReport(report);
     if (store instanceof GitHubStore && report.changed.length) err(`✓ committed ${(await store.head()).slice(0, 7)} to ${store.repo}#${store.branch}`);
     if (useGit && report.changed.length) {
-      await git.stage(report.changed);
-      if (await git.hasStaged()) {
-        await git.commit(withTrailers(commitMessage(report), { [ACTOR_TRAILER]: "curator", [MODEL_TRAILER]: report.model }));
+      // Only the curator's paths, even when the human has other edits staged.
+      if (await git.commitPaths(report.changed, withTrailers(commitMessage(report), { [ACTOR_TRAILER]: "curator", [MODEL_TRAILER]: report.model }))) {
         err("✓ committed");
         if (opts.push && (await git.hasRemote())) {
           await git.push();

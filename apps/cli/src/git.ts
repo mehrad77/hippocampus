@@ -1,5 +1,6 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { ACTOR_TRAILER, VaultError, type VaultStore } from "@hippocampus/core";
@@ -103,19 +104,14 @@ export class Git {
     }
   }
 
-  async hasStaged(): Promise<boolean> {
-    try {
-      await this.run("diff", "--cached", "--quiet");
-      return false;
-    } catch {
-      return true;
-    }
-  }
-
-  /** Commit what's staged as Hippocampus, or with `asUser` as the user's own git identity when one is set. */
-  async commit(message: string, opts: { asUser?: boolean } = {}): Promise<void> {
-    if (opts.asUser && (await this.hasIdentity())) await this.run("commit", "--quiet", "-m", message);
-    else await this.run("-c", `user.name=${CURATOR_AUTHOR.name}`, "-c", `user.email=${CURATOR_AUTHOR.email}`, "commit", "--quiet", "-m", message);
+  /**
+   * Commit what's staged as Hippocampus, or with `asUser` as the user's own git identity when one is set.
+   * With `only` (a file of NUL-separated paths), commit just those paths, whatever else is staged.
+   */
+  async commit(message: string, opts: { asUser?: boolean; only?: string } = {}): Promise<void> {
+    const args = ["commit", "--quiet", "-m", message, ...(opts.only ? ["--only", `--pathspec-from-file=${opts.only}`, "--pathspec-file-nul"] : [])];
+    if (opts.asUser && (await this.hasIdentity())) await this.run("--literal-pathspecs", ...args);
+    else await this.run("--literal-pathspecs", "-c", `user.name=${CURATOR_AUTHOR.name}`, "-c", `user.email=${CURATOR_AUTHOR.email}`, ...args);
   }
 
   private async hasIdentity(): Promise<boolean> {
@@ -127,14 +123,28 @@ export class Git {
   }
 
   /**
-   * Stage exactly `paths` and commit them, leaving the human's other edits alone. Nothing happens
+   * Stage exactly `paths` and commit them, leaving the human's other edits alone: unstaged ones stay
+   * unstaged, and ones the human staged stay staged and out of this commit (`--only`). Nothing happens
    * outside a git repo or when the paths changed nothing. Returns whether it committed.
    */
   async commitPaths(paths: string[], message: string, opts: { asUser?: boolean } = {}): Promise<boolean> {
     if (!this.isRepo() || !paths.length) return false;
     await this.stage(paths);
-    if (!(await this.hasStaged())) return false;
-    await this.commit(message, opts);
+    const changed: string[] = [];
+    for (let i = 0; i < paths.length; i += 200) {
+      const out = await this.run("--literal-pathspecs", "diff", "--cached", "--name-only", "--no-renames", "-z", "--", ...paths.slice(i, i + 200));
+      changed.push(...out.split("\0").filter(Boolean));
+    }
+    if (!changed.length) return false;
+    // The pathspecs go through a file: a sleep can change more paths than a command line holds.
+    const tmp = mkdtempSync(join(tmpdir(), "hippo-commit-"));
+    const list = join(tmp, "paths");
+    writeFileSync(list, changed.join("\0"));
+    try {
+      await this.commit(message, { ...opts, only: list });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
     return true;
   }
 

@@ -493,6 +493,7 @@ describe("VaultRuntime: an older vault is migrated when first opened", () => {
     const refused = await api("GET", "overview");
     expect(refused.status).toBe(503);
     expect(refused.body).toMatchObject({ code: "VAULT_MIGRATING" });
+    expect(JSON.stringify(refused.body)).toContain("hippo migrate");
     expect(JSON.stringify(refused.body)).not.toContain("inbox/");
     const res = await connect(AGENT_KEY).catch((e: unknown) => e);
     expect(res).toBeInstanceOf(Error);

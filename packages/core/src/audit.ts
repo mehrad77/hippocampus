@@ -89,6 +89,27 @@ function occurrences(text: string, value: string): number {
   return text.match(new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "gu"))?.length ?? 0;
 }
 
+/**
+ * Whether a confidential value is distinctive enough to look for in shared text. A year, a floor or a
+ * short code (`2026`, `12`, `A4`) turns up in every chronicle's dates and in ordinary prose: counting it
+ * would refuse every sleep and redact unrelated words while hiding nothing, so a value is kept out only
+ * when it is at least 4 characters and not a short number (under 6 digits), like an identifier is.
+ * The curator's redaction uses the same rule, so what it lets through is what the audit accepts.
+ */
+export function isTrackedConfidential(value: string): boolean {
+  const v = value.trim();
+  return v.length >= 4 && !/^\d{1,5}$/.test(v);
+}
+
+/** A chronicle day without the lines the vault generates (frontmatter, the day's heading, each episode's callout header), whose dates and names aren't leaks. */
+function chronicleProse(raw: string): string {
+  return raw
+    .replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")
+    .split("\n")
+    .filter((line) => !/^# \d{4}-\d{2}-\d{2}\s*$/.test(line) && !/^> \[!episode\] /.test(line))
+    .join("\n");
+}
+
 /** Whether `id` is one of the vault's humans (a missing author, or the generic `human`, is the primary one). */
 function isHumanId(config: HippoConfig, id: string | undefined): boolean {
   if (!id || id === "human") return true;
@@ -316,7 +337,7 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
     if (held && !covered) flag(c.path, `human secret changed: ${field}`);
   }
 
-  auditConfidential({ l, changes, was, removed, flag });
+  await auditConfidential({ l, before, changes, was, removed, flag });
 
   // Never lose a memory: a consolidated episode leaves the inbox only once the chronicle cites it.
   let missing = removed.filter((r) => !changes.some((c) => "content" in c && under(c.path, l.chronicle) && cites(c.content, r.id)));
@@ -359,35 +380,47 @@ function confidentialValues(l: Layout, e: Entity | undefined): string[] {
     if (!f.confidential && !def?.confidential && !def?.identity_key) continue;
     for (const v of [f.value, ...(f.was ?? []).map((w) => w.value)]) {
       const text = String(v).trim();
-      if (!isSecretRef(v) && text.length >= 3) out.push(text);
+      if (!isSecretRef(v) && isTrackedConfidential(text)) out.push(text);
     }
   }
   return out;
 }
 
 /**
- * Confidential values of the notes this change set touches must not newly appear in a note's summary,
- * title or aliases, or in the chronicle; nor may a consolidated confidential episode's text.
+ * Confidential values must not newly appear in a note's summary, title or aliases, or in the chronicle;
+ * nor may a consolidated confidential episode's text. The values come from the notes this change set
+ * touches, and from every note when it writes a summary or the chronicle, which can repeat any of them.
  */
-function auditConfidential(i: {
+async function auditConfidential(i: {
   l: Layout;
+  before: VaultStore;
   changes: Change[];
   was: Map<string, string | undefined>;
   removed: { confidential?: string }[];
   flag: Flag;
-}): void {
+}): Promise<void> {
   const { l, changes, was, flag } = i;
+  const summary = (e: Entity | undefined) => (e ? (getRegion(e.body, "summary") ?? "") : "");
+  const names = (e: Entity | undefined) => (e ? [e.fm.title ?? "", ...e.fm.aliases].join("\n") : "");
   const notes = changes.filter((c) => l.typeOf(c.path)).map((c) => {
     const old = was.get(c.path);
     return { path: c.path, b: old === undefined ? undefined : parseNote(c.path, old), a: "content" in c ? parseNote(c.path, c.content) : undefined };
   });
-  const values = [...new Set(notes.flatMap((n) => [...confidentialValues(l, n.b), ...confidentialValues(l, n.a)]))];
+  const found = new Set(notes.flatMap((n) => [...confidentialValues(l, n.b), ...confidentialValues(l, n.a)]));
+  const shared = changes.some((c) => "content" in c && under(c.path, l.chronicle)) || notes.some((n) => n.a && summary(n.a) !== summary(n.b));
+  if (shared) {
+    const paths = new Set((await Promise.all(l.schema.folders().map((t) => i.before.list(t.folder)))).flat());
+    for (const path of paths) {
+      if (!l.typeOf(path)) continue;
+      const raw = await i.before.read(path);
+      for (const v of confidentialValues(l, raw === undefined ? undefined : parseNote(path, raw))) found.add(v);
+    }
+  }
+  const values = [...found];
   const grew = (now: string, then: string, vs: string[]) => vs.some((v) => occurrences(now, v) > occurrences(then, v));
   if (values.length) {
     for (const { path, b, a } of notes) {
       if (!a) continue;
-      const summary = (e: Entity | undefined) => (e ? (getRegion(e.body, "summary") ?? "") : "");
-      const names = (e: Entity | undefined) => (e ? [e.fm.title ?? "", ...e.fm.aliases].join("\n") : "");
       if (grew(summary(a), summary(b), values)) flag(path, "confidential value in a summary");
       if (grew(names(a), names(b), values)) flag(path, "confidential value in a title or alias");
     }
@@ -396,7 +429,7 @@ function auditConfidential(i: {
   for (const c of changes) {
     if (!("content" in c) || !under(c.path, l.chronicle)) continue;
     const then = was.get(c.path) ?? "";
-    if (values.length && grew(c.content, then, values)) flag(c.path, "confidential value in the chronicle");
+    if (values.length && grew(chronicleProse(c.content), chronicleProse(then), values)) flag(c.path, "confidential value in the chronicle");
     if (episodes.some((t) => c.content.split(t).length > then.split(t).length)) flag(c.path, "confidential episode in the chronicle");
   }
 }
@@ -404,8 +437,8 @@ function auditConfidential(i: {
 /**
  * A format migration only reshapes. It may rewrite the config, add or rewrite schema notes and the
  * handbook, add, rewrite or rename templates and dashboards, move a type folder's `.gitkeep`, and move
- * or rewrite entity notes: a note removed from one type folder
- * comes back under another with the same name, and every note keeps its human prose, facts,
+ * or rewrite entity notes: a note removed from one type folder comes back at the same path inside
+ * the folder of a type with the same name or capability, and every note keeps its human prose, facts,
  * relations, id, names, tags, summary and managed memory. Its type and goal props (v1 `deadline`,
  * `clocks`) may change. Nothing else: not the inbox, chronicle, disputes, secrets, CI or guardrails.
  */
@@ -419,8 +452,8 @@ async function auditMigration(i: { l: Layout; after: VaultStore; changes: Change
   const scaffold = (path: string) => [l.schemaDir, la.schemaDir, ...SCAFFOLD].some((f) => under(path, f));
 
   const pairs: { path: string; old: string; raw: string }[] = [];
-  const removed = new Map<string, { path: string; old: string }>();
-  const added = new Map<string, { path: string; raw: string }>();
+  const removed: { path: string; old: string }[] = [];
+  const added: { path: string; raw: string }[] = [];
   for (const c of changes) {
     const o = op(c);
     if (badPath(c.path)) flag(c.path, "path not normalized");
@@ -430,24 +463,33 @@ async function auditMigration(i: { l: Layout; after: VaultStore; changes: Change
     } else if (o !== "modify" && basename(c.path) === ".gitkeep" && typeFolder(c.path)) {
       // An empty type folder kept in git, or a renamed one's placeholder moving along.
     } else if (isNote(c.path)) {
-      const key = basename(c.path);
       if (o === "modify" && "content" in c) pairs.push({ path: c.path, old: was.get(c.path)!, raw: c.content });
-      else if (o === "remove") {
-        if (removed.has(key)) flag(c.path, "duplicate note name");
-        else removed.set(key, { path: c.path, old: was.get(c.path)! });
-      } else if ("content" in c) {
-        if (added.has(key)) flag(c.path, "duplicate note name");
-        else added.set(key, { path: c.path, raw: c.content });
-      }
+      else if (o === "remove") removed.push({ path: c.path, old: was.get(c.path)! });
+      else if ("content" in c) added.push({ path: c.path, raw: c.content });
     } else flag(c.path, "a migration may not change this file");
   }
-  for (const [key, r] of removed) {
-    const a = added.get(key);
-    if (!a) flag(r.path, "note removed by a migration");
-    else pairs.push({ path: a.path, old: r.old, raw: a.raw });
-    added.delete(key);
+  // A moved note keeps its path inside its type's folder (from/x → to/x), and its type keeps its
+  // capability (or its name): a goal and an arc with the same name are two notes, not one.
+  const inFolder = (s: SchemaRegistry, path: string) => {
+    const folder = s.type(s.typeAt(path))?.folder;
+    return folder ? path.slice(folder.length + 1) : path;
+  };
+  const caps = (s: SchemaRegistry, path: string) => s.type(s.typeAt(path))?.capabilities ?? [];
+  const moves = (r: string, a: string) =>
+    inFolder(l.schema, r) === inFolder(la.schema, a) && (l.typeOf(r) === la.typeOf(a) || caps(l.schema, r).some((cap) => caps(la.schema, a).includes(cap)));
+  const taken = new Set<string>();
+  for (const r of removed) {
+    const fits = added.filter((a) => !taken.has(a.path) && moves(r.path, a.path));
+    if (fits.length > 1) flag(r.path, "duplicate note name");
+    const a = fits[0];
+    if (!a) {
+      flag(r.path, "note removed by a migration");
+      continue;
+    }
+    taken.add(a.path);
+    pairs.push({ path: a.path, old: r.old, raw: a.raw });
   }
-  for (const a of added.values()) flag(a.path, "note added by a migration");
+  for (const a of added) if (!taken.has(a.path)) flag(a.path, "note added by a migration");
 
   const reshaped = new Set<string>(["type", "updated", "updated_by", ...GOAL_KEYS, ...LEGACY_GOAL_KEYS]);
   for (const { path, old, raw } of pairs) {

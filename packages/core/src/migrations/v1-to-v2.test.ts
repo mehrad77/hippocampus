@@ -131,9 +131,72 @@ describe("v1 → v2 migration", () => {
     expect(await store.read("_hippo/schema/types/goal.md")).toMatch(/^folder: projects$/m);
     expect(await store.read("projects/lease.md")).toMatch(/^type: goal$/m);
 
+    // Retyped but left in quests/ (no type's folder), it would never load: it stays whole instead.
     const taken = v1({ "goals/residence-permit.md": "---\ntype: lore\n---\n" });
     const r = await run(taken);
-    expect(r.notes).toContain("quests/residence-permit.md: not moved, goals/residence-permit.md already exists");
-    expect(await taken.read("quests/residence-permit.md")).toMatch(/^type: goal$/m);
+    expect(r.notes).toContain(
+      "quests/residence-permit.md: left as it was (still `quest`), goals/residence-permit.md already exists; rename one, then move it to goals/ as `type: goal`",
+    );
+    expect(await taken.read("quests/residence-permit.md")).toBe(V1_FILES["quests/residence-permit.md"]);
+    expect(r.notes.join("\n")).not.toContain("clocks");
+  });
+
+  it("moves goals into the folder an existing goal type note declares", async () => {
+    const before = v1({ "_hippo/schema/types/goal.md": "---\nfolder: objectives\ncapabilities:\n  - goal\n---\nGoals.\n" });
+    const r = await migrate(before, parseConfig(V1_CONFIG), { template: V2_TEMPLATE, dryRun: true });
+    expect(r.changed).toContain("objectives/residence-permit.md");
+    expect(r.changed).not.toContain("goals/residence-permit.md");
+    expect(await auditChanges({ before, changes: r.changes, actor: { kind: "migration" } })).toEqual([]);
+    const after = v1({ "_hippo/schema/types/goal.md": "---\nfolder: objectives\ncapabilities:\n  - goal\n---\nGoals.\n" });
+    await run(after);
+    expect((await Vault.load(after)).withCapability("goal").map((e) => e.path)).toEqual(["objectives/residence-permit.md"]);
+  });
+
+  it("keeps a deadline that differs from due as an objective", async () => {
+    const store = v1({ "quests/visa.md": "---\ntype: quest\ntitle: Visa\nstatus: active\ndeadline: 2026-12-01\ndue: 2026-11-01\n---\n\n## Notes\nx\n" });
+    const r = await run(store);
+    const raw = (await store.read("goals/visa.md"))!;
+    expect(raw).toMatch(/^due: 2026-11-01$/m);
+    expect(raw).not.toMatch(/^deadline:/m);
+    expect(raw).toContain("- [ ] ⏱ Deadline 2026-12-01");
+    expect(r.notes).toContain("quests/visa.md: `deadline` differed from `due`; kept `due`, and the deadline as an objective");
+  });
+
+  describe("produces only changes its own audit allows", () => {
+    const cases: Record<string, Record<string, string>> = {
+      "a quest outside the type folders (an Obsidian template)": { "Templates/Quest.md": '---\ntype: quest\ntitle: "{{title}}"\n---\n\n## Notes\n' },
+      "a quest in a folder no type declares": { "projects/side.md": "---\ntype: quest\ntitle: Side\n---\n\n## Notes\nx\n" },
+      "a README in quests/": { "quests/README.md": "# My quests\nSome prose.\n" },
+      "a note without a type in quests/": { "quests/notype.md": "---\ntitle: No type\nstatus: active\ndeadline: 2026-10-10\n---\n\n## Notes\nx\n" },
+      "a quest and a campaign with the same name": {
+        "quests/relocation.md": "---\ntype: quest\ntitle: Relocation goal\n---\nx\n",
+        "campaigns/relocation.md": "---\ntype: campaign\ntitle: Relocation arc\n---\ny\n",
+      },
+      "a quest whose new path is taken": { "goals/residence-permit.md": "---\ntype: lore\n---\n" },
+    };
+    for (const [name, extra] of Object.entries(cases)) {
+      it(name, async () => {
+        const before = v1(extra);
+        const r = await migrate(before, parseConfig(V1_CONFIG), { template: V2_TEMPLATE, dryRun: true });
+        expect(await auditChanges({ before, changes: r.changes, actor: { kind: "migration" } })).toEqual([]);
+        // Files that aren't v1 notes stay as they were.
+        for (const path of Object.keys(extra)) if (!path.endsWith("relocation.md")) expect(r.changed).not.toContain(path);
+      });
+    }
+
+    it("leaves a README alone, and says so", async () => {
+      const store = v1({ "quests/README.md": "# My quests\nSome prose.\n" });
+      const r = await run(store);
+      expect(await store.read("quests/README.md")).toBe("# My quests\nSome prose.\n");
+      expect(await store.read("goals/README.md")).toBeUndefined();
+      expect(r.notes).toContain("quests/README.md: left as it was (not a readable note)");
+    });
+
+    it("moves a quest and a campaign with the same name each to its own folder", async () => {
+      const store = v1(cases["a quest and a campaign with the same name"]);
+      await run(store);
+      expect(await store.read("goals/relocation.md")).toMatch(/^title: Relocation goal$/m);
+      expect(await store.read("arcs/relocation.md")).toMatch(/^title: Relocation arc$/m);
+    });
   });
 });
