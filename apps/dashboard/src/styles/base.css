@@ -619,6 +619,40 @@ textarea {
   color: var(--ink-3);
 }
 
+.usermenu__head {
+  padding: 6px var(--space-3) 2px;
+  font-size: 0.72rem;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.usermenu__sep {
+  margin: 4px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.usermenu__item {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usermenu__list button[aria-current="true"] {
+  font-weight: 600;
+}
+
+/* The vault switcher sits under the brand, so its menu opens downwards. */
+.vaultmenu {
+  margin: 0 0 var(--space-3);
+}
+
+.vaultmenu .usermenu__list {
+  bottom: auto;
+  top: calc(100% + 4px);
+}
+
 .usermenu--compact .usermenu__button {
   width: auto;
   padding: 4px;

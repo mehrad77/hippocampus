@@ -204,9 +204,11 @@ claude plugin install hippocampus@hippocampus
 ```
 
 ```bash
-export HIPPO_MCP_URL=https://<your-instance>/mcp
+export HIPPO_MCP_URL=https://<your-instance>/mcp/<vault id>
 export HIPPO_KEY=<your curator key>
 ```
+
+The plugin's environment is one vault. For a project that should use another, set both in that project's `.claude/settings.local.json` (`"env": { "HIPPO_MCP_URL": "…", "HIPPO_KEY": "…" }`).
 
 Then run `/hippocampus:sleep` in Claude Code. Without the plugin, the server's prompt does the same: `/mcp__hippocampus__sleep`.
 
@@ -256,7 +258,7 @@ The tool refuses to write to a vault whose format version differs from its own. 
 
 ## 8. The hosted app
 
-`apps/worker` is a multi-user Hippocampus on Cloudflare. People sign in with GitHub; each keeps their vault in a private repo of their own, which the app reads and writes through a GitHub App installed on that one repo. It serves MCP for agents, the dashboard for the human, and agent-run sleep. [SECURITY.md](../SECURITY.md) says what an operator can and can't see.
+`apps/worker` is a multi-user Hippocampus on Cloudflare. People sign in with GitHub; each keeps their vaults (up to five) in private repos of their own, which the app reads and writes through a GitHub App installed on those repos. It serves MCP for agents, the dashboard for the human, and agent-run sleep. [SECURITY.md](../SECURITY.md) says what an operator can and can't see.
 
 ### Using a hosted instance
 
@@ -267,6 +269,8 @@ The tool refuses to write to a vault whose format version differs from its own. 
 5. **Set up the vault.** One commit puts the template into the repo.
 6. **Connect agents** (below) and **set up a curator** (§5).
 
+**Several vaults.** Add another from the vault menu at the top of the sidebar, or **Setup → Your vaults → Add a vault**: the same steps, for another repo (add it to the GitHub App's installation, or pick another GitLab project). Each vault has its own keys, its own curator and its own MCP address, `https://<your-instance>/mcp/<vault id>`. The vault menu switches the dashboard between them; each browser tab keeps its own, and a new tab opens the one you used last. **Remove** forgets a vault here (its keys, connected apps, index and cache); its repo stays where it is, and you can add it again.
+
 **Using GitLab instead.** If the instance offers it, step 2 lets you choose GitLab. Create an empty private project in your **personal namespace** (not a group), then **Connect GitLab**: you authorize the Hippocampus application on GitLab (scope `api`), pick the project, and go on from step 4. Differences from GitHub:
 
 - The connection isn't limited to one project (GitLab has no narrower permission that can write files), so it reaches every project you can. Hippocampus uses it only for your vault. [SECURITY.md](../SECURITY.md) has the details.
@@ -275,7 +279,11 @@ The tool refuses to write to a vault whose format version differs from its own. 
 - The nightly curator workflow is GitHub Actions only. On GitLab, run sleep with your own curator agent (§5).
 - Reconnecting: GitLab sends no webhooks, so the app checks every six hours. If you revoke the app on GitLab, delete the project or make it non-private, the vault disconnects within hours; fix it on GitLab and press **Connect GitLab** again if needed.
 
-**Keys.** The setup page mints keys, shows each one once, and stores only its hash. Revoking one stops it at once.
+**Sharing a vault.** The owner invites people under **Setup → People**, by GitHub username or with a one-time link (valid for 7 days). Each joins as a human of their own in the vault, as a **member** (adds memories, settles disputes and approves agents as themselves, makes keys for their own agents) or a **viewer** (reads only). Accepting an invite approves the account. Removing someone, or their leaving, revokes the keys they made and the apps they connected for that vault; their human stays in the config with everything they wrote. A vault can be shared with up to 19 people.
+
+**Inviting people to the app.** Anyone approved can invite someone to the hosted app itself (**Setup → Invite someone to Hippocampus**): it lets them in without the waitlist and shares nothing. Ten open invites at a time; admins have no cap, and can turn a person's invites off.
+
+**Keys.** The setup page mints keys for the vault it shows, shows each one once, and stores only its hash. Revoking one stops it at once. A key opens only its own vault: used at another vault's address, it's refused (`403 wrong_vault`), so a mixed-up config fails loudly instead of writing to the wrong vault.
 
 | Kind | Scopes | For |
 | --- | --- | --- |
@@ -284,18 +292,18 @@ The tool refuses to write to a vault whose format version differs from its own. 
 | Curator key | `read`, `curate` | The agent that runs sleep. It sees secret and confidential memories in plain text while curating |
 
 ```bash
-claude mcp add --transport http hippocampus https://<your-instance>/mcp --header "Authorization: Bearer hippo_…"
+claude mcp add --transport http hippo-vault https://<your-instance>/mcp/<vault id> --header "Authorization: Bearer hippo_…"
 ```
 
-The setup page also gives snippets for `.mcp.json`, Cursor and VS Code, and the Claude Code plugin (§5).
+The setup page also gives snippets for `.mcp.json`, Cursor and VS Code, and the Claude Code plugin (§5). Each names the server after the vault's repo (`hippo-vault`, `hippo-lisbon-vault`), so one app can hold several vaults side by side. The plain `https://<your-instance>/mcp` still works: the key alone decides the vault.
 
-**Connectors (Claude.ai, ChatGPT).** Add a custom connector with the URL `https://<your-instance>/mcp`. The app signs you in with GitHub and shows a consent page for your vault: pick the agent id the app acts as (a party member, or a new one you can seat right away) and what it may do. Allowing curating makes the app a curator, with a curator key's view of secrets. Your account menu lists connected apps and disconnects them.
+**Connectors (Claude.ai, ChatGPT).** Add a custom connector with the URL `https://<your-instance>/mcp`. The app signs you in with GitHub and shows a consent page: pick the vault it connects to (one per connection), the agent id the app acts as (a party member, or a new one you can seat right away) and what it may do. Allowing curating makes the app a curator, with a curator key's view of secrets. Your account menu lists connected apps and disconnects them.
 
 **Reconnecting.** If the app is uninstalled or suspended, the repo is removed from the installation or deleted, or the repo is made public, the vault is disconnected and stops answering. The setup page says why. Undo it on GitHub (install again, make the repo private) and it reconnects. On GitLab, make the project private again, or connect GitLab again if you revoked the app.
 
 **Limits.** Per vault: 2,000 episodes waiting in the inbox, 20 waiting introductions, 20,000 files, 50 MB of text, 24 sleep runs a day, and 50 keys. Requests are rate-limited per key, account and IP. An admin can raise these for one vault (`POST /dashboard/api/admin/vaults/quotas` with `{"id", "quotas": {"sleepRunsPerDay": 96}}`); `null` restores the defaults.
 
-**Deleting your account.** Your account menu deletes everything the app holds for you, after you type your GitHub login: keys stop working, connected apps are signed out, the GitHub App is uninstalled (or your GitLab connection is revoked), and your account and your vault's index and cache are erased. Your vault repo stays where it is, untouched.
+**Deleting your account.** Your account menu deletes everything the app holds for you, after you type your GitHub login: keys stop working, connected apps are signed out, the GitHub App is uninstalled (or your GitLab connection is revoked), and your account and every vault's index and cache are erased. Your vault repos stay where they are, untouched.
 
 ### Running your own instance
 
@@ -358,7 +366,7 @@ pnpm deploy:worker
 
 Run it again to upgrade. To serve a custom domain, add it to `wrangler.jsonc` as `"routes": [{ "pattern": "<your-host>", "custom_domain": true }]` with `"workers_dev": false`. The Worker answers on one origin only, the one in `HIPPO_PUBLIC_URL`.
 
-Sign in at your Worker's address. Admins are approved on sign-in and find an Admin page in their account menu, where they approve or deny the waitlist and see which vaults exist (names and states, never content).
+Sign in at your Worker's address. Admins are approved on sign-in and find an Admin page in their account menu, where they approve or deny the waitlist, see which vaults exist (names and states, never content), and see who invited whom: a referral graph and table, where they can also stop someone's invites.
 
 **Semantic recall (optional).** Uncomment the `ai` binding in `wrangler.jsonc` and set `HIPPO_EMBED_PROVIDER` to `workers-ai` (it uses `@cf/baai/bge-m3`), or point the `HIPPO_EMBED_*` settings at any OpenAI-compatible embeddings API. `HIPPO_EMBED_DAILY_LIMIT` caps the texts embedded per vault per day (default 5000); past it, search falls back to keywords until the next day.
 

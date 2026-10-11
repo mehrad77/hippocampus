@@ -1,8 +1,12 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useState } from "react";
+import { useResource } from "../lib/cache.ts";
 import { useTerms } from "../lib/prefs.ts";
 import { href } from "../lib/routes.ts";
 import { signOut, useSession } from "../lib/session.ts";
 import { Icon } from "../ui/Icon.tsx";
+import { useMenu } from "../ui/useMenu.ts";
+import type { HostedVaults } from "../lib/types.ts";
+import { VaultItems } from "./VaultSwitcher.tsx";
 
 /**
  * Who's signed in (hosted app only): a chip with the GitHub login that opens Account, Admin (for
@@ -11,29 +15,11 @@ import { Icon } from "../ui/Icon.tsx";
 export default function UserMenu({ compact }: { compact?: boolean }) {
   const { t } = useTerms();
   const session = useSession();
-  const [open, setOpen] = useState(false);
+  const { open, setOpen, root, button } = useMenu();
   const [leaving, setLeaving] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-  const button = useRef<HTMLButtonElement>(null);
   const id = useId();
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      if (!root.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      setOpen(false);
-      button.current?.focus();
-    };
-    document.addEventListener("pointerdown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const hosted = session.data?.capabilities?.setup === "hosted";
+  const vaults = useResource<HostedVaults>(hosted && session.data?.user ? "/vaults" : null);
 
   const user = session.data?.user;
   if (!user) return null;
@@ -65,6 +51,7 @@ export default function UserMenu({ compact }: { compact?: boolean }) {
         )}
       </button>
       <ul className="usermenu__list" id={id} hidden={!open}>
+        {compact && vaults.data && <VaultItems vaults={vaults.data} onPick={() => setOpen(false)} />}
         <li>
           <a href={href.page("setup", "#account")} onClick={() => setOpen(false)}>
             <Icon name="github" size={18} /> Account

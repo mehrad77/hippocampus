@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { VAULT_HEADER, type AdminReferrals, type HostedInvites, type HostedMembers, type HostedNewInvite, type HostedVault, type HostedVaults } from "@hippocampus/dashboard";
 import { configProblem } from "./app.ts";
 import { ORIGIN } from "./hosted/testing.ts";
 import { GM, PLAYER, SCOUT, hostedApp } from "./testing/hosted-app.ts";
@@ -68,7 +69,7 @@ describe("the dashboard API", () => {
     const player = await h.readyAccount(PLAYER);
     const gm = await h.readyAccount(GM);
     const res = await h.api(player.visit, "overview?quest=lisbon");
-    expect(await res.json()).toEqual({ vault: player.vault, user: { login: "player", account: { status: "approved", admin: false } }, path: "/dashboard/api/overview" });
+    expect(await res.json()).toEqual({ vault: player.vault, user: { login: "player", account: { status: "approved", admin: false }, role: "owner" }, path: "/dashboard/api/overview" });
     expect(await (await h.api(gm.visit, "overview")).json()).toMatchObject({ vault: gm.vault, user: { login: "game-master", account: { status: "approved", admin: true } } });
     const [call] = h.vaults.to(player.vault, "dashboard");
     expect(call).toMatchObject({ authorization: null, cookie: null });
@@ -228,5 +229,176 @@ describe("vault changes reach the Durable Object", () => {
     const scout = await h.readyAccount(SCOUT);
     await h.post(player.visit, "account/delete", { confirm: "player" });
     expect(h.vaults.to(scout.vault).map((c) => c.method)).not.toContain("destroy");
+  });
+});
+
+describe("several vaults", () => {
+  it("lets a person switch between their vaults, and remembers the last one", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const harbor = await h.addVault(player.visit, PLAYER, { name: "harbor-notes", id: 9101 });
+    const listed = (await (await h.api(player.visit, "vaults")).json()) as HostedVaults;
+    expect(listed.vaults.map((v) => [v.fullName, v.role])).toEqual([
+      ["player/vault", "owner"],
+      ["player/harbor-notes", "owner"],
+    ]);
+    expect(listed.current).toBe(player.vault);
+    const on = (vault: string) => ({ headers: { [VAULT_HEADER]: vault } });
+    expect(await (await h.api(player.visit, "overview", on(harbor))).json()).toMatchObject({ vault: harbor });
+    // A new tab without the header opens the vault used last.
+    expect(await (await h.api(player.visit, "overview")).json()).toMatchObject({ vault: harbor });
+    expect((await (await h.api(player.visit, "vaults")).json()) as HostedVaults).toMatchObject({ current: harbor });
+    // Someone else's vault, or a made-up one, is no vault at all.
+    const gm = await h.readyAccount(GM);
+    const theirs = await h.api(player.visit, "overview", on(gm.vault));
+    expect(theirs.status).toBe(404);
+    expect(await theirs.json()).toMatchObject({ code: "NO_VAULT" });
+    expect(h.vaults.to(gm.vault, "dashboard")).toEqual([]);
+  });
+
+  it("removes one vault, with its keys and object, only when its name is typed", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const harbor = await h.addVault(player.visit, PLAYER, { name: "harbor-notes", id: 9101 });
+    const token = await h.mintKey(harbor, { kind: "agent" });
+    expect((await h.post(player.visit, "setup/vaults/remove", { id: harbor, confirm: "player/vault" })).status).toBe(400);
+    expect((await h.post(player.visit, "setup/vaults/remove", { id: harbor, confirm: "player/harbor-notes" })).status).toBe(200);
+    expect(h.vaults.to(harbor, "destroy")).toHaveLength(1);
+    expect(await h.registry.keyForToken(token)).toBeUndefined();
+    expect(h.vaults.to(player.vault, "destroy")).toEqual([]);
+    expect(((await (await h.api(player.visit, "vaults")).json()) as HostedVaults).vaults.map((v) => v.id)).toEqual([player.vault]);
+    // The repo is the person's own: nothing was written to it.
+    expect(h.gh.at("player/harbor-notes").files()["_hippo/config.yaml"]).toBeDefined();
+  });
+
+  it("refuses a key at another vault's address, naming only the key's own", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const harbor = await h.addVault(player.visit, PLAYER, { name: "harbor-notes", id: 9101 });
+    const token = await h.mintKey(player.vault, { kind: "agent" });
+    expect((await h.callMcp(token, undefined, {}, `/mcp/${player.vault}`)).status).toBe(200);
+    const wrong = await h.callMcp(token, undefined, {}, `/mcp/${harbor}`);
+    expect(wrong.status).toBe(403);
+    const body = (await wrong.json()) as { error: string; error_description: string };
+    expect(body.error).toBe("wrong_vault");
+    expect(body.error_description).toContain("player/vault");
+    expect(body.error_description).not.toContain("harbor-notes");
+    expect(h.vaults.to(harbor, "mcp")).toEqual([]);
+    expect((await h.callMcp(token, undefined, {}, "/mcp/not-a-vault")).status).toBe(404);
+    // The plain address still works: the key decides.
+    expect((await h.callMcp(token)).status).toBe(200);
+  });
+
+  it("wipes every vault's object when the account is deleted", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const harbor = await h.addVault(player.visit, PLAYER, { name: "harbor-notes", id: 9101 });
+    expect((await h.post(player.visit, "account/delete", { confirm: "player" })).status).toBe(200);
+    expect(h.vaults.to(player.vault, "destroy")).toHaveLength(1);
+    expect(h.vaults.to(harbor, "destroy")).toHaveLength(1);
+  });
+});
+
+describe("sharing a vault", () => {
+  async function sharedWith(role: "member" | "viewer" = "member") {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const made = (await (await h.post(player.visit, "vaults/members/invite", { role, human: "game-master", login: "game-master", domains: ["university"] })).json()) as HostedNewInvite;
+    const gm = h.browser();
+    await h.signIn(gm, "game-master");
+    return { h, player, gm, made };
+  }
+
+  it("invites by login: the invitee sees it, accepts, is approved, and acts as their own human", async () => {
+    const { h, player, gm, made } = await sharedWith();
+    expect(made.link).toMatch(/^https:\/\/hippo\.test\/dashboard\/invite\/#hinv_/);
+    expect(made.invite).toMatchObject({ vault: player.vault, role: "member", human: "game-master", login: "game-master" });
+    const waiting = (await (await h.api(gm, "invites")).json()) as HostedInvites;
+    expect(waiting.incoming).toEqual([expect.objectContaining({ id: made.invite.id, from: "player", vault: { id: player.vault, fullName: "player/vault" }, role: "member", human: "game-master" })]);
+
+    const accepted = (await (await h.post(gm, "invites/accept", { id: made.invite.id })).json()) as { vault: HostedVault };
+    expect(accepted.vault).toMatchObject({ id: player.vault, role: "member", human: "game-master" });
+    expect(await (await h.api(gm, "session")).json()).toMatchObject({ vault: player.vault, user: { login: "game-master", role: "member", human: "game-master", account: { status: "approved" } } });
+    expect(h.vaults.to(player.vault, "linkHuman")).toEqual([expect.objectContaining({ human: "game-master", logins: { github: "game-master" }, via: "@game-master", create: { domains: ["university"] } })]);
+
+    const members = (await (await h.api(player.visit, "vaults/members")).json()) as HostedMembers;
+    expect(members.members.map((m) => [m.login, m.role, m.human ?? null])).toEqual([
+      ["player", "owner", null],
+      ["game-master", "member", "game-master"],
+    ]);
+    expect(members.invites).toEqual([]);
+    // The member sees who's in, but not the invites, and can't invite.
+    expect(((await (await h.api(gm, "vaults/members")).json()) as HostedMembers).invites).toBeUndefined();
+    expect((await h.post(gm, "vaults/members/invite", { role: "member", human: "job-scout" })).status).toBe(403);
+  });
+
+  it("lets a member make their own agent keys, not a curator's, and see only theirs", async () => {
+    const { h, player, gm, made } = await sharedWith();
+    await h.post(gm, "invites/accept", { id: made.invite.id });
+    await h.post(player.visit, "setup/keys", { kind: "agent", label: "Player's" });
+    expect((await h.post(gm, "setup/keys", { kind: "agent", label: "GM's" })).status).toBe(200);
+    expect(await (await h.post(gm, "setup/keys", { kind: "curator" })).json()).toMatchObject({ code: "OWNER_ONLY" });
+    expect(((await (await h.api(gm, "setup/keys")).json()) as { keys: { label: string }[] }).keys.map((k) => k.label)).toEqual(["GM's"]);
+    expect(((await (await h.api(player.visit, "setup/keys")).json()) as { keys: { label: string }[] }).keys.map((k) => k.label).sort()).toEqual(["GM's", "Player's"]);
+    expect(await (await h.post(gm, "setup/vaults/remove", { id: player.vault, confirm: "player/vault" })).json()).toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("keeps a viewer to reading", async () => {
+    const { h, player, gm, made } = await sharedWith("viewer");
+    await h.post(gm, "invites/accept", { id: made.invite.id });
+    expect((await h.api(gm, "overview")).status).toBe(200);
+    expect(await (await h.post(gm, "actions/remember", { text: "x" })).json()).toMatchObject({ code: "READ_ONLY" });
+    expect(h.vaults.to(player.vault, "dashboard").filter((c) => c.user?.login === "game-master").map((c) => c.path)).toEqual(["/dashboard/api/overview"]);
+    expect(await (await h.post(gm, "setup/keys", { kind: "agent" })).json()).toMatchObject({ code: "READ_ONLY" });
+    // Promoted, they can write.
+    await h.post(player.visit, "vaults/members/role", { user: ((await (await h.api(player.visit, "vaults/members")).json()) as HostedMembers).members[1]!.user, role: "member" });
+    expect((await h.post(gm, "actions/remember", { text: "x" })).status).toBe(200);
+  });
+
+  it("removes a member with their keys, and unlinks their login; or they leave", async () => {
+    const { h, player, gm, made } = await sharedWith();
+    await h.post(gm, "invites/accept", { id: made.invite.id });
+    const key = ((await (await h.post(gm, "setup/keys", { kind: "agent" })).json()) as { token: string }).token;
+    const them = ((await (await h.api(player.visit, "vaults/members")).json()) as HostedMembers).members[1]!.user;
+    expect((await h.post(player.visit, "vaults/members/remove", { user: them })).status).toBe(200);
+    expect(await h.registry.keyForToken(key)).toBeUndefined();
+    expect(h.vaults.to(player.vault, "linkHuman").at(-1)).toMatchObject({ human: "game-master", logins: { github: null }, via: "@player" });
+    expect(((await (await h.api(gm, "vaults")).json()) as HostedVaults).vaults).toEqual([]);
+    expect(await (await h.api(gm, "overview", { headers: { [VAULT_HEADER]: player.vault } })).json()).toMatchObject({ code: "NO_VAULT" });
+
+    // Invited again, by link this time; then they leave on their own.
+    const again = (await (await h.post(player.visit, "vaults/members/invite", { role: "member", human: "game-master" })).json()) as HostedNewInvite;
+    const token = again.link.split("#")[1]!;
+    expect(await (await h.post(gm, "invites/peek", { token })).json()).toMatchObject({ from: "player", vault: { fullName: "player/vault" } });
+    // A link invite's id alone isn't enough: it takes the token.
+    expect((await h.post(gm, "invites/accept", { id: again.invite.id })).status).toBe(410);
+    expect((await h.post(gm, "invites/accept", { token })).status).toBe(200);
+    expect((await h.post(gm, "invites/accept", { token })).status).toBe(410);
+    expect((await h.post(gm, "vaults/leave", {})).status).toBe(200);
+    expect((await h.post(player.visit, "vaults/leave", {})).status).toBe(403);
+  });
+
+  it("invites people to the app alone, and shows admins the referral graph", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const made = (await (await h.post(player.visit, "invites", {})).json()) as HostedNewInvite;
+    expect(made.invite.vault).toBeUndefined();
+    const scout = h.browser();
+    await h.signIn(scout, "job-scout");
+    expect(await (await h.api(scout, "session")).json()).toMatchObject({ account: { status: "waitlisted" } });
+    expect(await (await h.post(scout, "invites/accept", { token: made.link.split("#")[1] })).json()).toEqual({});
+    expect(await (await h.api(scout, "session")).json()).toMatchObject({ account: { status: "approved" } });
+    expect(((await (await h.api(player.visit, "invites")).json()) as HostedInvites)).toMatchObject({ sent: [], accepted: 1, canInvite: true, limit: 10 });
+
+    // game-master is the admin here.
+    const gm = h.browser();
+    await h.signIn(gm, "game-master");
+    const graph = (await (await h.api(gm, "admin/referrals")).json()) as AdminReferrals;
+    const byLogin = new Map(graph.people.map((p) => [p.login, p.user]));
+    expect(graph.edges).toEqual([{ from: byLogin.get("player"), to: byLogin.get("job-scout"), at: expect.any(String) }]);
+    expect(graph.people.find((p) => p.login === "job-scout")).toMatchObject({ invitedBy: byLogin.get("player"), status: "approved" });
+    expect((await h.post(gm, "admin/referrals/invites", { user: byLogin.get("job-scout"), allow: false })).status).toBe(200);
+    expect(await (await h.post(scout, "invites", {})).json()).toMatchObject({ code: "INVITES_OFF" });
+    expect((await h.api(player.visit, "admin/referrals")).status).toBe(403);
   });
 });

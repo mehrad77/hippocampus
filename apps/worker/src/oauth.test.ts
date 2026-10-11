@@ -44,7 +44,7 @@ async function consent(h: HostedHarness, visit: Visit, opts: { clientName?: stri
   const page = await res.text();
   const field = (name: string) => new RegExp(`name="${name}" value="([^"]*)"`).exec(page)?.[1];
   const submit = (fields: Record<string, string | string[]>, using = visit, headers: Record<string, string> = { origin: ORIGIN }) => {
-    const form = new URLSearchParams({ handle: field("handle") ?? "", account: field("account") ?? "" });
+    const form = new URLSearchParams({ handle: field("handle") ?? "", account: field("account") ?? "", vault: field("vault") ?? "" });
     for (const [k, v] of Object.entries(fields)) for (const x of [v].flat()) form.append(k, x);
     return using(`${ORIGIN}/authorize`, { method: "POST", body: form, headers });
   };
@@ -301,7 +301,7 @@ describe("connected apps", () => {
     await connect(h, gm.visit, { new_agent: "chatgpt", scope: "read" }, { clientName: "ChatGPT" });
     const list = async (visit: Visit) => ((await (await h.api(visit, "account/apps")).json()) as { apps: HostedConnectedApp[] }).apps;
     const apps = await list(player.visit);
-    expect(apps).toEqual([{ id: expect.any(String), client: "Claude", scopes: ["read", "remember"], agent: "claude-ai", created: expect.any(String) }]);
+    expect(apps).toEqual([{ id: expect.any(String), client: "Claude", scopes: ["read", "remember"], agent: "claude-ai", vault: expect.stringMatching(/^[0-9A-Z]{26}$/), created: expect.any(String) }]);
     const [theirs] = await list(gm.visit);
     expect((await h.post(player.visit, "account/apps/revoke", { id: theirs!.id })).status).toBe(404);
     expect((await h.post(player.visit, "account/apps/revoke", { id: "../x" })).status).toBe(400);

@@ -20,7 +20,7 @@ export type Visit = ReturnType<typeof browser>;
 
 export interface StubCall {
   vault: string;
-  method: "configure" | "mcp" | "dashboard" | "party" | "addParty" | "disconnect" | "destroy";
+  method: "configure" | "mcp" | "dashboard" | "party" | "addParty" | "linkHuman" | "disconnect" | "destroy";
   meta?: VaultMeta;
   grant?: VaultGrant;
   user?: DashboardUser;
@@ -31,6 +31,9 @@ export interface StubCall {
   input?: { id: string; title: string };
   via?: string;
   reason?: string;
+  human?: string;
+  logins?: { github?: string | null; gitlab?: string | null };
+  create?: { domains?: string[] };
 }
 
 /** Each vault's Durable Object, as a recorder: every call, and a party per vault. */
@@ -61,6 +64,10 @@ export class FakeVaults implements VaultHosts {
         if (input.id === "player") throw new Error(`"player" is the vault's human, not an agent`);
         this.parties.set(vault, [...(this.parties.get(vault) ?? []), { id: input.id, title: input.title }]);
         return { slug: input.id };
+      },
+      linkHuman: async (human, logins, via, create) => {
+        seen({ method: "linkHuman", human, logins, via, ...(create ? { create } : {}) });
+        return { changed: true };
       },
       disconnect: async (reason) => seen({ method: "disconnect", reason }),
       destroy: async () => seen({ method: "destroy" }),
@@ -156,12 +163,22 @@ export async function hostedApp(opts: { limits?: HostedAppDeps["limits"]; gitlab
     return { visit, vault: vault.id, installation };
   };
 
+  /** Another vault for a signed-in, approved account: a new empty repo, the app installed on it, and set up. */
+  const addVault = async (using: Visit, who: { login: string; id: number }, repo: { name: string; id: number }) => {
+    await gh.addRepo({ fullName: `${who.login}/${repo.name}`, id: repo.id, empty: true });
+    const installation = gh.addInstallation({ account: { id: who.id, login: who.login, type: "User" }, repos: [`${who.login}/${repo.name}`] });
+    await using(github.installed(who.login, installation.id));
+    const init = await post(using, "setup/init", { repoId: repo.id, ...SETTINGS, humans: [{ id: who.login }] });
+    if (init.status !== 200) throw new Error(`setup/init: ${init.status} ${await init.text()}`);
+    return ((await init.json()) as { vault: { id: string } }).vault.id;
+  };
+
   /** A vault key, minted straight into the registry. */
   const mintKey = async (vault: string, body: unknown) => (await registry.mintKey(vault, keyRequest(body))).token;
 
   /** One MCP request with a bearer token. The fake stub echoes what it got. */
-  const callMcp = (token: string, body = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}', headers: Record<string, string> = {}) =>
-    send(new Request(`${ORIGIN}/mcp`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream", ...headers }, body }));
+  const callMcp = (token: string, body = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}', headers: Record<string, string> = {}, path = "/mcp") =>
+    send(new Request(`${ORIGIN}${path}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream", ...headers }, body }));
 
   /** A signed delivery of GitHub's webhook. */
   let deliveries = 0;
@@ -180,7 +197,7 @@ export async function hostedApp(opts: { limits?: HostedAppDeps["limits"]; gitlab
     return using(gl!.approve(toGitLab.headers.get("location")!, gitlabUser));
   };
 
-  return { app, gh, gl, connectGitLab, github, kv, vaults, logs, waits, send, registry, signIn, api, post, readyAccount, mintKey, callMcp, deliver, browser: () => browser(send) };
+  return { app, gh, gl, connectGitLab, github, kv, vaults, logs, waits, send, registry, signIn, api, post, readyAccount, addVault, mintKey, callMcp, deliver, browser: () => browser(send) };
 }
 
 export type HostedHarness = Awaited<ReturnType<typeof hostedApp>>;

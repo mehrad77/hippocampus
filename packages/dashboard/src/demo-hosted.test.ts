@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hostedDemo } from "./demo-hosted.ts";
-import type { HostedSetupStatus } from "./setup.ts";
+import { VAULT_HEADER, type AdminReferrals, type HostedInvites, type HostedMembers, type HostedNewInvite, type HostedSetupStatus, type HostedVaults } from "./setup.ts";
 import type { DashboardSource } from "./source.ts";
 
 const ORIGIN = "http://127.0.0.1:4339";
@@ -8,14 +8,74 @@ const source = { info: async () => ({ mode: "demo", vault: { kind: "memory" }, c
 
 function client() {
   const demo = hostedDemo({ base: "/dashboard", source, approveAfter: 0, initDelay: 0 });
-  const call = async (path: string, body?: unknown) => {
-    const res = await demo(new Request(`${ORIGIN}${path}`, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+  const call = async (path: string, body?: unknown, headers: Record<string, string> = {}) => {
+    const res = await demo(new Request(`${ORIGIN}${path}`, body === undefined ? { headers } : { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }));
     return { status: res?.status, body: res && res.headers.get("content-type")?.includes("json") ? await res.json() : undefined, location: res?.headers.get("location") };
   };
-  return { demo, call, api: (path: string, body?: unknown) => call(`/dashboard/api/${path}`, body) };
+  return { demo, call, api: (path: string, body?: unknown, headers?: Record<string, string>) => call(`/dashboard/api/${path}`, body, headers) };
 }
 
 describe("hosted demo", () => {
+  it("shares: members and invites on the first vault, a vault waiting to be accepted, and referrals", async () => {
+    const { api } = client();
+    await api("__demo/stage?to=ready");
+    const members = (await api("vaults/members")).body as HostedMembers;
+    expect(members.members.map((m) => [m.login, m.role])).toEqual([
+      ["player", "owner"],
+      ["game-master", "member"],
+    ]);
+    const made = (await api("vaults/members/invite", { role: "viewer", human: "flatmate", login: "flatmate-gh" })).body as HostedNewInvite;
+    expect(made.link).toMatch(/\/dashboard\/invite\/#hinv_/);
+    expect(((await api("vaults/members")).body as HostedMembers).invites?.map((i) => i.human)).toEqual(["flatmate"]);
+    expect((await api("invites/peek", { token: made.link.split("#")[1] })).body).toMatchObject({ from: "player", vault: { fullName: "player/vault" } });
+
+    const invites = (await api("invites")).body as HostedInvites;
+    expect(invites.incoming.map((i) => i.vault?.fullName)).toEqual(["harbor-student/study-group"]);
+    const accepted = (await api("invites/accept", { id: invites.incoming[0]!.id })).body as { vault: { id: string; role: string } };
+    expect(accepted.vault.role).toBe("viewer");
+    const on = { [VAULT_HEADER]: accepted.vault.id };
+    expect((await api("session", undefined, on)).body).toMatchObject({ capabilities: { remember: false, curator: false } });
+    expect((await api("actions/remember", { text: "x" }, on)).body).toMatchObject({ code: "READ_ONLY" });
+    expect((await api("vaults/leave", {}, on)).body).toEqual({ ok: true });
+    expect(((await api("vaults")).body as HostedVaults).vaults).toHaveLength(2);
+
+    const graph = (await api("admin/referrals")).body as AdminReferrals;
+    expect(graph.edges.length).toBeGreaterThan(2);
+  });
+
+  it("has two vaults when ready: switches between them, adds one, and removes one", async () => {
+    const { api } = client();
+    await api("__demo/stage?to=ready");
+    const listed = (await api("vaults")).body as HostedVaults;
+    expect(listed.vaults.map((v) => [v.fullName, v.provider])).toEqual([
+      ["player/vault", "github"],
+      ["player/lisbon-vault", "gitlab"],
+    ]);
+    expect(listed.current).toBe(listed.vaults[0]!.id);
+    const [github, gitlab] = listed.vaults;
+    const on = (id: string) => ({ [VAULT_HEADER]: id });
+    expect((await api("session", undefined, on(gitlab!.id))).body).toMatchObject({ vault: { kind: "gitlab", repo: "player/lisbon-vault" } });
+    // Remembered: without the header, the vault used last.
+    expect((await api("vaults")).body).toMatchObject({ current: gitlab!.id });
+    const status = (await api("setup/status", undefined, on(github!.id))).body as HostedSetupStatus;
+    expect(status.mcpUrl).toBe(`${ORIGIN}/mcp/${github!.id}`);
+    const key = (await api("setup/keys", { kind: "agent" }, on(github!.id))).body as { snippets: { code: string }[] };
+    expect(key.snippets[0]!.code).toContain(`hippo-vault ${ORIGIN}/mcp/${github!.id}`);
+    expect(((await api("setup/keys", undefined, on(gitlab!.id))).body as { keys: unknown[] }).keys).toEqual([]);
+    expect((await api("overview", undefined, on("01J9Z8D3M0V999999999999999"))).status).toBe(404);
+
+    // Adding: the repo picker sees an installation even beside ready vaults.
+    await api("__demo/install");
+    expect((await api("setup/init", { repoId: 501, name: "Again" })).body).toMatchObject({ code: "ALREADY_VAULT" });
+    const added = (await api("setup/init", { repoId: 502, name: "Lisbon Arc" })).body as { vault: { id: string; fullName: string } };
+    expect(added.vault.fullName).toBe("player/lisbon-arc");
+    expect(((await api("vaults")).body as HostedVaults).vaults).toHaveLength(3);
+
+    expect((await api("setup/vaults/remove", { id: added.vault.id, confirm: "player/vault" })).body).toMatchObject({ code: "CONFIRM" });
+    expect((await api("setup/vaults/remove", { id: added.vault.id, confirm: "player/lisbon-arc" })).body).toEqual({ ok: true });
+    expect(((await api("vaults")).body as HostedVaults).vaults.map((v) => v.id)).toEqual([github!.id, gitlab!.id]);
+  });
+
   it("walks from signed out to a vault with keys", async () => {
     const { call, api } = client();
     expect((await call("/dashboard/")).location).toBe("/dashboard/welcome/");

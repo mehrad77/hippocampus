@@ -18,6 +18,8 @@ export interface HippoServerOptions {
   jsonSchemaValidator?: jsonSchemaValidator;
   /** Lets the agent run sleep itself (the `curate` scope). A factory is called per tool call. */
   relay?: SleepRelay | (() => SleepRelay);
+  /** The one vault this connection serves, named in the instructions so the agent never mixes vaults up. */
+  vault?: { id: string; name: string };
 }
 
 /**
@@ -43,6 +45,10 @@ export function normalizeScopes(scopes: readonly Scope[]): CurrentScope[] {
 const INSTRUCTIONS = `Hippocampus is shared, curated memory for the person's AI agents: an Obsidian vault of notes about the people, places, goals and things in their life.
 Call \`onboard\` at the start of a session. Use \`recall\`, \`get\`, and \`ask_canon\` before acting on facts, and \`briefing\` with \`about\` before talking to someone. Use \`remember\` for anything worth keeping. You never edit notes directly: memories are consolidated nightly, and conflicts go to the human.
 Fact status: canon = trust it, rumor = verify first, disputed = do not act without checking. A "◐ confidential" value is hidden from you: don't guess it.`;
+
+/** One connection, one vault: said up front, since a person can connect several vaults to the same app. */
+export const vaultInstructions = (vault: { id: string; name: string }) =>
+  `\nThis connection serves one vault, "${vault.name.replace(/["\n]/g, " ")}" (${vault.id}). Everything you remember goes there and only there; another vault has its own connection.`;
 
 const CURATE_INSTRUCTIONS = `
 You may also run the nightly consolidation yourself: the \`sleep\` prompt explains how, starting with \`sleep_start\`.`;
@@ -98,10 +104,11 @@ function param(v: string | string[] | undefined, form = false): string {
   }
 }
 
-export function createHippoServer({ service, agent, scopes, version = "0.1.0", jsonSchemaValidator, relay }: HippoServerOptions): McpServer {
+export function createHippoServer({ service, agent, scopes, version = "0.1.0", jsonSchemaValidator, relay, vault }: HippoServerOptions): McpServer {
   const granted = scopes ? normalizeScopes(scopes) : undefined;
   const curates = !!relay && (!granted || granted.includes("curate"));
-  const server = new McpServer({ name: "hippocampus", version }, { instructions: curates ? INSTRUCTIONS + CURATE_INSTRUCTIONS : INSTRUCTIONS, jsonSchemaValidator });
+  const instructions = (curates ? INSTRUCTIONS + CURATE_INSTRUCTIONS : INSTRUCTIONS) + (vault ? vaultInstructions(vault) : "");
+  const server = new McpServer({ name: "hippocampus", version }, { instructions, jsonSchemaValidator });
   // Out-of-scope tools are removed outright, so clients never see them.
   const scoped = (scope: CurrentScope, registered: { remove(): void }) => {
     if (granted && !granted.includes(scope)) registered.remove();

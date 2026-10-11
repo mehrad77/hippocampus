@@ -60,7 +60,7 @@ export function UpgradeBanner({ session }: { session: SessionInfo }) {
       <div className="stack sz-tight">
         <strong>This vault uses an older format. Upgrade it?</strong>
         <span className="small">
-          The upgrade rewrites what changed in one commit to your repo, which you can review or revert on GitHub. Agents can't use the vault until it's done.
+          The upgrade rewrites what changed in one commit to your repo, which you can review or revert on {session.vault?.kind === "gitlab" ? "GitLab" : "GitHub"}. Agents can't use the vault until it's done.
         </span>
         {failed && <span className="field-error small">{failed}</span>}
         <span>

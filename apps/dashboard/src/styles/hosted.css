@@ -73,6 +73,54 @@
   }
 }
 
+/* ── Your vaults ───────────────────────────────────────────────────────── */
+
+.hz-vaults {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hz-vault {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.hz-vault--current {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.hz-vault__name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.hz-vault__act {
+  justify-content: flex-end;
+}
+
+@media (max-width: 560px) {
+  .hz-vault {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .hz-vault > .sz-state,
+  .hz-vault__act {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
 /* ── Secrets key ──────────────────────────────────────────────────────── */
 
 .hz-key {
@@ -187,4 +235,117 @@
 
 :root:not([data-style="codex"]) .hz-curline > svg {
   color: var(--link);
+}
+
+/* ── Admin: the referral graph ────────────────────────────────────────── */
+
+.hz-refmap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.hz-refmap svg {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.hz-refmap__edge {
+  stroke: var(--ink-3);
+  stroke-width: 1.4;
+}
+
+.hz-refmap__head {
+  fill: var(--ink-3);
+}
+
+.hz-refmap__node {
+  cursor: pointer;
+}
+
+.hz-refmap__node circle {
+  stroke-width: 2;
+}
+
+/* The same pairs as the status tags beside it: a light fill with the status color's ring. */
+.hz-refmap__node--approved circle {
+  fill: var(--canon-bg);
+  stroke: var(--canon);
+}
+
+.hz-refmap__node--waitlisted circle {
+  fill: var(--rumor-bg);
+  stroke: var(--rumor);
+}
+
+.hz-refmap__node--denied circle {
+  fill: var(--disputed-bg);
+  stroke: var(--disputed);
+}
+
+.hz-refmap__node--deleted circle {
+  fill: var(--surface);
+  stroke: var(--ink-3);
+}
+
+.hz-refmap__node text {
+  fill: var(--ink);
+  font-size: 12px;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: var(--surface-2);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.hz-refmap__node.is-picked circle,
+.hz-refmap__node:focus-visible circle {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.hz-refmap__node:focus-visible {
+  outline: none;
+}
+
+.hz-refmap .is-dim {
+  opacity: 0.25;
+}
+
+.hz-refmap__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── Sharing: invites ─────────────────────────────────────────────────── */
+
+.hz-invites {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hz-invites > li {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+}
+
+.hz-invite-form {
+  flex-wrap: wrap;
+}
+
+.hz-invite-form .input {
+  flex: 1 1 14rem;
+  min-width: 0;
 }

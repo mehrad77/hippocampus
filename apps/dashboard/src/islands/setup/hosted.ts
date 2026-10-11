@@ -144,7 +144,31 @@ export function hostedProvider(ctx: HostedContext): HostedProvider {
 
 /** The repos the person can pick from, on the chosen host. */
 export function hostedRepos(ctx: HostedContext): HostedRepoView[] {
-  return hostedProvider(ctx) === "gitlab" ? (ctx.status.gitlab?.repos ?? []) : (ctx.status.installation?.repos ?? []);
+  const provider = hostedProvider(ctx);
+  const repos = provider === "gitlab" ? (ctx.status.gitlab?.repos ?? []) : (ctx.status.installation?.repos ?? []);
+  const mine = new Set((ctx.status.vaults ?? []).filter((v) => (v.provider ?? "github") === provider).map((v) => v.fullName.toLowerCase()));
+  return mine.size ? repos.map((r) => (mine.has(r.fullName.toLowerCase()) ? { ...r, yours: true } : r)) : repos;
+}
+
+/** Where the setup status comes from; `?add` also lists GitLab projects beside a ready vault. */
+export const statusKey = (adding: boolean) => (adding ? "/setup/status?add" : "/setup/status");
+
+/** The status as a new vault's setup sees it: nothing of the vault the tab shows, so the wizard starts fresh. */
+export function forNewVault(s: HostedStatus): HostedStatus {
+  const { vault: _vault, keys: _keys, curatorActions: _actions, ...rest } = s;
+  return { ...rest, items: s.items.filter((i) => i.id === "access") };
+}
+
+/** How many of these vaults the person owns (a vault without a role is theirs: an older server). */
+export const ownedCount = (vaults: readonly { role?: string }[]) => vaults.filter((v) => (v.role ?? "owner") === "owner").length;
+
+/** Whether the person may add another vault, and why not. */
+export function canAddVault(s: Pick<HostedStatus, "account" | "vaults" | "vaultLimit">): { ok: boolean; why?: string } {
+  if (s.account.status !== "approved") return { ok: false, why: "An admin approves your account first." };
+  // Only vaults of their own count; ones shared with them don't.
+  const n = ownedCount(s.vaults ?? []);
+  if (s.vaultLimit !== undefined && n >= s.vaultLimit) return { ok: false, why: `You have ${n} vaults, the most one person can have here. Remove one to add another.` };
+  return { ok: true };
 }
 
 /** Whether the host is connected, so repos can be listed: the GitHub App installed, or GitLab signed in. */
@@ -243,6 +267,7 @@ export function repoVerdict(r: HostedRepoView, provider: HostedProvider = "githu
   if (!r.private && provider === "gitlab")
     return { usable: false, tone: "error", tag: "Not private", detail: "Anyone could read your memory there (internal projects are open to every signed-in user of the instance). Set it to Private in the project's visibility settings on GitLab, or pick another." };
   if (!r.private) return { usable: false, tone: "error", tag: "Public", detail: "Anyone could read your memory there. Make it private on GitHub (Settings → Danger Zone → Change visibility), or pick another." };
+  if (r.yours) return { usable: false, tone: "optional", tag: "Already yours", detail: "It's one of your vaults here already. Switch to it from the vault menu, or pick another repo." };
   if (r.adoptable) return { usable: true, tone: "done", tag: "Existing vault", detail: "Already a Hippocampus vault: it's adopted as it is, and only missing rule files are added." };
   if (r.empty === true) return { usable: true, tone: "done", tag: "Empty", detail: "Private and empty: ready to become your vault." };
   if (r.empty === false && r.adoptable === false) return { usable: false, tone: "error", tag: "Has files", detail: "It already holds other files. Pick an empty repo (one with only a README, LICENSE or .gitignore works too)." };
@@ -416,3 +441,40 @@ export const KEY_KIND: Record<HostedKeyInfo["kind"], { word: Wording; help: Word
   curator: { word: ["Curator key", "Curator's key"], help: ["Runs the nightly update (sleep). It sees secret memories while curating.", "Runs the sleep. It sees sealed memories while curating."] },
   bound: { word: ["Single-agent key", "Bound key"], help: ["Only one agent, with the scopes you choose.", "One party member only, with the scopes you choose."] },
 };
+
+// ── Sharing ────────────────────────────────────────────────────────────────
+
+/** What each role may do, in both voices, for pickers and the members list. */
+export const ROLE_WORDS: Record<"owner" | "member" | "viewer", { word: Wording; help: Wording }> = {
+  owner: { word: ["Owner", "Keeper"], help: ["Everything: invites people, removes them, the repository, keys and curation.", "Holds the campaign: seats players, the repository, keys and curation."] },
+  member: { word: ["Member", "Player"], help: ["Adds memories and settles disputes as themselves, and connects their own agents.", "Plays as their own character: adds to the record, rules on disputes, brings their own agents."] },
+  viewer: { word: ["Viewer", "Spectator"], help: ["Reads everything here, changes nothing.", "Watches the table, changes nothing."] },
+};
+
+/**
+ * The vault's humans someone new can be: not the person inviting (they act as `me`), and not one a
+ * member already is.
+ */
+export function freeHumans(humans: readonly string[], members: readonly { human?: string }[], me?: string): string[] {
+  const taken = new Set(members.flatMap((m) => (m.human ? [m.human] : [])));
+  return humans.filter((h) => h !== me && !taken.has(h));
+}
+
+/** A human id from a GitHub login: lowercase letters, digits and dashes. */
+export function humanIdFor(login: string): string {
+  return login
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+/** GitHub's login rule (the server checks it again). */
+export const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+
+/** Why an invite form can't be sent yet; undefined when it can. */
+export function inviteProblem(f: { login: string; human: string }): string | undefined {
+  const login = f.login.trim().replace(/^@/, "");
+  if (login && !GITHUB_LOGIN.test(login)) return "That isn't a GitHub username.";
+  return agentIdProblem(f.human) ? "Who they are in the vault: lowercase letters, digits and dashes, like game-master." : undefined;
+}

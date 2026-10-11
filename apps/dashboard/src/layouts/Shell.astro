@@ -10,6 +10,7 @@ import { TERMS, type TermKey } from "../lib/terms.ts";
 import Global from "../islands/Global.tsx";
 import ThemeToggle from "../islands/ThemeToggle.tsx";
 import UserMenu from "../islands/UserMenu.tsx";
+import VaultSwitcher from "../islands/VaultSwitcher.tsx";
 import { href, type Page } from "../lib/routes.ts";
 import type { IconName } from "../lib/icons.ts";
 
@@ -66,6 +67,7 @@ const current = (p: string) => (p === page || (page === "guide" && p === "guides
           <NavIcon name="d20" size={34} />
           <span class="rail__title">Hippocampus<span class="rail__campaign" data-campaign><Term plain="memory dashboard" codex="campaign codex" /></span></span>
         </a>
+        <VaultSwitcher client:only="react" />
         <div class="rail__section"><Term k="navPlay" /></div>
         {play.map(([p, icon, badge]) => (
           <a class="navlink" href={href.page(p)} aria-current={current(p)}>

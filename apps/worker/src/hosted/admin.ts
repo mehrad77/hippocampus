@@ -1,10 +1,10 @@
-import { HttpError } from "@hippocampus/dashboard";
+import { HttpError, type AdminReferrals } from "@hippocampus/dashboard";
 import type { Account, AccountStatus, Registry } from "./registry.ts";
 import { quotaOverrides } from "./quotas.ts";
 
 // Routes under /dashboard/api/admin/ for the admins in HIPPO_ADMINS: approve the waitlist, see which
-// vaults exist, and raise one vault's limits. Admins see names, states and limits, never what's in
-// anyone's vault.
+// vaults exist, raise one vault's limits, and see who invited whom (the referral graph). Admins see
+// names, states and limits, never what's in anyone's vault.
 
 const STATUSES: AccountStatus[] = ["waitlisted", "approved", "denied", "deleted"];
 
@@ -38,6 +38,22 @@ export function adminRoutes(deps: AdminDeps) {
     if (path === "vaults" && method === "GET") {
       const vaults = await registry.vaults();
       return { vaults: vaults.map((v) => ({ id: v.id, fullName: v.fullName, status: v.status, reason: v.reason, login: v.login, created: v.created, quotas: v.quotas ?? null })) };
+    }
+    if (path === "referrals" && method === "GET") {
+      const [people, edges] = await Promise.all([registry.people(), registry.referrals()]);
+      const vaults = new Map((await registry.vaults()).map((v) => [v.id, v.fullName]));
+      // Vault names only for vaults that still exist; a removed vault's invites keep their edge.
+      const found: AdminReferrals = {
+        people: people.map((p) => ({ user: p.user, login: p.login, status: p.status, ...(p.invitedBy ? { invitedBy: p.invitedBy } : {}), canInvite: p.canInvite })),
+        edges: edges.map((e) => ({ from: e.from, to: e.to, at: e.at, ...(e.vault ? { vault: vaults.get(e.vault) ?? "(removed vault)" } : {}) })),
+      };
+      return found;
+    }
+    if (path === "referrals/invites" && method === "POST") {
+      const b = (body ?? {}) as { user?: unknown; allow?: unknown };
+      if (typeof b.user !== "string" || typeof b.allow !== "boolean") throw new HttpError(400, "user and allow: whose invites, and whether they may send them", "INVALID");
+      await registry.setCanInvite(b.user, b.allow);
+      return { ok: true };
     }
     if (path === "vaults/quotas" && method === "POST") {
       const b = (body ?? {}) as { id?: unknown; quotas?: unknown };

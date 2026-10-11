@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CONFIG, fixtureStore } from "./__fixtures__/vault.ts";
 import { auditChanges } from "./audit.ts";
-import { canonicalRelation, parseConfig } from "./config.ts";
+import { canonicalRelation, linkHuman, parseConfig } from "./config.ts";
 import { addRelation, applyFact, applyRuling, assertAgentId } from "./ops.ts";
 import { renderEntity } from "./entity.ts";
 import { parseDoc } from "./markdown.ts";
@@ -177,5 +177,34 @@ describe("retract", () => {
     const r = await applyFact(v2, agency, "phone", "+351 900 000 002", { by: "campus-agent", at: "2026-09-28T00:00:00Z", src: ["ep-b"] });
     expect(r.decision).toBe("create");
     expect(agency.fm.facts.phone).toMatchObject({ value: "+351 900 000 002", status: "rumor", was: [{ value: "+351 900 000 001" }] });
+  });
+});
+
+describe("linking a teammate's logins to a human", () => {
+  const raw = CONFIG.replace("humans: [{ id: player }]\n", HUMANS);
+
+  it("sets, moves and removes logins, keeping the rest of the config", () => {
+    const linked = linkHuman(raw, "player", { github: "player-login" });
+    expect(parseConfig(linked).humans).toEqual([
+      { id: "player", domains: ["housing"], github: "player-login" },
+      { id: "game-master", domains: ["residency"], github: "GM-Login", gitlab: "gm.lab" },
+    ]);
+    expect(linked.replace(/^humans:[\s\S]*?(?=^\S)/m, "")).toBe(raw.replace(/^humans:[\s\S]*?(?=^\S)/m, ""));
+    // A login belongs to one human: giving it to another takes it from the first.
+    expect(parseConfig(linkHuman(raw, "player", { github: "gm-login" })).humans.map((h) => h.github)).toEqual(["gm-login", undefined]);
+    expect(parseConfig(linkHuman(raw, "game-master", { github: null })).humans[1]).toEqual({ id: "game-master", domains: ["residency"], gitlab: "gm.lab" });
+  });
+
+  it("adds a human when asked, and refuses an unknown one otherwise", () => {
+    expect(parseConfig(linkHuman(raw, "job-scout", { github: "scout" }, { domains: ["career"] })).humans.at(-1)).toEqual({ id: "job-scout", domains: ["career"], github: "scout" });
+    expect(() => linkHuman(raw, "job-scout", { github: "scout" })).toThrow(/not one of this vault's humans/);
+  });
+
+  it("commits the change as the human, and nothing when nothing changes", async () => {
+    const store = twoHumans();
+    const service = new HippoService(store, { now });
+    expect(await service.linkHuman("player", { github: "player-login" }, { via: "@player-login" })).toEqual({ changed: true });
+    expect((await service.vault()).human("player")?.github).toBe("player-login");
+    expect(await service.linkHuman("player", { github: "player-login" })).toEqual({ changed: false });
   });
 });

@@ -49,7 +49,7 @@ describe("bootstrapVault", () => {
     const result = await run({ id: 9001, fullName: "player/vault" });
     expect(result.mode).toBe("initialized");
     expect(result.vault).toMatchObject({ status: "ready", fullName: "player/vault", repoId: 9001, branch: "main", accountId: 4242 });
-    expect(await registry.vaultOf(4242)).toEqual(result.vault);
+    expect((await registry.vaultsOf((await registry.account(4242))!))[0]).toEqual({ ...result.vault, role: "owner" });
 
     const repo = gh.at("player/vault");
     const log = repo.log();
@@ -124,7 +124,7 @@ describe("bootstrapVault", () => {
     expect(err).toMatchObject({ status: 400, code: "PRESETS_NEW_ONLY" });
     expect(err.message).toMatch(/presets apply only to new vaults/);
     expect(gh.at("player/old-vault").log()).toHaveLength(1);
-    expect(await registry.vaultOf(4242)).toBeUndefined();
+    expect((await registry.vaultsOf((await registry.account(4242))!))[0]).toBeUndefined();
     // A new vault takes them.
     await run({ id: 9001, fullName: "player/vault" }, { presets: ["people"] });
     expect(gh.at("player/vault").files()["_hippo/config.yaml"]).toMatch(/^presets: \[people\]$/m);
@@ -157,7 +157,7 @@ describe("bootstrapVault", () => {
     const repo = await addRepo("player/open", 9005, undefined, false);
     expect((await refusal(run(repo))).code).toBe("PUBLIC_REPO");
     expect(gh.at("player/open").empty).toBe(true);
-    expect(await registry.vaultOf(4242)).toBeUndefined();
+    expect((await registry.vaultsOf((await registry.account(4242))!))[0]).toBeUndefined();
   });
 
   it("refuses a repo that already has other files", async () => {
@@ -167,7 +167,7 @@ describe("bootstrapVault", () => {
     expect(err.code).toBe("NOT_EMPTY");
     expect(err.message).toMatch(/pick an empty repo/);
     expect(gh.at("player/project").log()).toHaveLength(1);
-    expect(await registry.vaultOf(4242)).toBeUndefined();
+    expect((await registry.vaultsOf((await registry.account(4242))!))[0]).toBeUndefined();
   });
 
   it("explains an installation that hasn't granted the workflows permission", async () => {
@@ -175,7 +175,7 @@ describe("bootstrapVault", () => {
     const err = await refusal(run({ id: 9001, fullName: "player/vault" }));
     expect(err.code).toBe("APP_PERMISSIONS");
     expect(err.message).toMatch(/Workflows/);
-    expect(await registry.vaultOf(4242)).toBeUndefined();
+    expect((await registry.vaultsOf((await registry.account(4242))!))[0]).toBeUndefined();
   });
 
   it("marks a vault whose commit failed, and finishes it on retry", async () => {
@@ -184,7 +184,7 @@ describe("bootstrapVault", () => {
       throw new Error("network down");
     };
     await expect(run({ id: 9001, fullName: "player/vault" })).rejects.toThrow(/network down/);
-    const failed = (await registry.vaultOf(4242))!;
+    const failed = ((await registry.vaultsOf((await registry.account(4242))!))[0])!;
     expect(failed).toMatchObject({ status: "disconnected", reason: "bootstrap_failed" });
     gh.beforeRefUpdate = undefined;
     const result = await run({ id: 9001, fullName: "player/vault" });

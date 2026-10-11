@@ -26,15 +26,42 @@
 //   hosted  POST keys              HostedKeyRequest → HostedMintedKey
 //   hosted  POST keys/revoke       { id } → { ok: true }
 //   hosted  POST curator-actions   { enable: boolean } → { enabled, path }  (the vault's nightly sleep on GitHub Actions)
+//   hosted  POST vaults/remove     { id, confirm: fullName } → { ok: true }  (forgets the vault; its repo stays)
+//
+// On the hosted app a person can have several vaults. Every request may name one in the `x-hippo-vault`
+// header (VAULT_HEADER); without it the one they used last is meant. Keys, curator-actions and the
+// vault's own API act on that vault.
 //
 // The hosted app's account routes, under `<base>/api/account/`:
 //
 //   GET  apps                      → { apps: HostedConnectedApp[] }  (apps connected over OAuth)
 //   POST apps/revoke               { id } → { ok: true }
 //
+// And `GET <base>/api/vaults` → HostedVaults: the person's vaults, for the switcher. Sharing, on the
+// vault the request picked (owner only, except listing and leaving):
+//
+//   GET  vaults/members            → HostedMembers
+//   POST vaults/members/invite     { role, human, domains?, login? } → HostedNewInvite
+//   POST vaults/members/role       { user, role } → { ok: true }
+//   POST vaults/members/remove     { user } → { ok: true }
+//   POST vaults/invites/revoke     { id } → { ok: true }
+//   POST vaults/leave              {} → { ok: true }  (a member or viewer leaves)
+//
+// Invites to the app itself, and accepting any invite (waitlisted accounts too; accepting approves them):
+//
+//   GET  invites                   → HostedInvites
+//   POST invites                   { login? } → HostedNewInvite
+//   POST invites/revoke            { id } → { ok: true }
+//   POST invites/peek              { token } → HostedIncomingInvite
+//   POST invites/accept            { token } | { id } → { vault?: HostedVault }  (`id` only for an invite addressed to you)
+//   POST invites/decline           { id } → { ok: true }
+//
 // Party members are added through the main API (`POST actions/party`), so it works in every writable mode.
 
 import type { Capabilities, SessionInfo } from "./source.ts";
+
+/** The request header naming which of the person's vaults a hosted request is about. */
+export const VAULT_HEADER = "x-hippo-vault";
 
 export type SetupState = "done" | "todo" | "warn" | "error" | "optional" | "na";
 
@@ -209,6 +236,81 @@ export interface HostedVault {
   provider?: "github" | "gitlab";
   /** The repo's page on its host, for links. */
   url?: string;
+  /** What the signed-in person may do with it: everything, act as their human, or only read. */
+  role?: HostedRole;
+  /** For a vault shared with them: the human they are in it. */
+  human?: string;
+}
+
+export type HostedRole = "owner" | "member" | "viewer";
+
+/** Someone a vault is shared with (or its owner). */
+export interface HostedMember {
+  /** Their user id here. */
+  user: string;
+  login: string;
+  role: HostedRole;
+  human?: string;
+  since: string;
+}
+
+/** An open invite, as whoever made it sees it. */
+export interface HostedInvite {
+  id: string;
+  /** Unset: an invite to the app alone. */
+  vault?: string;
+  role?: Exclude<HostedRole, "owner">;
+  human?: string;
+  /** Only this GitHub login can accept it. */
+  login?: string;
+  created: string;
+  expires: string;
+}
+
+/** An invite as the person it's for sees it, before accepting. */
+export interface HostedIncomingInvite {
+  id: string;
+  /** Who sent it (their login). */
+  from: string;
+  vault?: { id: string; fullName: string };
+  role?: Exclude<HostedRole, "owner">;
+  human?: string;
+  /** Only this login can accept it. */
+  login?: string;
+  expires: string;
+}
+
+/** `GET vaults/members`: who's in the vault; for its owner also the open invites. */
+export interface HostedMembers {
+  members: HostedMember[];
+  invites?: HostedInvite[];
+  /** The signed-in person's user id, to mark them in the list. */
+  you: string;
+}
+
+/** A new invite and its link (shown once). */
+export interface HostedNewInvite {
+  invite: HostedInvite;
+  link: string;
+}
+
+/** `GET invites`: the person's invites to the app, and invites waiting for them. */
+export interface HostedInvites {
+  sent: HostedInvite[];
+  /** How many of their invites were accepted. */
+  accepted: number;
+  canInvite: boolean;
+  /** How many open app invites they may have; absent for admins (no cap). */
+  limit?: number;
+  incoming: HostedIncomingInvite[];
+}
+
+/** `GET /vaults`: the person's vaults, oldest first, and which one requests without VAULT_HEADER act on. */
+export interface HostedVaults {
+  vaults: HostedVault[];
+  current?: string;
+  /** How many vaults one person may have. */
+  limit: number;
 }
 
 /** The account's GitLab connection, when the instance offers GitLab. */
@@ -257,7 +359,12 @@ export interface HostedSetupStatus {
   gitlab?: HostedGitLab;
   /** The installation just made, until a vault is set up on it. */
   installation?: { id: number; repos: HostedRepo[]; error?: string };
+  /** The vault this status is about (VAULT_HEADER's, else the last one used). */
   vault?: HostedVault;
+  /** All of the person's vaults, oldest first. */
+  vaults?: HostedVault[];
+  /** How many vaults one person may have. */
+  vaultLimit?: number;
   keys?: HostedKeyInfo[];
   /** Whether the vault runs sleep nightly on GitHub Actions (its `.github/workflows/sleep.yml`). Absent when it couldn't be checked, and for GitLab vaults. */
   curatorActions?: boolean;
@@ -321,6 +428,8 @@ export interface HostedConnectedApp {
   scopes: string[];
   /** The agent it acts as. */
   agent?: string;
+  /** The vault it's connected to (its id). */
+  vault?: string;
   created: string;
 }
 
@@ -330,7 +439,8 @@ export interface HostedConnectedApp {
  */
 export interface HostedSetupPort {
   kind: "hosted";
-  status(): Promise<HostedSetupStatus>;
+  /** `?add` in `url`: the person is setting up another vault. */
+  status(url?: URL): Promise<HostedSetupStatus>;
   handle(method: "GET" | "POST", path: string, body: unknown, url: URL): Promise<unknown>;
 }
 
@@ -340,4 +450,11 @@ export interface HostedSessionInfo extends Omit<SessionInfo, "mode" | "user" | "
   user: { login: string };
   capabilities: Omit<Capabilities, "setup"> & { setup: "hosted" };
   account: { status: "waitlisted" | "approved"; admin: boolean };
+}
+
+/** `GET admin/referrals`: everyone, and who invited whom (oldest first). Logins and states only. */
+export interface AdminReferrals {
+  people: { user: string; login: string; status: "waitlisted" | "approved" | "denied" | "deleted"; invitedBy?: string; canInvite: boolean }[];
+  /** `from` invited `to`, who accepted at `at`; `vault` names the vault the invite shared, if any. */
+  edges: { from: string; to: string; at: string; vault?: string }[];
 }

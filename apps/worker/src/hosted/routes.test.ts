@@ -194,7 +194,7 @@ describe("onboarding", () => {
     expect(gh.at("player/vault").files()["_hippo/config.yaml"]).toContain("- {id: player, github: player}");
     expect(seen.changed).toContain(vaultId);
     expect(await kv.get(`hosted:install:${PLAYER}`, "json")).toBeNull();
-    expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS })).body).toMatchObject({ code: "HAS_VAULT" });
+    expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS })).body).toMatchObject({ code: "ALREADY_VAULT" });
 
     // With a ready vault, the session and the vault's API are the Durable Object's.
     expect((await get(player, "session")).fellThrough).toBe(true);
@@ -214,7 +214,8 @@ describe("onboarding", () => {
       "VS Code (.vscode/mcp.json)",
       "Claude.ai or ChatGPT (custom connector)",
     ]);
-    expect(minted.body.snippets[0]!.code).toBe(`claude mcp add --transport http hippocampus ${ORIGIN}/mcp --header "Authorization: Bearer ${minted.body.token}"`);
+    // Each vault has its own address and server name, so two vaults in one app never mix.
+    expect(minted.body.snippets[0]!.code).toBe(`claude mcp add --transport http hippo-vault ${ORIGIN}/mcp/${vaultId} --header "Authorization: Bearer ${minted.body.token}"`);
     const listed = await get<{ keys: HostedKeyInfo[] }>(player, "setup/keys");
     expect(listed.body.keys.map((k) => k.id)).toEqual([minted.body.id]);
     expect(JSON.stringify(listed.body)).not.toContain(minted.body.token);

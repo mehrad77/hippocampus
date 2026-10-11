@@ -14,8 +14,19 @@ export const APP = { id: "4321", slug: "hippocampus-test", clientId: "Iv1.hosted
 /** The registry, migrated from the same SQL files, in order, that wrangler applies to D1. */
 export async function registryDb(): Promise<SqlDriver> {
   const db = nodeSqlite(":memory:");
+  // D1 enforces foreign keys; so do the tests.
+  await db.all("PRAGMA foreign_keys = ON");
+  return migrate(db);
+}
+
+/** Apply the migrations after `from` up to `to` (file names, both optional), as wrangler would. */
+export async function migrate(db: SqlDriver, range: { from?: string; to?: string } = {}): Promise<SqlDriver> {
   const dir = new URL("../../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()) {
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .filter((f) => (!range.from || f > range.from) && (!range.to || f <= range.to));
+  for (const file of files) {
     const sql = readFileSync(new URL(file, dir), "utf8");
     const statements = sql
       .split("\n")
