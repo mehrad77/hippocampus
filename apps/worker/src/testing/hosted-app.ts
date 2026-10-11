@@ -3,7 +3,7 @@ import { FakeGitLab } from "@hippocampus/store-gitlab/testing";
 import { createHostedApp, type HostedAppDeps } from "../app.ts";
 import { keyRequest } from "../hosted/registry.ts";
 import { APP, GITLAB, ORIGIN, appKeyPair, hostedGitHub, registryDb, testSettings } from "../hosted/testing.ts";
-import type { DashboardUser, PartyMember, VaultGrant, VaultHosts, VaultMeta, VaultStub } from "../hosted/vault-port.ts";
+import type { AgentClaim, DashboardUser, PartyMember, VaultGrant, VaultHosts, VaultMeta, VaultStub } from "../hosted/vault-port.ts";
 import { browser } from "./browser.ts";
 import { MemoryKV } from "./memory-kv.ts";
 
@@ -20,7 +20,7 @@ export type Visit = ReturnType<typeof browser>;
 
 export interface StubCall {
   vault: string;
-  method: "configure" | "mcp" | "dashboard" | "party" | "addParty" | "linkHuman" | "releaseClaims" | "disconnect" | "destroy";
+  method: "configure" | "mcp" | "dashboard" | "party" | "addParty" | "linkHuman" | "releaseClaims" | "claims" | "disconnect" | "destroy";
   meta?: VaultMeta;
   grant?: VaultGrant;
   user?: DashboardUser;
@@ -41,6 +41,8 @@ export interface StubCall {
 export class FakeVaults implements VaultHosts {
   readonly calls: StubCall[] = [];
   readonly parties = new Map<string, PartyMember[]>();
+  /** What each vault says holds which agent name. */
+  readonly claimed = new Map<string, AgentClaim[]>();
 
   get(vault: string): VaultStub {
     const seen = (call: Omit<StubCall, "vault">) => void this.calls.push({ vault, ...call });
@@ -73,6 +75,10 @@ export class FakeVaults implements VaultHosts {
       releaseClaims: async (credentials) => {
         seen({ method: "releaseClaims", credentials });
         return credentials.length;
+      },
+      claims: async () => {
+        seen({ method: "claims" });
+        return this.claimed.get(vault) ?? [];
       },
       disconnect: async (reason) => seen({ method: "disconnect", reason }),
       destroy: async () => seen({ method: "destroy" }),

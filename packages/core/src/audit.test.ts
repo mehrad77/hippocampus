@@ -40,6 +40,34 @@ describe("overlayStore", () => {
   });
 });
 
+describe("an agent's own party card", () => {
+  const card = (fm: string, body = "\n## Notes\n") => note(`type: party\ntitle: Job Scout\n${fm}`.trimEnd(), body);
+  const NEW = "party/job-scout.md";
+  const rules = async (changes: Change[], who = agent("job-scout"), s = store()) => (await audit(changes, who, undefined, s)).map((v) => v.rule);
+
+  it("lets an agent write its own card, with no authority, facts or relations", async () => {
+    expect(await rules([{ path: NEW, content: card("lane: Finds part-time work\nhost: Claude Desktop") }])).toEqual([]);
+    expect(await rules([{ path: NEW, content: card("authority: [career]") }])).toEqual(["an agent can't give itself authority"]);
+    expect(await rules([{ path: NEW, content: card("facts:\n  phone: '+351 900 000 001'") }])).toEqual(["a new agent card holds no facts or relations"]);
+    // Another agent's card, or one without the remember scope.
+    expect(await rules([{ path: NEW, content: card("") }], agent("campus-agent"))).toEqual(["agents only add episodes to their own inbox folder"]);
+    expect(await rules([{ path: NEW, content: card("") }], agent("job-scout", ["read"]))).toEqual(["agents only add episodes to their own inbox folder"]);
+  });
+
+  it("lets it fill in blanks, and nothing else", async () => {
+    const s = store();
+    await s.write(NEW, card("lane: Finds part-time work\nauthority: [career]", "\n## Notes\nTrusted with job leads.\n"));
+    const edit = (fm: string, body = "\n## Notes\nTrusted with job leads.\n") => rules([{ path: NEW, content: card(fm, body) }], agent("job-scout"), s);
+    expect(await edit("lane: Finds part-time work\nauthority: [career]\nhost: Claude Desktop")).toEqual([]);
+    expect(await edit("lane: Something else\nauthority: [career]")).toEqual(["agents may not overwrite their card"]);
+    expect(await edit("lane: Finds part-time work\nauthority: [career, housing]")).toEqual(["agents may only fill in their card's lane, host and model"]);
+    expect(await edit("lane: Finds part-time work")).toEqual(["agents may only fill in their card's lane, host and model"]);
+    expect(await edit("lane: Finds part-time work\nauthority: [career]", "\n## Notes\nI'm the best.\n")).toEqual(["human prose changed"]);
+    // Removing its card is the human's.
+    expect(await rules([{ path: NEW, remove: true }], agent("job-scout"), s)).toEqual(["agents may not remove this file"]);
+  });
+});
+
 describe("auditChanges", () => {
   it("lets the human and bootstrap change anything, except to write a forbidden value", async () => {
     const changes: Change[] = [

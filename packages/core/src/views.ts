@@ -1,4 +1,5 @@
 import { actorProps } from "./actor.ts";
+import { SLUG } from "./config.ts";
 import { basename, displayName, getHumanGuidelines, getSummary, type Entity } from "./entity.ts";
 import { addDuration, getObjectives, goalProps, goalState, legacyClocks, nextDue, type Clock, type GoalState, type Progress, type Repeat } from "./goal.ts";
 import type { Episode } from "./episode.ts";
@@ -351,6 +352,8 @@ export interface Overview {
   now: string;
   today: string;
   lastSleep?: string;
+  /** Domains the last sleep wanted that the config still lacks, for the human to add. */
+  suggestedDomains?: string[];
   version: { vault: number; tool: number; status: "current" | "older" | "newer" };
   counts: {
     entities: number;
@@ -705,10 +708,22 @@ export async function readChronicle(vault: Vault, from: string, to = "9999-12-31
 }
 
 export async function lastSleepAt(vault: Vault): Promise<string | undefined> {
+  return (await readReview(vault)).generated;
+}
+
+/**
+ * What the morning review's frontmatter says: when the last sleep ran, and the domains it suggested
+ * that the config still lacks (one added since drops out at once). The file is the vault's, so only ids pass.
+ */
+async function readReview(vault: Vault): Promise<{ generated?: string; suggestedDomains: string[] }> {
   const raw = await vault.store.read(REVIEW_PATH);
-  if (!raw) return undefined;
-  const generated = parseDoc(raw).data.generated;
-  return typeof generated === "string" ? generated : generated instanceof Date ? generated.toISOString() : undefined;
+  if (!raw) return { suggestedDomains: [] };
+  const data = parseDoc(raw).data;
+  const generated = typeof data.generated === "string" ? data.generated : data.generated instanceof Date ? data.generated.toISOString() : undefined;
+  const known = new Set(vault.config.domains.map((d) => d.toLowerCase()));
+  const listed = Array.isArray(data.suggested_domains) ? data.suggested_domains : [];
+  const suggestedDomains = [...new Set(listed.filter((d): d is string => typeof d === "string").map((d) => d.toLowerCase()))].filter((d) => SLUG.test(d) && !known.has(d));
+  return { generated, suggestedDomains };
 }
 
 // ── Findings shared with the morning review ─────────────────────────────────────
@@ -925,7 +940,8 @@ export function introductions(vault: Vault): IntroductionView[] {
 export async function overview(vault: Vault, read: ReadAs = {}): Promise<Overview> {
   const ctx = viewContext(vault, read);
   const { config } = vault;
-  const lastSleep = await lastSleepAt(vault);
+  const review = await readReview(vault);
+  const lastSleep = review.generated;
   const from30 = addDays(ctx.today, -29);
   const chronicle30d = await readChronicle(vault, from30, ctx.today);
   const inbox = vault.episodes.map((ep) => episodeView(ep, lastSleep));
@@ -966,6 +982,7 @@ export async function overview(vault: Vault, read: ReadAs = {}): Promise<Overvie
     now: ctx.now,
     today: ctx.today,
     lastSleep,
+    suggestedDomains: review.suggestedDomains,
     version: { vault: config.version, tool: CURRENT_VAULT_VERSION, status: vaultVersionStatus(config) },
     counts: { entities: vault.entities.size, byType, facts, inbox: vault.episodes.length, disputes: vault.openDisputes().length, goals: questCounts, quests: questCounts },
     attention: {

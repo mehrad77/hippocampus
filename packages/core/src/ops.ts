@@ -325,6 +325,17 @@ export const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 export const RESERVED_AGENT_IDS = ["human", "curator", "unknown", "hippocampus"] as const;
 
 /**
+ * How an agent names itself, told to every agent (server instructions, tool descriptions, the
+ * Handbook). One connection usually serves one app with several agents in it, so the name is the
+ * agent's own, not the app's.
+ */
+export const AGENT_NAMING =
+  "Name yourself `<platform>-<role>`: lowercase letters, digits and dashes, like `claude-code-home-finder` or `grok-bot-trip-planner`. Use the same id in every session and every call. Never a person's name, `human`, `curator`, `unknown` or `hippocampus`, and never an id another app uses.";
+
+/** How many agents may seat themselves (`introduce`): a shared key can invent names, and each makes a card. */
+export const SELF_SEATED_LIMIT = 50;
+
+/**
  * The id an agent files under, normalized. Agents are their exact party slug: no alias or title
  * lookup, and never the human, whose word outranks everyone's.
  */
@@ -342,13 +353,60 @@ export function addPartyMember(vault: Vault, input: NewPartyMember): Entity {
   const type = vault.schema.defaultTypeFor("actor");
   if (!type) throw new VaultError("no entity type has the actor capability, so agents have nowhere to go");
   if (vault.entities.has(id)) throw new VaultError(`"${id}" already exists (${vault.entities.get(id)!.path})`);
-  const known = new Set(vault.config.domains.map((d) => d.toLowerCase()));
-  const authority = [...new Set((input.authority ?? []).map((d) => d.trim().toLowerCase()).filter(Boolean))];
-  const unknown = authority.filter((d) => !known.has(d));
-  if (unknown.length) throw new VaultError(`unknown domain${unknown.length > 1 ? "s" : ""} ${unknown.join(", ")}; known: ${vault.config.domains.join(", ") || "(none)"}`);
+  const authority = knownDomains(vault, input.authority ?? []);
   const e = vault.createEntity({ type, title: input.title.trim() || id, slug: id, by: vault.config.human });
   e.fm.lane = input.lane?.trim() || undefined;
   e.fm.authority = authority;
   e.fm.host = input.host?.trim() || undefined;
   return e;
+}
+
+/** `domains`, lowercased and each once, all from the vault's `domains:`; throws naming any that aren't. */
+export function knownDomains(vault: Vault, domains: string[]): string[] {
+  const known = new Set(vault.config.domains.map((d) => d.toLowerCase()));
+  const out = [...new Set(domains.map((d) => d.trim().toLowerCase()).filter(Boolean))];
+  const unknown = out.filter((d) => !known.has(d));
+  if (unknown.length) throw new VaultError(`unknown domain${unknown.length > 1 ? "s" : ""} ${unknown.join(", ")}; known: ${vault.config.domains.join(", ") || "(none)"}`);
+  return out;
+}
+
+/** What an agent says about itself on its own card. */
+export const SELF_CARD_FIELDS = ["lane", "host", "model"] as const;
+
+/**
+ * An agent seats itself (`introduce`): its own card, as itself, with no authority, so its word stays a
+ * rumor until the human gives it some. On a card it already has, it only fills in what's blank, never
+ * over the human's edits. Returns the card, and the fields it filled.
+ */
+export function seatSelf(vault: Vault, agent: string, input: { title: string; lane?: string; host?: string; model?: string; about?: string }): { card: Entity; created: boolean; filled: string[] } {
+  const id = assertAgentId(vault, agent);
+  const line = (v: string | undefined) => v?.replace(/\s+/g, " ").trim() || undefined;
+  const own: Record<(typeof SELF_CARD_FIELDS)[number], string | undefined> = { lane: line(input.lane), host: line(input.host), model: line(input.model) };
+  const existing = vault.actorMember(id);
+  if (existing) {
+    const filled = SELF_CARD_FIELDS.filter((k) => own[k] && !existing.fm[k]);
+    for (const k of filled) existing.fm[k] = own[k];
+    if (filled.length) vault.markDirty(existing);
+    return { card: existing, created: false, filled };
+  }
+  const type = vault.schema.defaultTypeFor("actor");
+  if (!type) throw new VaultError("no entity type has the actor capability, so agents have nowhere to go");
+  if (vault.entities.has(id)) throw new VaultError(`"${id}" is already a note (${vault.entities.get(id)!.path}); name yourself something else`);
+  if (vault.withCapability("actor").length >= SELF_SEATED_LIMIT) throw new VaultError(`the vault already has ${SELF_SEATED_LIMIT} agents; ask the person to remove some on the Agents page`);
+  const card = vault.createEntity({ type, title: line(input.title) || id, slug: id, by: id });
+  for (const k of SELF_CARD_FIELDS) if (own[k]) card.fm[k] = own[k];
+  card.fm.authority = [];
+  const about = input.about?.trim();
+  if (about) card.body = `${card.body.replace(/\s+$/, "")}\n\n## About\n\n${about}\n`;
+  return { card, created: true, filled: [] };
+}
+
+/** The human sets what an agent is responsible for: its authority domains, from the vault's own. */
+export function setAuthority(vault: Vault, agent: string, domains: string[]): Entity {
+  const id = assertAgentId(vault, agent);
+  const card = vault.actorMember(id);
+  if (!card) throw new VaultError(`"${id}" isn't one of this vault's agents yet`);
+  card.fm.authority = knownDomains(vault, domains);
+  vault.markDirty(card);
+  return card;
 }

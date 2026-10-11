@@ -1,16 +1,17 @@
 import { AuthorizationError, CimdFetchError, type ConsentDescription, type GrantSummary, type OAuthHelpers, type OAuthProviderOptions } from "@cloudflare/workers-oauth-provider";
-import { LEGACY_GOAL_SCOPE, SCOPES, type CurrentScope, type Scope } from "@hippocampus/mcp";
+import { LEGACY_GOAL_SCOPE, SCOPES, type Scope } from "@hippocampus/mcp";
 import { isScope } from "./auth.ts";
 import type { ConnectedApp, ConnectedApps } from "./hosted/account.ts";
-import { KIND_SCOPES, agentId, type Account, type KeyGrant, type KeyKind, type VaultRecord } from "./hosted/registry.ts";
+import { KIND_SCOPES, type Account, type KeyGrant, type KeyKind, type VaultRecord } from "./hosted/registry.ts";
 import type { Caller } from "./hosted/routes.ts";
 import { LOGIN_PATH } from "./hosted/session.ts";
-import { vaultMeta, type PartyMember, type VaultGrant, type VaultMeta, type VaultStub } from "./hosted/vault-port.ts";
+import { vaultMeta, type VaultGrant, type VaultMeta, type VaultStub } from "./hosted/vault-port.ts";
 import { escape, html, page } from "./pages.ts";
 
 // OAuth 2.1 for MCP connectors (Claude.ai, ChatGPT): this Worker is the authorization server and
 // the resource. People sign in to the hosted app first, then approve each app on a consent page
-// that picks the agent it acts as and what it may do. Vault keys (`hippo_…`) work alongside.
+// that picks the vault. The app's agents name themselves on each call, as with a shared key. Vault
+// keys (`hippo_…`) work alongside.
 
 export const MCP_PATH = "/mcp";
 /** A vault id (a ULID). */
@@ -26,6 +27,67 @@ export function addressedVault(pathname: string): string | undefined | null {
   const id = rest.slice(1);
   return rest.startsWith("/") && VAULT_ID.test(id) ? id : null;
 }
+
+export const PROTECTED_RESOURCE_PATH = "/.well-known/oauth-protected-resource";
+/** Carries the vault a connector's address named through sign-in to the consent page. Ours alone, never the client's. */
+const VAULT_HINT = "hippo_vault";
+
+/**
+ * Protected-resource metadata (RFC 9728) for `/mcp`, or for one vault's address. A client that was
+ * given `/mcp/<vault id>` expects it to name that URL, so the library's `/mcp` one isn't enough.
+ */
+export function protectedResource(publicUrl: string, vaultId?: string) {
+  return {
+    resource: `${publicUrl}${MCP_PATH}${vaultId ? `/${vaultId}` : ""}`,
+    authorization_servers: [publicUrl],
+    resource_name: "Hippocampus",
+    bearer_methods_supported: ["header"],
+    scopes_supported: ["read"],
+  };
+}
+
+/** The vault in a resource URL (`<origin>/mcp/<vault id>`), if it is one of ours. */
+function vaultOfResource(value: string, publicUrl: string): string | undefined {
+  try {
+    const url = new URL(value);
+    if (url.origin !== new URL(publicUrl).origin) return undefined;
+    return addressedVault(url.pathname) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A client given `/mcp/<vault id>` sends that as the `resource` of `/authorize` and `/oauth/token`, but
+ * the library knows only `/mcp` (grants made so far have that audience, and tokens for it are accepted
+ * at every `/mcp/<id>`). So the request says `/mcp`, and `/authorize` also remembers the vault.
+ */
+export async function canonicalResource(request: Request, publicUrl: string): Promise<Request> {
+  const canonical = `${publicUrl}${MCP_PATH}`;
+  const url = new URL(request.url);
+  if (request.method === "GET" && url.pathname === AUTHORIZE_PATH) {
+    const named = url.searchParams.getAll("resource");
+    const vault = named.map((r) => vaultOfResource(r, publicUrl)).find(Boolean);
+    url.searchParams.delete(VAULT_HINT);
+    if (!vault) return new Request(url, request);
+    url.searchParams.delete("resource");
+    for (const r of named) url.searchParams.append("resource", vaultOfResource(r, publicUrl) ? canonical : r);
+    url.searchParams.set(VAULT_HINT, vault);
+    return new Request(url, request);
+  }
+  if (request.method === "POST" && url.pathname === TOKEN_PATH && (request.headers.get("content-type") ?? "").startsWith("application/x-www-form-urlencoded")) {
+    const body = new URLSearchParams(await request.clone().text());
+    const named = body.getAll("resource");
+    if (!named.some((r) => vaultOfResource(r, publicUrl))) return request;
+    body.delete("resource");
+    for (const r of named) body.append("resource", vaultOfResource(r, publicUrl) ? canonical : r);
+    const headers = new Headers(request.headers);
+    headers.delete("content-length");
+    return new Request(request.url, { method: "POST", headers, body: body.toString() });
+  }
+  return request;
+}
+
 export const AUTHORIZE_PATH = "/authorize";
 export const TOKEN_PATH = "/oauth/token";
 export const REGISTER_PATH = "/oauth/register";
@@ -48,7 +110,8 @@ export interface OAuthProps {
   kind: "oauth";
   vaultId: string;
   accountId: number;
-  agent: string;
+  /** Grants made before apps named their own agents are bound to one; new ones have none. */
+  agent?: string;
 }
 
 export type GrantProps = KeyProps | OAuthProps;
@@ -86,10 +149,10 @@ export function grantOf(raw: unknown, tokenScopes: string[], token?: string): { 
     const p = props as KeyProps;
     return { props: p, grant: { ...(p.agent ? { agent: p.agent } : {}), scopes: p.scopes.filter(isScope), via: "key", keyKind: p.keyKind, credential: keyCredential(p.keyId) } };
   }
-  if (props.kind === "oauth" && typeof props.agent === "string" && typeof props.accountId === "number") {
+  if (props.kind === "oauth" && typeof props.accountId === "number" && (props.agent === undefined || typeof props.agent === "string")) {
     const p = props as OAuthProps;
     const grantId = token?.split(":")[1];
-    return { props: p, grant: { agent: p.agent, scopes: tokenScopes.filter(isScope), via: "oauth", ...(grantId ? { credential: oauthCredential(grantId) } : {}) } };
+    return { props: p, grant: { ...(p.agent ? { agent: p.agent } : {}), scopes: tokenScopes.filter(isScope), via: "oauth", ...(grantId ? { credential: oauthCredential(grantId) } : {}) } };
   }
   return undefined;
 }
@@ -216,8 +279,9 @@ export interface AuthorizeDeps {
 
 /**
  * `GET /authorize` signs the person in (or sends them to), then asks which of their vaults the app
- * connects to, which agent it acts as and what it may do; `POST /authorize` grants that. A grant is
- * for one vault, as a key is.
+ * connects to; `POST /authorize` grants that. A grant is for one vault, as a key
+ * is. It has no agent and one fixed set of scopes (read, remember, goal): the app's agents name
+ * themselves on each call, and the person decides what they're trusted with on the Agents page.
  */
 export function authorizePage(deps: AuthorizeDeps): (request: Request) => Promise<Response> {
   const { oauth, publicUrl } = deps;
@@ -233,15 +297,12 @@ export function authorizePage(deps: AuthorizeDeps): (request: Request) => Promis
     const blocked = notReady(caller);
     if (blocked) return blocked;
     const vaults = readyVaults(caller);
-    const vault = vaults.find((v) => v.id === caller.vault?.id) ?? vaults[0]!;
+    // The vault the connector's address named, else the one they're working in.
+    const hint = new URL(request.url).searchParams.get(VAULT_HINT);
+    const vault = vaults.find((v) => v.id === hint) ?? vaults.find((v) => v.id === caller.vault?.id) ?? vaults[0]!;
     const details = await oauth.describeConsent(authRequest);
-    // Without the party the form still works: a new id typed in.
-    const party = await deps
-      .vault(vault)
-      .then((stub) => stub.party())
-      .catch(() => undefined);
     const consent = await oauth.beginConsent(authRequest);
-    return html(200, consentPage({ details, handle: consent.handle, account: caller.account, vault, vaults, party }), consent.headers);
+    return html(200, consentPage({ details, handle: consent.handle, account: caller.account, vault, vaults }), consent.headers);
   }
 
   async function decide(request: Request): Promise<Response> {
@@ -264,37 +325,18 @@ export function authorizePage(deps: AuthorizeDeps): (request: Request) => Promis
       return new Response(null, { status: 302, headers: denied.headers });
     }
 
-    // Checked before approving, so going back and fixing the form still works.
-    const typed = String(form.get("new_agent") ?? "").trim();
-    let agent: string;
-    try {
-      agent = agentId(typed || form.get("agent"));
-    } catch (err) {
-      return page(400, "Check the agent id", `<p>${escape((err as Error).message)}. Go back and try again.</p>`);
-    }
-    const posted = form.getAll("scope");
-    const scope: Scope[] = SCOPES.filter((s) => posted.includes(s) || (s === "goal" && posted.includes(LEGACY_GOAL_SCOPE)));
     // Granted under its old name too, so a rolled-back Worker (which knows only `quest`) keeps it.
-    if (scope.includes("goal")) scope.push(LEGACY_GOAL_SCOPE);
-    if (!scope.includes("read")) return page(400, "Choose what it may do", "<p>Every app needs read. Go back and tick it.</p>");
-
-    if (typed && form.get("add_to_party")) {
-      const title = String(form.get("new_title") ?? "").trim().slice(0, 80) || agent;
-      try {
-        const stub = await deps.vault(vault);
-        if (!(await stub.party()).some((p) => p.id === agent)) await stub.addParty({ id: agent, title }, `@${caller.account.login}`);
-      } catch (err) {
-        return page(400, "Couldn't add it to the party", `<p>${escape((err as Error).message)}</p><p>Go back and pick another id, or connect without adding it.</p>`);
-      }
-    }
+    const scope: Scope[] = [...SHARED_SCOPES, LEGACY_GOAL_SCOPE];
 
     const approved = await oauth.approveConsent(request, handle, { scope });
     const client = await oauth.lookupClient(approved.request.clientId).catch(() => null);
-    const props: OAuthProps = { kind: "oauth", vaultId: vault.id, accountId: caller.account.id, agent };
+    const props: OAuthProps = { kind: "oauth", vaultId: vault.id, accountId: caller.account.id };
+    // Named after the app itself: nothing to ask.
+    const label = client?.clientName?.slice(0, 80) ?? "";
     const { redirectTo } = await oauth.completeAuthorization({
       request: approved.request,
       userId: oauthUserId(caller.account.id),
-      metadata: { label: client?.clientName?.slice(0, 80) ?? "", vaultId: vault.id, agent },
+      metadata: { label, vaultId: vault.id },
       scope: approved.request.scope,
       props,
     });
@@ -330,28 +372,13 @@ function notReady(caller: Caller): Response | undefined {
 }
 
 // Scopes are also defined in packages/mcp/src/server.ts (SCOPES) and apps/worker/src/hosted/registry.ts (KIND_SCOPES).
-const SCOPE_LABELS: Record<CurrentScope, string> = {
-  read: "Read the vault: recall, look up notes, briefings",
-  remember: "Remember: add new memories to its inbox",
-  goal: "Update goals: objectives, status, progress",
-  curate: "Curate: run sleep, consolidating the inbox into notes (it sees confidential details)",
-};
-/** Pre-ticked whatever the app asks for: the rest is the person's call. */
-const DEFAULT_SCOPES = new Set<Scope>(["read", "remember"]);
+/** What a connector app gets: what a shared key has (registry's `KIND_SCOPES.agent`). */
+const SHARED_SCOPES = KIND_SCOPES.agent.filter((x): x is Scope => isScope(x) && x !== LEGACY_GOAL_SCOPE);
 
-function consentPage(o: { details: ConsentDescription; handle: string; account: Account; vault: VaultRecord; vaults: VaultRecord[]; party?: PartyMember[] }): string {
+function consentPage(o: { details: ConsentDescription; handle: string; account: Account; vault: VaultRecord; vaults: VaultRecord[] }): string {
   const { details } = o;
   const name = escape(details.clientName);
   const origin = details.clientDomain ? `Published by <strong>${escape(details.clientDomain)}</strong>.` : "This app registered itself; its name is not verified.";
-  const party = o.party ?? [];
-  const suggested = details.clientName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "connector";
-  const members = party.map((p) => `<option value="${escape(p.id)}">${escape(p.title)} (${escape(p.id)})</option>`).join("");
-  const scopes = SCOPES.map(
-    (s) =>
-      `<label><input type="checkbox" name="scope" value="${s}"${DEFAULT_SCOPES.has(s) ? " checked" : ""}> ${escape(SCOPE_LABELS[s])}</label>` +
-      (s === "curate" ? `<p class="warn"><small>Curating shows the app every new memory in full: <strong>secret memories in plain text, and confidential details</strong>. Allow it only for an app you trust with them.</small></p>` : ""),
-  ).join("\n");
-  // The party listed is the preselected vault's; another vault's agents are named by typing a new id.
   const vaultField =
     o.vaults.length > 1
       ? `<fieldset><legend>Vault</legend><label>It connects to <select name="vault">${o.vaults.map((v) => `<option value="${escape(v.id)}"${v.id === o.vault.id ? " selected" : ""}>${escape(v.fullName)}</option>`).join("")}</select></label>
@@ -365,16 +392,7 @@ ${details.redirectIsLoopback ? "<p><strong>This sends access to an app on your c
 <input type="hidden" name="handle" value="${escape(o.handle)}">
 <input type="hidden" name="account" value="${o.account.id}">
 ${vaultField}
-<fieldset><legend>It acts as</legend>
-${party.length ? `<label>A party member <select name="agent">${members}</select></label>\n<p><small>Or a new agent (this wins if filled in):</small></p>` : ""}
-<label>New agent id <input name="new_agent" value="${party.length ? "" : escape(suggested)}" pattern="[a-z0-9][a-z0-9\\-]{0,62}"${party.length ? "" : " required"}></label>
-<label>Its name <input name="new_title" value="${name}" maxlength="80"></label>
-<label><input type="checkbox" name="add_to_party" value="1"${o.party && !party.length ? " checked" : ""}> Add the new agent to the party now</label>
-<small>Its memories are filed under <code>inbox/&lt;agent&gt;/</code>. A party member's id gives it that member's lane.</small>
-</fieldset>
-<fieldset><legend>It may</legend>
-${scopes}
-</fieldset>
+<p><small>It can read the vault, remember, and update goals. Each agent in the app names itself (say, <code>chatgpt-home-finder</code>) and joins your Agents page with no authority: what it says counts as a rumor until you give it a domain there. Disconnect it from your settings at any time.</small></p>
 <p><button name="decision" value="approve">Connect</button> <button name="decision" value="deny">Deny</button></p>
 </form>`;
 }

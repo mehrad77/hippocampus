@@ -1,4 +1,4 @@
-import { HippoService, VaultError, VaultVersionError } from "@hippocampus/core";
+import { AGENT_NAMING, HippoService, VaultError, VaultVersionError } from "@hippocampus/core";
 import { RunBusyError, SLEEP_PROCEDURE, type SleepRelay } from "@hippocampus/curator/relay";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js";
@@ -20,6 +20,12 @@ export interface HippoServerOptions {
   relay?: SleepRelay | (() => SleepRelay);
   /** The one vault this connection serves, named in the instructions so the agent never mixes vaults up. */
   vault?: { id: string; name: string };
+  /**
+   * For a connection whose agents name themselves: whether it already holds the name `agent` (the
+   * hosted app's name claims). Reads that name an agent this connection holds see confidential values
+   * where that agent has authority. Without it, the `agent` argument on reads is ignored.
+   */
+  holds?: (agent: string) => boolean | Promise<boolean>;
 }
 
 // Also defined in apps/worker/src/hosted/registry.ts (KIND_SCOPES) and apps/worker/src/oauth.ts (SCOPE_LABELS).
@@ -50,6 +56,10 @@ Fact status: canon = trust it, rumor = verify first, disputed = do not act witho
 /** One connection, one vault: said up front, since a person can connect several vaults to the same app. */
 export const vaultInstructions = (vault: { id: string; name: string }) =>
   `\nThis connection serves one vault, "${vault.name.replace(/["\n]/g, " ")}" (${vault.id}). Everything you remember goes there and only there; another vault has its own connection.`;
+
+/** For a connection whose agents name themselves (a shared key, a sign-in app): how to pick the name, and to join. */
+const NAMING_INSTRUCTIONS = `
+This connection is shared by every agent in your app, so pass your own agent id as \`agent\` on every call. ${AGENT_NAMING} If \`onboard\` says you're unknown, call \`introduce\` once (with your app as \`host\`): you join the person's agents at once, with no authority until they give you some.`;
 
 const CURATE_INSTRUCTIONS = `
 You may also run the nightly consolidation yourself: the \`sleep\` prompt explains how, starting with \`sleep_start\`.`;
@@ -108,23 +118,41 @@ function param(v: string | string[] | undefined, form = false): string {
 /** The server's version, as it introduces itself (and as its server card says). */
 export const SERVER_VERSION = "0.1.0";
 
-export function createHippoServer({ service, agent, scopes, version = SERVER_VERSION, jsonSchemaValidator, relay, vault }: HippoServerOptions): McpServer {
+export function createHippoServer({ service, agent, scopes, version = SERVER_VERSION, jsonSchemaValidator, relay, vault, holds }: HippoServerOptions): McpServer {
   const granted = scopes ? normalizeScopes(scopes) : undefined;
   const curates = !!relay && (!granted || granted.includes("curate"));
-  const instructions = (curates ? INSTRUCTIONS + CURATE_INSTRUCTIONS : INSTRUCTIONS) + (vault ? vaultInstructions(vault) : "");
+  const instructions = INSTRUCTIONS + (agent ? "" : NAMING_INSTRUCTIONS) + (curates ? CURATE_INSTRUCTIONS : "") + (vault ? vaultInstructions(vault) : "");
   const server = new McpServer({ name: "hippocampus", version }, { instructions, jsonSchemaValidator });
   // Out-of-scope tools are removed outright, so clients never see them.
   const scoped = (scope: CurrentScope, registered: { remove(): void }) => {
     if (granted && !granted.includes(scope)) registered.remove();
   };
-  // Confidential values are shown only to a bound caller (and only where it has authority); an
-  // `agent` argument is a claim anyone can make, so it never unmasks anything.
+  // Confidential values are shown only to a known caller, and only where it has authority: a bound
+  // connection's agent, or a name this connection already holds (`holds`). An `agent` argument alone is
+  // a claim anyone can make, so it never unmasks anything.
   const caller = agent?.toLowerCase();
+  const readerArg = {
+    agent: z
+      .string()
+      .optional()
+      .describe(
+        agent
+          ? `Ignored: this connection is bound to "${agent}"`
+          : holds
+            ? "Your agent id, to see confidential details where you're responsible. Only a name this connection already uses counts."
+            : "Ignored here: confidential details are shown only to a connection bound to an agent",
+      ),
+  };
+  const readAs = async (args: { agent?: string }): Promise<string | undefined> => {
+    if (caller) return caller;
+    const named = args.agent?.trim().toLowerCase();
+    return named && (await holds?.(named)) ? named : undefined;
+  };
   const agentArg = {
     agent: z
       .string()
       .optional()
-      .describe(agent ? `Ignored: this connection is bound to "${agent}"` : "Your agent id, e.g. residency-agent. Required."),
+      .describe(agent ? `Ignored: this connection is bound to "${agent}"` : `Your agent id, the same on every call. Required. ${AGENT_NAMING}`),
   };
   const who = (args: { agent?: string }) => {
     const id = agent ?? args.agent;
@@ -189,12 +217,12 @@ export function createHippoServer({ service, agent, scopes, version = SERVER_VER
       "introduce",
       {
         title: "Introduce yourself",
-        description: `Ask to join the vault's agents, when \`onboard\` says you're unknown. The human approves you and decides your authority; until then your memories count as rumors. Calling it again replaces your earlier introduction.`,
+        description: `Join the vault's agents, when \`onboard\` says you're unknown: your card shows on the person's Agents page at once. You start with no authority (your memories count as rumors) until the person makes you responsible for a domain. Calling it again only fills in what's blank on your card.`,
         inputSchema: {
           ...agentArg,
           title: z.string().min(1).max(120).describe('Your display name, e.g. "Job Scout"'),
           lane: z.string().max(500).optional().describe("What you handle, in one sentence"),
-          host: z.string().max(120).optional().describe("Where you run, e.g. Claude Desktop"),
+          host: z.string().max(120).optional().describe("The app you run in, e.g. Claude Code or a Grok bot"),
           model: z.string().max(120).optional().describe("The model you run on"),
           about: z.string().max(2000).optional().describe("What you do for the human, in a few lines"),
         },
@@ -203,7 +231,7 @@ export function createHippoServer({ service, agent, scopes, version = SERVER_VER
         guard(async () => {
           const { title, lane, host, model, about } = args;
           const r = await service.introduce(who(args), { title, lane, host, model, about });
-          return text(r.status === "member" ? `You're ${r.message}. Nothing to do.` : `Introduced as ${r.agent}: ${r.message}`);
+          return text(r.status === "member" ? `You're ${r.message}.` : `Introduced as ${r.agent}: ${r.message}`);
         }),
     ),
   );
@@ -216,13 +244,14 @@ export function createHippoServer({ service, agent, scopes, version = SERVER_VER
         title: "Recall",
         description: "Search memory. Returns matching entities (summary + key facts with status), related entities via the graph, and matching not-yet-consolidated episodes.",
         inputSchema: {
+          ...readerArg,
           query: z.string().min(1),
           types: z.array(z.string()).optional().describe("Filter entity types, e.g. [goal, character]"),
           limit: z.number().int().min(1).max(20).optional(),
         },
         annotations: { readOnlyHint: true },
       },
-      (args) => guard(async () => yaml(await service.recall(args.query, { types: args.types, limit: args.limit, caller }))),
+      (args) => guard(async () => yaml(await service.recall(args.query, { types: args.types, limit: args.limit, caller: await readAs(args) }))),
     ),
   );
 
@@ -234,10 +263,10 @@ export function createHippoServer({ service, agent, scopes, version = SERVER_VER
         title: "Get entity",
         description:
           "Full note for one entity: facts with status, provenance, scope and validity; relations; goal state, progress and objectives; guidelines (own and inherited); contact stats and cadence; decisions and open questions; open disputes; human notes.",
-        inputSchema: { entity: z.string().describe("Slug, [[link]], title, or alias") },
+        inputSchema: { ...readerArg, entity: z.string().describe("Slug, [[link]], title, or alias") },
         annotations: { readOnlyHint: true },
       },
-      (args) => guard(async () => yaml(await service.get(args.entity, { caller }))),
+      (args) => guard(async () => yaml(await service.get(args.entity, { caller: await readAs(args) }))),
     ),
   );
 
@@ -266,10 +295,10 @@ export function createHippoServer({ service, agent, scopes, version = SERVER_VER
       {
         title: "Ask canon",
         description: "Get the canonical answer to a factual question (dates, emails, IDs, addresses, amounts). Returns the best-matching facts with status and source, plus any open dispute. Use this when numbers or IDs disagree.",
-        inputSchema: { question: z.string().min(1) },
+        inputSchema: { ...readerArg, question: z.string().min(1) },
         annotations: { readOnlyHint: true },
       },
-      (args) => guard(async () => yaml(await service.askCanon(args.question, { caller }))),
+      (args) => guard(async () => yaml(await service.askCanon(args.question, { caller: await readAs(args) }))),
     ),
   );
 
@@ -282,6 +311,7 @@ export function createHippoServer({ service, agent, scopes, version = SERVER_VER
         description:
           "What happened and what's next: the chronicle since a date, recently updated entities, upcoming due dates and anniversaries, overdue contacts, and open disputes. With `about`, a brief on one person or thing instead: canon facts, guidelines, recent interactions, open goals with them, open proposals, and contact stats.",
         inputSchema: {
+          ...readerArg,
           since: z.string().optional().describe("ISO date; default 7 days ago"),
           horizon_days: z.number().int().min(1).max(365).optional().describe("How far ahead to look for due dates (default 30)"),
           about: z.string().optional().describe("Slug, [[link]], title, or alias: brief on this one instead, e.g. before contacting them"),
@@ -290,7 +320,7 @@ export function createHippoServer({ service, agent, scopes, version = SERVER_VER
       },
       (args) =>
         guard(async () =>
-          yaml(args.about ? await service.personBrief(args.about, { caller }) : await service.briefing({ since: args.since, horizonDays: args.horizon_days })),
+          yaml(args.about ? await service.personBrief(args.about, { caller: await readAs(args) }) : await service.briefing({ since: args.since, horizonDays: args.horizon_days })),
         ),
     ),
   );

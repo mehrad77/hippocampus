@@ -919,7 +919,7 @@ function AgentsStep({ status }: HostedStepProps) {
             <Icon name="link" />
             <strong>Connect an app</strong>
           </div>
-          <p className="small">Claude Code, Claude Desktop, Cursor, VS Code, Windsurf or any MCP app. Pick the app and what it may do; you get exactly what to paste into it.</p>
+          <p className="small">Claude Code, Claude Desktop, Cursor, VS Code, Windsurf or any MCP app. Pick the app; you get exactly what to paste into it. One connection per app: the agents in it name themselves.</p>
           <div className="row">
             <button type="button" className="btn btn--primary" onClick={() => setConnecting(true)} disabled={status.vault?.status !== "ready"}>
               <Icon name="plus" /> Connect an app
@@ -933,20 +933,20 @@ function AgentsStep({ status }: HostedStepProps) {
             <strong>Claude.ai or ChatGPT (beta)</strong>
           </div>
           <p className="small">These sign in with your account instead of a key: add a custom connector with this address. Sign-in is still in beta; if it fails, connect another app with a key.</p>
-          <CopyLine value={status.mcpUrl} label="MCP URL" />
+          <CopyLine value={`${status.publicUrl}/mcp`} label="MCP address for sign-in" />
         </div>
       </div>
       {status.vault && <ConnectDialog open={connecting} onClose={() => setConnecting(false)} status={status} />}
       <h3 className="sz-subhead">What happens next</h3>
       <ol className="sz-howto">
         <li>
-          An agent calls <code>onboard</code> when it connects, then <code>introduce</code>: it says who it is and what it handles.
+          Each agent in an app names itself, calls <code>onboard</code>, then <code>introduce</code>: it says who it is and what it handles.
         </li>
         <li>
-          {v("Its request shows on the ", "Its knock shows on the ")}
-          <a href={href.page("party")}>{t("party")}</a> page. You approve it there and choose the topics it's responsible for.
+          {v("It shows up on the ", "It takes a seat on the ")}
+          <a href={href.page("party")}>{t("party")}</a> page at once. There you choose what it's responsible for.
         </li>
-        <li>{v("Until you approve it, what it saves counts as unverified.", "Until you seat it, what it remembers counts as rumor.")}</li>
+        <li>{v("Until you do, what it saves counts as unverified.", "Until you give it authority, what it remembers counts as rumor.")}</li>
       </ol>
     </div>
   );

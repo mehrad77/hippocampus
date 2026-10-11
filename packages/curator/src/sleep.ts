@@ -6,6 +6,7 @@ import {
   HANDBOOK_PATH,
   MODEL_TRAILER,
   REVIEW_PATH,
+  SLUG,
   Vault,
   VaultError,
   activeQuests,
@@ -101,6 +102,8 @@ export interface EpisodeReport {
   guidelines: string[];
   /** Advisory notes for the review: unknown kind, data links to no note, what a confidential episode left out. Never values. */
   notes: string[];
+  /** Domains the model wanted that the config lacks, for the human to add. Absent in runs stored before them. */
+  domains?: string[];
 }
 
 export interface SleepReport {
@@ -186,6 +189,8 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
     }
   }
 
+  // A suggestion that happens to spell one of the run's secrets would fail the whole run below.
+  for (const r of report.consolidated) if (r.domains) r.domains = r.domains.filter((d) => !secrets.some((s) => s.trim().length >= 3 && d.includes(s.toLowerCase())));
   finishRun(vault, report);
   // The backstop: each episode passed its own audit, so this one catches only what the run as a whole adds.
   const violations = await auditChanges({ before: opts.store, changes: vault.changes(), actor: { kind: "curator" }, forbidden: secrets });
@@ -389,6 +394,7 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
   for (const e of hinted) take(e);
 
   const secretsSeen: string[] = [];
+  const wanted: string[] = [];
   const skipped = new Set<string>();
   const commitments: Commitment[] = [];
   const reducers = new Set([...(BEHAVIOUR_REDUCERS[kind.def.behaviour] ?? []), ...kind.def.reducers]);
@@ -416,6 +422,7 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
     const pendingAliases = new Map<string, string[]>();
     for (const m of mentions) {
       if (!m.name.trim() || !vault.schema.type(m.type)) continue;
+      wanted.push(...m.domains);
       let e = [m.name, ...m.aliases].map((x) => vault.resolve(x)).find(usable);
       if (!e) {
         // Built per mention: earlier mentions in this episode may have created entities.
@@ -587,6 +594,12 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
     }
   }
 
+  // Areas the model wanted that the config lacks, for the human to add. Never from an episode with a secret or a confidential word.
+  if (!ep.secret && !ep.confidential && !secretsSeen.length) {
+    const domains = domainSuggestions(vault, wanted, hidden);
+    if (domains.length) report.domains = domains;
+  }
+
   report.touched = [...new Set([...entities.keys()])];
   // 6. Episodic → chronicle (secrets and confidential values redacted), then out of the inbox.
   const redacted = redactAll(redact(ep.text, secretsSeen), hidden);
@@ -733,6 +746,14 @@ export function confidentialValues(vault: Vault): string[] {
   return [...out];
 }
 
+/** Domain ids worth suggesting: ones the config lacks, with a letter, no long number, and no hidden value in them. */
+function domainSuggestions(vault: Vault, wanted: string[], hidden: string[]): string[] {
+  const known = new Set(vault.config.domains.map((d) => d.toLowerCase()));
+  return [...new Set(wanted.map((d) => d.trim().toLowerCase()))].filter(
+    (d) => SLUG.test(d) && /[a-z]/.test(d) && !/\d{4}/.test(d) && !known.has(d) && !hidden.some((h) => occurrences(d, h.toLowerCase()) > 0),
+  );
+}
+
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Short values only as whole tokens, as the audit counts them. */
 const valuePattern = (v: string) => new RegExp(v.length >= 6 ? escape(v) : `(?<![\\p{L}\\p{N}])${escape(v)}(?![\\p{L}\\p{N}])`, "gu");
@@ -756,6 +777,19 @@ function timed(llm: LLM, log: (msg: string) => void): LLM {
 
 function looksLikeIdentifier(v: string): boolean {
   return /^[A-Z0-9-]{6,}$/i.test(v.replace(/\s/g, "")) && /\d/.test(v);
+}
+
+/** Most domain suggestions the review lists. */
+const SUGGESTED_DOMAINS_MAX = 5;
+
+/** The run's domain suggestions, the most wanted first, with how many episodes wanted each. */
+function suggestedDomains(report: SleepReport): { id: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const c of report.consolidated) for (const d of c.domains ?? []) counts.set(d, (counts.get(d) ?? 0) + 1);
+  return [...counts]
+    .map(([id, count]) => ({ id, count }))
+    .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id))
+    .slice(0, SUGGESTED_DOMAINS_MAX);
 }
 
 /** Most shape findings the review lists; the rest are counted. */
@@ -791,11 +825,12 @@ function renderReview(vault: Vault, report: SleepReport): string {
   const shown = shapes.slice(0, SHAPE_NOTES_MAX);
   if (shapes.length > shown.length) shown.push(`- … and ${shapes.length - shown.length} more (\`hippo validate\` lists them all)`);
   const usage = fieldUsage(vault).map((u) => `- ${u.type}: ${u.fields.map((f) => `${f.field} ×${f.count}`).join(", ")}`);
+  const domains = suggestedDomains(report);
   const failed = report.failed.map((f) => `- \`${f.path}\` — ${f.error.slice(0, 160)}`);
   const orphans = found.orphans.map((r) => `- ${link(r.slug)} (${r.type}: ${r.title})`);
   const section = (title: string, items: string[]) => `## ${title}\n\n${items.length ? items.join("\n") : "- (none)"}\n`;
   return renderDoc(
-    { type: "review", generated: now },
+    { type: "review", generated: now, suggested_domains: domains.length ? domains.map((d) => d.id) : undefined },
     `# 🌙 Morning review
 
 Generated by the last sleep (${now.slice(0, 16).replace("T", " ")} UTC, model \`${report.model}\`): ${report.consolidated.length} episodes consolidated, ${report.failed.length} failed, ${report.remaining} still in the inbox.
@@ -808,6 +843,6 @@ ${section("🧭 New guidelines (unverified rumors from this run)", guidelines)}
 ${section(`🕸 Stale canon (not re-confirmed in ${vault.config.curator.stale_after_days} days)`, stale)}
 ${section("🧩 Orphan notes (no relations)", orphans)}
 ${section("📐 Shape notes (advisory)", shown)}
-${usage.length ? `Fields in use that their type doesn't declare (candidates for the schema):\n\n${usage.join("\n")}\n\n` : ""}${section("✗ Episodes that failed to consolidate", failed)}`,
+${usage.length ? `Fields in use that their type doesn't declare (candidates for the schema):\n\n${usage.join("\n")}\n\n` : ""}${domains.length ? `Domains the curator wanted that the vault doesn't have (add them on the Agents page or with \`hippo domain add\`):\n\n${domains.map((d) => `- \`${d.id}\` (${d.count} episode${d.count > 1 ? "s" : ""})`).join("\n")}\n\n` : ""}${section("✗ Episodes that failed to consolidate", failed)}`,
   );
 }

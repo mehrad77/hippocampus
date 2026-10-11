@@ -5,10 +5,10 @@ import { applyGoalUpdate, getObjectives, goalProps, goalStateOf, legacyClocks, n
 import { createEpisode, type NewEpisode } from "./episode.ts";
 import { HANDBOOK_PATH, renderHandbook, renderOnboarding } from "./handbook.ts";
 import { validateEpisode } from "./kinds.ts";
-import { INTRODUCTION_LIMITS, createIntroduction, type NewIntroduction } from "./introduction.ts";
+import { INTRODUCTION_LIMITS, type NewIntroduction } from "./introduction.ts";
 import { resolveInheritance, type InheritedGuideline } from "./inherit.ts";
 import { humanText } from "./markdown.ts";
-import { addPartyMember, applyRuling, assertAgentId, declineProposal, isSecretField, questToGoalUpdate, retractFact, type NewPartyMember, type QuestUpdate } from "./ops.ts";
+import { addPartyMember, applyRuling, assertAgentId, declineProposal, seatSelf, setAuthority, isSecretField, questToGoalUpdate, retractFact, type NewPartyMember, type QuestUpdate } from "./ops.ts";
 import { miniSearcher, type SearcherFactory } from "./search.ts";
 import type { DecisionEntry, DisputeKind, FactStatus, FactValue, Guideline, ProposalState, QuestionEntry, Stats } from "./schema.ts";
 import { StoreConflictError, bufferedStore, type VaultStore } from "./store.ts";
@@ -228,8 +228,8 @@ export interface ApproveIntroduction {
 }
 
 export interface IntroduceResult {
-  /** `pending` until the human approves; `member` if the agent already has a party note (`path`). */
-  status: "pending" | "member";
+  /** `seated`: its card was just made (`path`); `member`: it already had one. */
+  status: "seated" | "member";
   agent: string;
   path: string;
   message: string;
@@ -756,18 +756,29 @@ export class HippoService {
   async introduce(agent: string, input: NewIntroduction): Promise<IntroduceResult> {
     checkIntroduction(input);
     return this.mutate<IntroduceResult>((vault) => {
-      const id = assertAgentId(vault, agent);
-      const member = vault.actorMember(id);
-      if (member) {
-        return { message: "", result: { status: "member", agent: id, path: member.path, message: `already in the party as ${displayName(member)} (${member.path})` } };
-      }
-      const intro = createIntroduction(vault.config.folders.inbox, id, input, this.opts.now?.());
-      vault.addIntroduction(intro);
+      const { card, created, filled } = seatSelf(vault, agent, input);
+      const id = card.slug;
+      // An introduction it filed before agents seated themselves is settled by this.
+      vault.removeIntroductions(id);
       const human = vault.config.human;
+      if (!created) {
+        const message = `in the party as ${displayName(card)} (${card.path})${filled.length ? `; filled in your ${filled.join(", ")}` : ""}`;
+        return { message: vault.hasChanges() ? signed(`introduce(${id}): ${filled.length ? `fill in ${filled.join(", ")}` : "settle introduction"}`, id) : "", result: { status: "member", agent: id, path: card.path, message } };
+      }
       return {
-        message: signed(`introduce(${id}): ${intro.title}`, id),
-        result: { status: "pending", agent: id, path: intro.path, message: `waiting for ${human}'s approval. Until then your memories count as rumors.` },
+        message: signed(`introduce(${id}): ${displayName(card)}`, id),
+        result: { status: "seated", agent: id, path: card.path, message: `you're on ${human}'s Agents page now, with no authority: what you remember counts as a rumor until ${human} makes you responsible for a domain.` },
       };
+    });
+  }
+
+  /** The human sets what an agent is responsible for (its authority domains). The Handbook, which lists them, follows. */
+  async setAuthority(agent: string, domains: string[], opts: { via?: string } = {}): Promise<{ agent: string; authority: string[] }> {
+    return this.mutate((vault) => {
+      const card = setAuthority(vault, agent, domains);
+      vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
+      const authority = card.fm.authority ?? [];
+      return { message: signed(`party(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): ${card.slug} responsible for ${authority.join(", ") || "nothing"}`), result: { agent: card.slug, authority } };
     });
   }
 

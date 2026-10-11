@@ -28,9 +28,9 @@ export function script() {
   return new ScriptedLLM()
     .push(
       "mentions",
-      { entities: [{ name: "Agência de Migração", type: "faction", aliases: ["the agency"], domains: ["residency"] }, { name: "Passport", type: "item", aliases: ["U12345678"], domains: ["residency"] }] },
+      { entities: [{ name: "Agência de Migração", type: "faction", aliases: ["the agency"], domains: ["residency"] }, { name: "Passport", type: "item", aliases: ["U12345678"], domains: ["residency", "travel-documents"] }] },
       { entities: [{ name: "Lisbon Migration Office", type: "faction", aliases: [], domains: [] }] },
-      { entities: [{ name: "João Silva", type: "character", aliases: [], domains: ["housing"] }] },
+      { entities: [{ name: "João Silva", type: "character", aliases: [], domains: ["housing", "rentals"] }] },
     )
     .push("match", { match: "migration-agency" })
     .push(

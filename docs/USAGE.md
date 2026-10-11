@@ -92,7 +92,7 @@ npx @mehrad77/hippocampus -v ~/vaults/my-memory preset add developer
 
 `preset add` copies what the vault doesn't have, merges the preset's fields into your existing types, adds its domains and relations to the config, appends its sections to your note when they're missing, and commits exactly those files. It never replaces a file you have unless you pass `--force`.
 
-**Domains** can grow later too. `domain add` lists new ones under `domains:` in the config (keeping its comments), refreshes `HANDBOOK.md` and commits both; `domain list` shows them. On the dashboard, the Agents page has the same field.
+**Domains** can grow later too. `domain add` lists new ones under `domains:` in the config (keeping its comments), refreshes `HANDBOOK.md` and commits both; `domain list` shows them. On the dashboard, the Agents page has the same field. The curator never adds one itself: when sleep wanted an area the vault doesn't have, the morning review lists it (`suggested_domains:`), and the Agents page offers it as a one-click Add.
 
 ```bash
 npx @mehrad77/hippocampus -v ~/vaults/my-memory domain add health side-project
@@ -248,7 +248,7 @@ Turning it off on the setup page removes the file.
 
 1. Open the dashboard's Tavern, or `_hippo/review.md` (the morning review). Both list disputes, proposals, possible duplicates, new guidelines, unverified rumors, stale facts, shape notes, orphan notes, and episodes that failed.
 2. **Rule on disputes:** in the dashboard's Council, pick the right claim or type the value; it becomes canon immediately, by you. Or open the dispute note in Obsidian and set `ruling: <correct value>`, and the next sleep makes it canon. **Proposals** (an agent's value for a field only you set) and **possible duplicates** are accepted or declined the same way.
-3. **Approve introductions:** an agent that isn't in the party yet can call `introduce` with a title, its lane, host, model and a few lines about itself. It lands in `inbox/<agent>/_introduction-<id>.md` and shows on the Party page and in the Tavern. **Approve** adds `party/<agent>.md` with the authority domains you choose; **Dismiss** removes the introduction, and the agent's word stays a rumor. Older tools ignore these files (the `_` prefix), so no format change was needed.
+3. **Agents join by themselves:** an agent that isn't in the party yet calls `introduce` with a title, its lane, host, model and a few lines about itself. That writes its own `party/<agent>.md` at once, with no authority, so its word stays a rumor; it can later fill in what's blank there, never its authority or facts. On the Agents page, **Responsible for → Change…** gives it authority domains. Introductions filed by older versions (`inbox/<agent>/_introduction-<id>.md`) still show with **Approve** and **Dismiss**.
 4. Edit anything in Obsidian. Your word outranks every agent. The curator only rewrites `%% hippo:… %%` regions and the `facts`/`relations` properties, never your prose.
 5. Tick objectives, move progress and set due dates and repeats on the dashboard's Goals page, or directly in goal notes. A repeating goal (rent every month, a weekly problem set) comes back with its next due date when it's done.
 6. Recount contact stats from the chronicle with `hippo fmt --stats` if you edited them by hand.
@@ -290,7 +290,7 @@ The tool refuses to write to a vault whose format version differs from its own. 
 
 **Inviting people to the app.** Anyone approved can invite someone to the hosted app itself (**Setup → Invite someone to Hippocampus**): it lets them in without the waitlist and shares nothing. Ten open invites at a time; admins have no cap, and can turn a person's invites off.
 
-**Connecting apps.** **Setup → Connected apps → Connect an app** asks which app, what it may do (**Remember and recall**: `read`, `remember`, `goal`; or **Only look things up**: `read`), and what it's called in the memory (its agent id, which it can be seated as right away). It shows the snippet for that app with the key in it, once (only a hash is stored), then waits for the app's first call. A key opens only its own vault: used at another vault's address, it's refused (`403 wrong_vault`), so a mixed-up config fails loudly instead of writing to the wrong vault. The list shows every connection, keys and sign-in apps alike, and disconnects any of them at once.
+**Connecting apps.** **Setup → Connected apps → Connect an app** asks only which app. The app gets one key (`read`, `remember`, `goal`), and the agents in it name themselves on each call, so one key can carry several. It shows the snippet for that app with the key in it, once (only a hash is stored), then waits for the app's first call. A key opens only its own vault: used at another vault's address, it's refused (`403 wrong_vault`), so a mixed-up config fails loudly instead of writing to the wrong vault. The list shows every connection, keys and sign-in apps alike, and disconnects any of them at once.
 
 | Kind | Scopes | For |
 | --- | --- | --- |

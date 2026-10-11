@@ -182,7 +182,7 @@ function browser(origin: string, github: string, login: string) {
   /** A same-origin write, as the dashboard sends it. */
   const post = <T = unknown>(path: string, json: unknown) => api<T>(path, { method: "POST", json, headers: { origin } });
 
-  return { visit, api, post, cookies: () => [...jar.keys()] };
+  return { visit, api, post, cookies: () => [...jar.keys()], cookieHeader: () => [...jar].map(([k, v]) => `${k}=${v}`).join("; ") };
 }
 
 // ── MCP ──────────────────────────────────────────────────────────────────────────────────────────
@@ -531,6 +531,51 @@ async function main(): Promise<void> {
     const why = (await wrong.json()) as { error?: string; error_description?: string };
     check(wrong.status === 403 && why.error === "wrong_vault", `another vault's address: ${wrong.status} ${JSON.stringify(why)}`);
     check(!why.error_description?.includes("game-master"), "the refusal named the other vault");
+  });
+  await step("a ChatGPT-style connector signs in with the vault's address as its resource", async () => {
+    // Dynamic registration, as a connector does it (a made-up callback: we never follow it).
+    const callback = "https://chatgpt.example/connector/oauth/smoke";
+    const reg = await fetch(`${origin}/oauth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "ChatGPT", redirect_uris: [callback], token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"] }),
+    });
+    check(reg.status === 201, `register ${reg.status}`);
+    const { client_id: clientId } = (await reg.json()) as { client_id: string };
+    const resource = `${origin}/mcp/${playerVault}`;
+    // The metadata at the address the connector was given names that address.
+    const meta = (await (await fetch(`${origin}/.well-known/oauth-protected-resource/mcp/${playerVault}`)).json()) as { resource?: string };
+    check(meta.resource === resource, `metadata: ${JSON.stringify(meta)}`);
+    const verifier = `${crypto.randomUUID()}${crypto.randomUUID()}`;
+    const challenge = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))).toString("base64url");
+    const authorize = new URL(`${origin}/authorize`);
+    for (const [k, v] of Object.entries({ response_type: "code", client_id: clientId, redirect_uri: callback, scope: "read", state: "s", code_challenge: challenge, code_challenge_method: "S256", resource })) authorize.searchParams.set(k, v);
+    const { res: page } = await player.visit(authorize.pathname + authorize.search);
+    const html = await page.text();
+    check(page.status === 200 && html.includes("Connect ChatGPT to your vault?"), `consent page ${page.status}`);
+    const field = (name: string) => new RegExp(`name="${name}" value="([^"]*)"`).exec(html)?.[1] ?? "";
+    // Posted by hand: the redirect goes to the connector's own address, which isn't ours to visit.
+    const approved = await fetch(`${origin}/authorize`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { origin, cookie: player.cookieHeader(), "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ handle: field("handle"), account: field("account"), vault: field("vault"), decision: "approve" }),
+    });
+    const back = new URL(approved.headers.get("location") ?? "https://none.invalid");
+    check(approved.status === 302 && `${back.origin}${back.pathname}` === callback && back.searchParams.get("code"), `approve ${approved.status} ${back.href}`);
+    const token = await fetch(`${origin}/oauth/token`, {
+      method: "POST",
+      body: new URLSearchParams({ grant_type: "authorization_code", code: back.searchParams.get("code")!, redirect_uri: callback, client_id: clientId, code_verifier: verifier, resource }),
+    });
+    const tokens = (await token.json()) as { access_token?: string; error?: string };
+    check(token.status === 200 && tokens.access_token, `token ${token.status} ${tokens.error}`);
+    const listed = await fetch(resource, {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokens.access_token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    check(listed.status === 200, `MCP at the address: ${listed.status}`);
+    await listed.body?.cancel();
   });
   await step("GET vaults lists the person's own vaults only", async () => {
     const mine = await player.api<{ vaults: { id: string; fullName: string; role: string }[]; current?: string }>("vaults");

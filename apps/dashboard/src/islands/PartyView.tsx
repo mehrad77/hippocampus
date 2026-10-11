@@ -26,6 +26,8 @@ function Party({ session }: { session: SessionInfo }) {
   const [adding, setAdding] = useState<{ id: string } | null>(null);
   const [approving, setApproving] = useState<IntroductionView | null>(null);
   const [dismissing, setDismissing] = useState<IntroductionView | null>(null);
+  const [granting, setGranting] = useState<PartyMember | null>(null);
+  const names = useResource<{ names: { agent: string; state: "held" | "free" | "released" }[] }>(session.capabilities.names ? "/names" : null);
   useHashTarget(!!o);
   if (error && !o) return <div className="callout callout--danger">{error.message}</div>;
   if (!o)
@@ -75,7 +77,13 @@ function Party({ session }: { session: SessionInfo }) {
             <PlayerSheet key={h.id} o={o} h={h} me={h.id.toLowerCase() === human.toLowerCase()} several={humans.length > 1} session={session} />
           ))}
         {members.map((p) => (
-          <MemberSheet key={p.slug} p={p} />
+          <MemberSheet
+            key={p.slug}
+            p={p}
+            onGrant={session.capabilities.authority ? () => setGranting(p) : undefined}
+            released={names.data?.names.find((n) => n.agent === p.slug)?.state === "released"}
+            onHandOver={session.capabilities.handOver ? () => void handOver(p, () => void names.reload()) : undefined}
+          />
         ))}
       </ul>
 
@@ -93,8 +101,9 @@ function Party({ session }: { session: SessionInfo }) {
 
       {strangers.length > 0 && <Strangers ids={strangers} canAdd={canAdd} onAdd={(id) => setAdding({ id })} />}
 
-      <Domains canAdd={session.capabilities.domains} />
+      <Domains canAdd={session.capabilities.domains} suggested={o.suggestedDomains ?? []} />
 
+      {session.capabilities.authority && <AuthorityDialog member={granting} onClose={() => setGranting(null)} />}
       {canAdd && <AddMemberDialog open={!!adding} initialId={adding?.id ?? ""} party={o.party} human={human} humans={people} onClose={() => setAdding(null)} />}
       {session.capabilities.introductions && (
         <>
@@ -179,7 +188,18 @@ function PlayerSheet({ o, h, me, several, session }: { o: Overview; h: HumanView
   );
 }
 
-function MemberSheet({ p }: { p: PartyMember }) {
+/** Let the next connection that writes as this agent take its name. */
+async function handOver(p: PartyMember, done: () => void): Promise<void> {
+  try {
+    await postJson("/actions/hand-over", { agent: p.slug });
+    toast(`The next app that speaks as ${p.slug} takes the name.`, "ok");
+    done();
+  } catch (err) {
+    toast(errorMessage(err), "error");
+  }
+}
+
+function MemberSheet({ p, onGrant, released, onHandOver }: { p: PartyMember; onGrant?: () => void; released?: boolean; onHandOver?: () => void }) {
   const { v } = useTerms();
   return (
     <li className="sheet" id={p.slug}>
@@ -229,6 +249,21 @@ function MemberSheet({ p }: { p: PartyMember }) {
             </span>
           ) : (
             <span className="muted">{v("nothing yet: its facts need confirmation from another source", "none: its word needs corroboration")}</span>
+          )}
+          {onGrant && (
+            <button type="button" className="btn btn--sm btn--ghost" onClick={onGrant} aria-label={`Change what ${p.title} is responsible for`}>
+              Change…
+            </button>
+          )}
+          {p.authority.length > 0 && released && (
+            <p className="small muted">
+              {v("The app this agent spoke through was disconnected. Since it's responsible for something, no other app can take its name by itself.", "Its connection was cut. Since it holds authority, no other connection can take the name by itself.")}{" "}
+              {onHandOver && (
+                <button type="button" className="btn btn--sm btn--ghost" onClick={onHandOver}>
+                  Let the next app take it
+                </button>
+              )}
+            </p>
           )}
         </dd>
         <dt>Host</dt>
@@ -285,10 +320,79 @@ function Strangers({ ids, canAdd, onAdd }: { ids: string[]; canAdd: boolean; onA
   );
 }
 
+// ── Authority ─────────────────────────────────────────────────────────────
+
+/** The human decides what an agent is responsible for: its authority domains, from the vault's own. */
+function AuthorityDialog({ member, onClose }: { member: PartyMember | null; onClose: () => void }) {
+  const { v } = useTerms();
+  const catalog = useResource<Catalog>(member ? "/catalog" : null);
+  const [seed, setSeed] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  if ((member?.slug ?? null) !== seed) {
+    setSeed(member?.slug ?? null);
+    setChosen(member?.authority ?? []);
+  }
+  const domains = catalog.data?.domains ?? [];
+  const save = async () => {
+    if (!member) return;
+    setBusy(true);
+    try {
+      await postJson("/actions/authority", { agent: member.slug, domains: chosen });
+      toast(chosen.length ? `${member.title} is responsible for ${chosen.join(", ")}.` : `${member.title} is responsible for nothing now.`, "ok");
+      await settle();
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      open={!!member}
+      onClose={onClose}
+      title={member ? v(`What ${member.title} is responsible for`, `${member.title}'s authority`) : ""}
+      footer={
+        <>
+          <button type="button" className="btn btn--ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn--primary" onClick={() => void save()} disabled={busy || !catalog.data}>
+            <Icon name="check" /> {busy ? "Saving…" : "Save"}
+          </button>
+        </>
+      }
+    >
+      <div className="stack">
+        {member && (
+          <p className="small">
+            {member.lane ? <>{/[.!?]$/.test(member.lane.trim()) ? member.lane.trim() : `${member.lane.trim()}.`} </> : null}
+            {v(
+              "On records of the areas you tick, its facts outrank agents that aren't responsible for them, and it may see their confidential details. Yours still outrank everyone's.",
+              "On entities of the domains you tick, its word outranks agents without authority, and it may see their confidential details. Yours still outranks everyone's.",
+            )}
+          </p>
+        )}
+        {catalog.error && !catalog.data ? (
+          <span className="field-error small">{catalog.error.message}</span>
+        ) : domains.length ? (
+          <DomainChips domains={domains} value={chosen} onChange={setChosen} label={v("Areas it's responsible for", "Authority domains")} />
+        ) : catalog.data ? (
+          <span className="hint">{v("No areas yet. Add some under Areas on this page first.", "No domains yet. Add some under Domains on this page first.")}</span>
+        ) : (
+          <span className="hint">{v("Loading the areas…", "Loading the campaign's domains…")}</span>
+        )}
+        {member?.host && <p className="small muted">It runs in {member.host}. Agents in one app share its key, so another agent in the same app could act under this name too.</p>}
+      </div>
+    </Dialog>
+  );
+}
+
 // ── Domains ───────────────────────────────────────────────────────────────
 
-/** The vault's domains (`domains:` in the config), and a field to add more for a human who may. */
-function Domains({ canAdd }: { canAdd: boolean }) {
+/** The vault's domains (`domains:` in the config), the last sleep's suggestions, and a field to add more for a human who may. */
+function Domains({ canAdd, suggested }: { canAdd: boolean; suggested: string[] }) {
   const { v, look } = useTerms();
   const catalog = useResource<Catalog>("/catalog");
   const [draft, setDraft] = useState("");
@@ -298,21 +402,27 @@ function Domains({ canAdd }: { canAdd: boolean }) {
   const domains = catalog.data?.domains ?? [];
   const { ids, problem } = domainDraft(draft, domains, look);
 
+  const add = async (list: string[]) => {
+    setBusy(true);
+    try {
+      const res = await postJson<{ added: string[] }>("/actions/domain", { ids: list });
+      toast(res.added.length ? `Added ${res.added.join(", ")}.` : v("The vault already has those areas.", "The vault already has those domains."), "ok");
+      await settle();
+      return true;
+    } catch (err) {
+      toast(errorMessage(err), "error");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
   const submit = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     setTried(true);
     if (problem) return;
-    setBusy(true);
-    try {
-      const res = await postJson<{ added: string[] }>("/actions/domain", { ids });
-      toast(res.added.length ? `Added ${res.added.join(", ")}.` : v("The vault already has those areas.", "The vault already has those domains."), "ok");
+    if (await add(ids)) {
       setDraft("");
       setTried(false);
-      await settle();
-    } catch (err) {
-      toast(errorMessage(err), "error");
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -336,6 +446,24 @@ function Domains({ canAdd }: { canAdd: boolean }) {
         </div>
       ) : (
         catalog.data && <p className="small muted">{v("No areas yet.", "No domains yet.")}</p>
+      )}
+      {suggested.length > 0 && (
+        <div className="stack" style={{ ["--gap" as string]: "6px", marginTop: 12 }}>
+          <span className="small">{v("The nightly update wanted these areas, which the vault doesn't have yet:", "The last sleep wanted these domains, which the campaign doesn't have yet:")}</span>
+          <div className="row" role="group" aria-label={v("Suggested areas", "Suggested domains")}>
+            {suggested.map((d) =>
+              canAdd ? (
+                <button key={d} type="button" className="btn btn--sm" disabled={busy} onClick={() => void add([d])} aria-label={`Add ${d}`}>
+                  <Icon name="plus" size={16} /> {d}
+                </button>
+              ) : (
+                <span key={d} className="chip">
+                  {d}
+                </span>
+              ),
+            )}
+          </div>
+        </div>
       )}
       {canAdd ? (
         <form className="row" onSubmit={submit} noValidate style={{ marginTop: 12, alignItems: "flex-start" }}>

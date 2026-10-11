@@ -215,7 +215,7 @@ describe("connections", () => {
     const rows = connectionRows(
       [
         { id: "k1", kind: "bound", agent: "claude-code", scopes: ["read", "remember", "goal"], label: "Claude Code", created: "2026-10-01T00:00:00Z", lastUsed: "2026-10-02T00:00:00Z" },
-        { id: "k2", kind: "agent", scopes: ["read", "remember", "goal"], label: "Any agent", created: "2026-10-03T00:00:00Z" },
+        { id: "k2", kind: "agent", scopes: ["read", "remember", "goal"], label: "Cursor", app: "cursor", created: "2026-10-03T00:00:00Z" },
         { id: "k3", kind: "curator", scopes: ["read", "curate"], label: "Curator", created: "2026-09-30T00:00:00Z" },
       ],
       [
@@ -223,12 +223,22 @@ describe("connections", () => {
         { id: "g2", client: "ChatGPT", scopes: ["read"], agent: "chatgpt", vault: "v2", created: "2026-10-05T00:00:00Z" },
       ],
       "v1",
+      [
+        { agent: "cursor-home-finder", credential: "key:k2", since: "2026-10-03T10:00:00Z" },
+        { agent: "cursor-job-scout", credential: "key:k2", since: "2026-10-03T11:00:00Z" },
+        { agent: "someone-elses", credential: "key:other", since: "2026-10-03T12:00:00Z" },
+        { agent: "chatgpt-planner", credential: "oauth:g1", since: "2026-10-04T10:00:00Z" },
+      ],
     );
     expect(rows.map((r) => [r.name, r.kind, r.can, r.actsAs])).toEqual([
       ["Claude", "sign-in app", "Only look things up", { agent: "claude-web" }],
-      ["Any agent", "shared key", "Remember and recall", { shared: true }],
+      ["Cursor", "shared key", "Remember and recall", { shared: true }],
       ["Claude Code", "single-agent key", "Remember and recall", { agent: "claude-code" }],
       ["Curator", "curator key", "Curate nightly", { curator: true }],
     ]);
+    // A shared connection shows who has spoken through it: by key id, or by sign-in grant.
+    expect(rows.find((r) => r.id === "k2")!.agents.map((a) => a.agent)).toEqual(["cursor-home-finder", "cursor-job-scout"]);
+    expect(rows.find((r) => r.id === "g1")!.agents.map((a) => a.agent)).toEqual(["chatgpt-planner"]);
+    expect(rows.find((r) => r.id === "k1")!.agents).toEqual([]);
   });
 });
