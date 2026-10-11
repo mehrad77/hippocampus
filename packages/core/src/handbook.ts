@@ -79,7 +79,7 @@ Call **\`remember\`** once per memory:
 - \`confidential: true\` keeps it out of search, prompts and the chronicle.
 - \`about\`: optional hints, as links or names, e.g. \`["[[residence-permit]]", "Agência de Migração"]\`
 - \`secret: true\` if it contains IDs, account numbers or credentials. They get encrypted.
-- \`confidence\` (0–1) and \`at\` (ISO 8601, when it happened; defaults to now).
+${config.secrets.recipient ? "" : `  - This vault has no secrets recipient yet, so a secret memory is held back, not stored, until ${link(config.human)} sets one (dashboard → Setup → Secrets key, or \`hippo secrets keygen\`). Tell them if you send one.\n`}- \`confidence\` (0–1) and \`at\` (ISO 8601, when it happened; defaults to now).
 - \`agent\`: your agent id, unless your connection is already bound to one. ${AGENT_NAMING}
 
 Writing tips, so the curator gets it right:
@@ -87,7 +87,7 @@ Writing tips, so the curator gets it right:
 - Exact values: ISO dates (\`2026-10-14\`), amounts with currency (\`4,500 TRY\`), full IDs, emails, and phone numbers.
 - Say *how you know* ("confirmed by email from …", "seen on the permit portal") when it matters.
 - Corrections are just new memories ("appointment moved to …"). Don't try to change old ones.
-- Goal progress: \`update_quest\` records objectives, progress, due dates and status directly.
+- Goal progress: \`update_goal\` records objectives, progress, due dates and status directly.
 
 ## 👋 Introduce yourself
 
@@ -196,7 +196,7 @@ introduce({ agent: "${id}", title: "${titleOf(id)}", lane: "what you handle, in 
 /** Handbook plus a personal briefing for one agent (the MCP \`onboard\` tool). */
 export function renderOnboarding(vault: Vault, agent: string): string {
   const toolsNote = `
-Use the MCP tools, and don't edit vault files yourself: \`remember\` files a memory, \`recall\` / \`get\` / \`ask_canon\` read memory, and \`update_quest\` records goal progress.
+Use the MCP tools, and don't edit vault files yourself: \`remember\` files a memory, \`recall\` / \`get\` / \`ask_canon\` read memory, and \`update_goal\` records goal progress.
 `;
   return `${whoAmI(vault, agent)}${toolsNote}\n---\n\n${renderHandbook(vault).replace(/^---[\s\S]*?---\n/, "")}`;
 }

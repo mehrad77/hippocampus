@@ -644,7 +644,7 @@ describe("review fixes: one episode never spoils the run, and private words stay
     expect(await store.list("goals")).toEqual(["goals/residence-permit.md", "goals/send-the-signed-lease.md"]);
     expect(await read(store, "goals/send-the-signed-lease.md")).toMatchObject({ owner: "[[player]]", counterparty: "[[landlord]]", due: "2026-10-05" });
     expect(await read(store, "goals/residence-permit.md")).toMatchObject({ owner: "[[residency-agent]]", due: "2026-11-30", status: "active" });
-    expect(report.consolidated[3]!.notes).toEqual(["residence-permit: status change not applied: campus-agent neither owns it nor has authority over it"]);
+    expect(report.consolidated[3]!.notes).toEqual(["residence-permit: status change not applied: campus-agent neither owns it nor has authority over it; set an owner on the goal or grant campus-agent authority"]);
   });
 
   it("a new note whose identity key belongs to an unrelated type is kept, with a merge proposal (finding 9)", async () => {

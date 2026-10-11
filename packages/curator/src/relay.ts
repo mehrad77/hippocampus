@@ -16,6 +16,7 @@ import {
 } from "@hippocampus/core";
 import { z } from "zod";
 import type { LLM } from "./llm.ts";
+import { nextSteps, type NextStep } from "./next-steps.ts";
 import {
   CURATOR_AUTHOR,
   beginRun,
@@ -46,6 +47,8 @@ How to answer:
 3. Repeat until the state is "done". Answers under \`rejected\` were not accepted: fix them and send them again. A question can come back when the vault changed meanwhile; answer it again.
 4. Use only what each question gives you. Never invent names, dates, numbers or facts, and never carry a value from one question into another.
 5. If an episode is unclear, or isn't yours to decide, call \`sleep_skip\` with a short reason (never a secret value). It stays in the inbox for the human.
+
+When the state is "done", tell the person what happened in plain words: how many memories were merged, failed or skipped, and how many are still queued. Then go through \`report.next\`: for each item say what it means and what they do about it (it names the dashboard page), and explain any term in it. Don't invent steps or quote memory content; if \`next\` is empty, say nothing is waiting on them.
 
 Questions can contain secret values (ID numbers, credentials) and confidential details (marked "Confidential: yes"). Use them only to answer that question, and never repeat them anywhere else.`;
 
@@ -106,6 +109,8 @@ export interface RelayReport extends SleepReport {
   skipped: { id: string; reason: string }[];
   /** Subjects of the commits this run made. */
   commits: string[];
+  /** What the person has to do about this run, in plain words. Relay it; don't improvise. */
+  next: NextStep[];
 }
 
 export type RelayStep =
@@ -430,6 +435,7 @@ export class SleepRelay {
         },
       });
       let outcome: EpisodeOutcome;
+      const warned = vault.warnings.length;
       try {
         outcome = await consolidate(vault, llm, ep, this.searcher, { houseRules });
       } catch (err) {
@@ -443,6 +449,8 @@ export class SleepRelay {
         subject: `chore(sleep): ${ep.id} (${ep.agent}) ${clip(describeEpisode(report), 100)}`,
         settle: (s) => {
           s.report.consolidated.push(report);
+          // What the episode warned about (a secret not stored, with the fix) must reach the report, not die with this vault.
+          for (const w of vault.warnings.slice(warned)) if (!s.report.warnings.includes(w)) s.report.warnings.push(w);
           if (evidence) for (const slug of report.touched) s.evidence[slug] = [...(s.evidence[slug] ?? []), evidence];
           s.marks.push(...marksOf(secrets, s.seed));
           this.advance(s);
@@ -573,7 +581,7 @@ export class SleepRelay {
       remaining: r.remaining,
       commits: state.commits.length,
     });
-    return { run: state.id, state: "done", report: { ...r, curator: state.curator, skipped: state.skipped, commits: state.commits } };
+    return { run: state.id, state: "done", report: { ...r, curator: state.curator, skipped: state.skipped, commits: state.commits, next: nextSteps(r) } };
   }
 
   private async statusAt(now: Date): Promise<RunStatus> {

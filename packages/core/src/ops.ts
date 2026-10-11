@@ -15,6 +15,9 @@ export interface Provenance {
   src: string[];
 }
 
+/** Why a secret wasn't stored: the vault has no `secrets.recipient`. The curator's next steps key off this text. */
+export const NO_RECIPIENT = "no secrets recipient configured";
+
 export interface FactResult {
   entity: string;
   /** The `facts:` key: the field, plus `@scope` when scoped. */
@@ -64,7 +67,7 @@ export async function applyFact(
     const recipient = vault.config.secrets.recipient;
     if (!recipient) {
       vault.warnings.push(`proposal for ${entity.slug}.${field} from ${prov.by} not stored: set secrets.recipient in _hippo/config.yaml (hippo secrets keygen)`);
-      return { entity: entity.slug, field, decision: "propose", reason: "only a human sets this field; no secrets recipient configured", secret };
+      return { entity: entity.slug, field, decision: "propose", reason: `only a human sets this field; ${NO_RECIPIENT}`, secret };
     }
     const suffix = slugify(prov.src[0] ?? `p-${hash(`${prov.by}|${prov.at}`)}`);
     const ref = secretRef(entity.slug, field);
@@ -87,7 +90,7 @@ export async function applyFact(
     const recipient = vault.config.secrets.recipient;
     if (!recipient) {
       vault.warnings.push(`secret ${entity.slug}.${field} not stored: set secrets.recipient in _hippo/config.yaml (hippo secrets keygen)`);
-      return { entity: entity.slug, field, decision: "keep", reason: "no secrets recipient configured", secret };
+      return { entity: entity.slug, field, decision: "keep", reason: NO_RECIPIENT, secret };
     }
     vault.writeFile(secretPath(vault.config.folders.secrets, ref), await encryptSecret(recipient, String(value)));
     entity.fm.facts[field] = {

@@ -114,6 +114,31 @@ describe("sleep relay", () => {
     expect(await relay.status()).toEqual({ history: [expect.objectContaining({ id: first.run, outcome: "done", consolidated: 3, commits: 4 })] });
   });
 
+  it("tells the person what to do next, and why the secret wasn't stored, when the vault has no secrets recipient", async () => {
+    const { store } = await setup();
+    const config = (await store.read("_hippo/config.yaml"))!;
+    await store.write("_hippo/config.yaml", config.replace(/secrets:\n {2}recipient: age1\S+\n$/, ""));
+    const { relay } = relayOver(store);
+    const first = asking(await relay.start({ curator: "archivist", model: "scripted" }));
+    const { report } = await runToEnd(relay, first, script());
+    expect(report.next).toContainEqual(expect.objectContaining({ code: "secrets-no-recipient", count: 1, fix: expect.stringContaining("Setup") }));
+    expect(report.consolidated.flatMap((c) => c.facts).find((f) => f.secret)?.reason).toBe("no secrets recipient configured");
+    // The core's hint (with the fix) reaches the report, though each episode ran on its own vault.
+    expect(report.warnings).toContainEqual(expect.stringContaining("set secrets.recipient"));
+    expect(JSON.stringify(report)).not.toContain("U12345678");
+    expect(await store.read("_hippo/review.md")).toContain("What to do next");
+  });
+
+  it("has nothing to tell the person when the night went through", async () => {
+    const { store } = await setup();
+    const { relay } = relayOver(store);
+    const first = asking(await relay.start({ curator: "archivist", model: "scripted" }));
+    const { report } = await runToEnd(relay, first, script());
+    expect(report.next.map((n) => n.code)).not.toContain("secrets-no-recipient");
+    // What is left is the curator wanting a domain the example vault lacks.
+    expect(report.next.map((n) => n.code)).toEqual(["suggested-domains"]);
+  });
+
   it("asks again only what the vault changed", async () => {
     const { store } = await setup();
     const { relay } = relayOver(store);
