@@ -1,4 +1,5 @@
 import { actorProps } from "./actor.ts";
+import { CONFIG_PATH, linkHuman, type HumanLogins } from "./config.ts";
 import { displayName, formatValue, getHumanGuidelines, getSummary, type Entity } from "./entity.ts";
 import { applyGoalUpdate, getObjectives, goalProps, goalStateOf, legacyClocks, nextDue, type Clock, type GoalState, type GoalUpdate, type Progress, type Repeat } from "./goal.ts";
 import { createEpisode, type NewEpisode } from "./episode.ts";
@@ -696,6 +697,24 @@ export class HippoService {
       vault.removeIntroductions(e.slug);
       vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
       return { message: signed(`party(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): add ${e.slug}`), result: { slug: e.slug, path: e.path } };
+    });
+  }
+
+  /**
+   * Link sign-in logins to one of the vault's humans (a teammate joining a shared vault on the hosted
+   * app), or unlink them with `null` (leaving). `create` adds the human when it isn't listed yet.
+   */
+  async linkHuman(id: string, logins: HumanLogins, opts: { via?: string; create?: { domains?: string[] } } = {}): Promise<{ changed: boolean }> {
+    return this.mutate<{ changed: boolean }>(async (vault) => {
+      const raw = await vault.store.read(CONFIG_PATH);
+      if (raw === undefined) throw new VaultError(`no ${CONFIG_PATH}; is this a vault?`);
+      const next = linkHuman(raw, id, logins, opts.create);
+      if (next === raw) return { message: "", result: { changed: false } };
+      vault.writeFile(CONFIG_PATH, next);
+      const what = Object.entries(logins)
+        .map(([host, login]) => (login ? `${host} @${login}` : `no ${host}`))
+        .join(", ");
+      return { message: signed(`config(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): ${id}: ${what}`), result: { changed: true } };
     });
   }
 

@@ -279,6 +279,10 @@ The tool refuses to write to a vault whose format version differs from its own. 
 - The nightly curator workflow is GitHub Actions only. On GitLab, run sleep with your own curator agent (§5).
 - Reconnecting: GitLab sends no webhooks, so the app checks every six hours. If you revoke the app on GitLab, delete the project or make it non-private, the vault disconnects within hours; fix it on GitLab and press **Connect GitLab** again if needed.
 
+**Sharing a vault.** The owner invites people under **Setup → People**, by GitHub username or with a one-time link (valid for 7 days). Each joins as a human of their own in the vault, as a **member** (adds memories, settles disputes and approves agents as themselves, makes keys for their own agents) or a **viewer** (reads only). Accepting an invite approves the account. Removing someone, or their leaving, revokes the keys they made and the apps they connected for that vault; their human stays in the config with everything they wrote. A vault can be shared with up to 19 people.
+
+**Inviting people to the app.** Anyone approved can invite someone to the hosted app itself (**Setup → Invite someone to Hippocampus**): it lets them in without the waitlist and shares nothing. Ten open invites at a time; admins have no cap, and can turn a person's invites off.
+
 **Keys.** The setup page mints keys for the vault it shows, shows each one once, and stores only its hash. Revoking one stops it at once. A key opens only its own vault: used at another vault's address, it's refused (`403 wrong_vault`), so a mixed-up config fails loudly instead of writing to the wrong vault.
 
 | Kind | Scopes | For |
@@ -362,7 +366,7 @@ pnpm deploy:worker
 
 Run it again to upgrade. To serve a custom domain, add it to `wrangler.jsonc` as `"routes": [{ "pattern": "<your-host>", "custom_domain": true }]` with `"workers_dev": false`. The Worker answers on one origin only, the one in `HIPPO_PUBLIC_URL`.
 
-Sign in at your Worker's address. Admins are approved on sign-in and find an Admin page in their account menu, where they approve or deny the waitlist and see which vaults exist (names and states, never content).
+Sign in at your Worker's address. Admins are approved on sign-in and find an Admin page in their account menu, where they approve or deny the waitlist, see which vaults exist (names and states, never content), and see who invited whom: a referral graph and table, where they can also stop someone's invites.
 
 **Semantic recall (optional).** Uncomment the `ai` binding in `wrangler.jsonc` and set `HIPPO_EMBED_PROVIDER` to `workers-ai` (it uses `@cf/baai/bge-m3`), or point the `HIPPO_EMBED_*` settings at any OpenAI-compatible embeddings API. `HIPPO_EMBED_DAILY_LIMIT` caps the texts embedded per vault per day (default 5000); past it, search falls back to keywords until the next day.
 

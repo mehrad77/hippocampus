@@ -1,4 +1,5 @@
-import { isMap, isScalar, parse as parseYaml, type Document } from "yaml";
+import { isMap, isScalar, parse as parseYaml, parseDocument, stringify as stringifyYaml, type Document } from "yaml";
+import { VaultError } from "./errors.ts";
 import { HippoConfig, type HumanDef } from "./schema.ts";
 
 export const CONFIG_PATH = "_hippo/config.yaml";
@@ -50,6 +51,49 @@ export function setHumans(doc: Document, humans: (Pick<HumanDef, "id" | "github"
     doc.set("humans", node);
     doc.delete("human");
   }
+}
+
+/** A human's sign-in logins: a value sets it, `null` removes it, absent leaves it. */
+export type HumanLogins = { [K in "github" | "gitlab"]?: string | null };
+
+/**
+ * The config (raw YAML) with one human's logins changed, as when a teammate joins or leaves a shared
+ * vault. `create` adds the human when it isn't listed. A login moves: another human holding it gives it up.
+ */
+export function linkHuman(raw: string, id: string, logins: HumanLogins, create?: { domains?: string[] }): string {
+  const humans: HumanDef[] = parseConfig(raw).humans.map((h) => ({ ...h }));
+  let human = humans.find((h) => h.id === id);
+  if (!human) {
+    if (!create) throw new VaultError(`"${id}" is not one of this vault's humans (${humans.map((h) => h.id).join(", ")})`);
+    human = { id, domains: create.domains ?? [] };
+    humans.push(human);
+  }
+  for (const host of ["github", "gitlab"] as const) {
+    const login = logins[host];
+    if (login === undefined) continue;
+    if (login === null) delete human[host];
+    else {
+      for (const other of humans) if (other !== human && other[host]?.toLowerCase() === login.toLowerCase()) delete other[host];
+      human[host] = login;
+    }
+  }
+  const doc = parseDocument(raw);
+  // Only the `humans:` block is rewritten, in the file's own style; the human edits the rest of this file too.
+  const pair = isMap(doc.contents) ? doc.contents.items.find((p) => isScalar(p.key) && (p.key.value === "humans" || p.key.value === "human")) : undefined;
+  const start = (pair?.key as { range?: number[] } | undefined)?.range?.[0];
+  const end = (pair?.value as { range?: number[] } | undefined)?.range?.[1];
+  if (start === undefined || end === undefined) {
+    setHumans(doc, humans);
+    return renderConfig(doc);
+  }
+  const old = raw.slice(start, end);
+  const pad = /\{ \S/.test(old) ? " " : "";
+  const scalar = (v: string) => stringifyYaml(v).trimEnd();
+  const lines = humans.map((h) => {
+    const parts = [`id: ${scalar(h.id)}`, ...(h.domains.length ? [`domains: [${h.domains.map(scalar).join(", ")}]`] : []), ...(h.github ? [`github: ${scalar(h.github)}`] : []), ...(h.gitlab ? [`gitlab: ${scalar(h.gitlab)}`] : [])];
+    return `  - {${pad}${parts.join(", ")}${pad}}`;
+  });
+  return `${raw.slice(0, start)}humans:\n${lines.join("\n")}${old.endsWith("\n") ? "\n" : ""}${raw.slice(end)}`;
 }
 
 /** No line folding, so the template's one-line flow maps and lists stay on one line. */

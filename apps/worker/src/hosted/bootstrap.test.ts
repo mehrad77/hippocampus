@@ -49,7 +49,7 @@ describe("bootstrapVault", () => {
     const result = await run({ id: 9001, fullName: "player/vault" });
     expect(result.mode).toBe("initialized");
     expect(result.vault).toMatchObject({ status: "ready", fullName: "player/vault", repoId: 9001, branch: "main", accountId: 4242 });
-    expect((await registry.vaultsOf((await registry.account(4242))!))[0]).toEqual(result.vault);
+    expect((await registry.vaultsOf((await registry.account(4242))!))[0]).toEqual({ ...result.vault, role: "owner" });
 
     const repo = gh.at("player/vault");
     const log = repo.log();

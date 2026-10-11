@@ -33,6 +33,10 @@ The operator never sees: the age identity, any key or session in plain form (onl
 
 If you can't accept this, run the CLI locally, or [run your own instance](docs/USAGE.md#running-your-own-instance).
 
+## Sharing
+
+A vault's owner can share it with people, each as one of its humans. The registry keeps who is in which vault, their role and the human they are, and every invite: who made it, for which login, and who accepted it when (the referral graph admins can see). Invite links carry a one-time token; only its SHA-256 is stored, and the link's token sits after `#`, so it never reaches a server log. A member acts only as their own human, never the primary one; a viewer's writes are refused before they reach the vault. Removing someone revokes the keys they made and the apps they connected for that vault at once.
+
 ## Keys and what each can do
 
 Keys are shown once when minted. Only their SHA-256 hash is stored, and revoking one stops it at once. Each kind's scopes are fixed by the server, whatever the key row says. A key opens exactly one vault: at another vault's address (`/mcp/<vault id>`) it's refused, naming only its own vault.

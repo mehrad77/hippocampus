@@ -420,6 +420,30 @@ describe("VaultRuntime: dashboard humans", () => {
     expect((await as(runtime, "player")).actor).toEqual({ kind: "human", id: "player" });
     expect((await as(runtime, "someone-else")).actor).toEqual({ kind: "human", id: "player" });
   });
+
+  it("acts as a shared vault's member by their seat, never the primary human, and keeps viewers to reading", async () => {
+    const { runtime, repo } = await setup({ edit: twoHumans });
+    const user = (role: "member" | "viewer", human?: string): DashboardUser => ({ login: "someone-else", account: { status: "approved", admin: false }, role, ...(human ? { human } : {}) });
+    const session = async (u: DashboardUser) => {
+      const res = await runtime.dashboard(new Request(`${ORIGIN}/dashboard/api/session`), u);
+      return { status: res.status, body: (await res.json()) as { actor?: { id: string }; capabilities?: Record<string, unknown>; code?: string } };
+    };
+    const member = await session(user("member", "flatmate"));
+    expect(member.body.actor).toEqual({ kind: "human", id: "flatmate" });
+    expect(member.body.capabilities).toMatchObject({ remember: true, upgrade: false, curator: false });
+    // Their human was taken out of the config: no seat, no fallback to the primary human.
+    expect(await session(user("member", "nobody"))).toMatchObject({ status: 403, body: { code: "NO_HUMAN" } });
+    expect(await session(user("member"))).toMatchObject({ status: 403 });
+
+    const viewer = await session(user("viewer", "flatmate"));
+    expect(viewer.body.capabilities).toMatchObject({ remember: false, rule: false, goal: false, party: false });
+    const write = await runtime.dashboard(new Request(`${ORIGIN}/dashboard/api/actions/remember`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "x" }) }), user("viewer", "flatmate"));
+    expect(write.status).toBe(501);
+    const before = repo.log().length;
+    expect(await runtime.linkHuman("flatmate", { github: "someone-else" }, "@player")).toEqual({ changed: true });
+    expect(repo.log()).toHaveLength(before + 1);
+    expect(repo.files()["_hippo/config.yaml"]).toContain("github: someone-else");
+  });
 });
 
 describe("VaultRuntime: an older vault waits for its owner's Upgrade", () => {

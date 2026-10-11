@@ -9,7 +9,7 @@ import type { HostedStatus } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Panel } from "../../ui/Parts.tsx";
 import { ConfirmDialog, ErrorCallout, Field, ToneTag, useAction } from "./common.tsx";
-import { canAddVault, VAULT_TONE } from "./hosted.ts";
+import { canAddVault, ROLE_WORDS, VAULT_TONE } from "./hosted.ts";
 
 type Vault = NonNullable<HostedStatus["vaults"]>[number];
 
@@ -57,7 +57,10 @@ export function HostedVaultsPanel({ status }: { status: HostedStatus }) {
                 <Icon name={vault.provider === "gitlab" ? "cloud" : "github"} size={18} />
                 <span className="hz-vault__name">
                   <span className="mono sz-break">{vault.fullName}</span>
-                  <span className="small muted">{vault.provider === "gitlab" ? "GitLab" : "GitHub"}</span>
+                  <span className="small muted">
+                    {vault.provider === "gitlab" ? "GitLab" : "GitHub"}
+                    {vault.role && vault.role !== "owner" ? ` · shared with you, ${v(...ROLE_WORDS[vault.role].word).toLowerCase()}` : ""}
+                  </span>
                 </span>
                 <ToneTag tone={tone.tone} word={tone.word} compact />
                 <span className="hz-vault__act row">
@@ -70,9 +73,15 @@ export function HostedVaultsPanel({ status }: { status: HostedStatus }) {
                       Open
                     </button>
                   )}
-                  <button type="button" className="btn btn--sm btn--ghost" onClick={() => setRemoving(vault)} aria-label={`Remove ${vault.fullName} from Hippocampus`}>
-                    Remove…
-                  </button>
+                  {(vault.role ?? "owner") === "owner" ? (
+                    <button type="button" className="btn btn--sm btn--ghost" onClick={() => setRemoving(vault)} aria-label={`Remove ${vault.fullName} from Hippocampus`}>
+                      Remove…
+                    </button>
+                  ) : here ? (
+                    <a className="btn btn--sm btn--ghost" href="#people">
+                      Leave…
+                    </a>
+                  ) : null}
                 </span>
               </li>
             );
