@@ -1,7 +1,7 @@
 import { isConnectApp, keySnippets } from "./connect.ts";
 import { demoPresets } from "./demo-setup.ts";
 import { HttpError, errorResponse, json, readJson, securityHeaders } from "./http.ts";
-import { VAULT_HEADER, type AdminReferrals, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem } from "./setup.ts";
+import { VAULT_HEADER, type AdminReferrals, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedAgentClaim, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem } from "./setup.ts";
 import { capabilities, readOnlySource, type CuratorStatus, type DashboardSource, type SessionInfo } from "./source.ts";
 
 // The hosted app for `astro dev` (HIPPO_DEMO_HOSTED=1): an in-memory stand-in for the Worker's
@@ -87,6 +87,8 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     /** The vault used last, opened when a request doesn't name one. */
     last: undefined as string | undefined,
     keys: {} as Record<string, HostedKeyInfo[]>,
+    /** Which agent names each key's connection has spoken as, once it has called in. */
+    claims: {} as Record<string, HostedAgentClaim[]>,
     curatorActions: {} as Record<string, boolean>,
     made: 0,
     /** Who each vault is shared with (the owner included). */
@@ -269,11 +271,14 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       scopes = scopes.filter((s) => asked.includes(s));
     }
     const token = `hippo_demo_${hex(16)}`;
-    const key: HostedKeyInfo = { id: hex(32), kind, ...(agent ? { agent } : {}), scopes, label: label || (kind === "curator" ? "Curator" : kind === "bound" ? agent! : "Any agent"), created: now().toISOString() };
-    (state.keys[vault.id] ??= []).push(key);
-    // The app calls in a few seconds later, so "Waiting for its first call" turns into "Connected".
-    setTimeout(() => (key.lastUsed = now().toISOString()), opts.firstCallAfter ?? 6000);
     const app = (body as { app?: unknown } | undefined)?.app;
+    const key: HostedKeyInfo = { id: hex(32), kind, ...(agent ? { agent } : {}), scopes, label: label || (kind === "curator" ? "Curator" : kind === "bound" ? agent! : "Any agent"), ...(isConnectApp(app) ? { app } : {}), created: now().toISOString() };
+    (state.keys[vault.id] ??= []).push(key);
+    // The app calls in a few seconds later, so "Waiting for its first call" turns into "Connected"; a shared key's agents name themselves.
+    setTimeout(() => {
+      key.lastUsed = now().toISOString();
+      if (kind === "agent" && isConnectApp(app)) (state.claims[vault.id] ??= []).push({ agent: `${app}-home-finder`, credential: `key:${key.id}`, since: key.lastUsed });
+    }, opts.firstCallAfter ?? 6000);
     return { ...key, token, snippets: keySnippets({ publicUrl: origin(request), token, kind, vault, ...(isConnectApp(app) ? { app } : {}) }) };
   }
 
@@ -342,12 +347,13 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       if (typeof b.confirm !== "string" || b.confirm.trim().toLowerCase() !== vault.fullName.toLowerCase()) throw new HttpError(400, `confirm: type ${vault.fullName} to remove it`, "CONFIRM");
       state.vaults = state.vaults.filter((v) => v !== vault);
       delete state.keys[vault.id];
+      delete state.claims[vault.id];
       state.apps = state.apps.filter((a) => a.vault !== vault.id);
       if (state.last === vault.id) state.last = undefined;
       return { ok: true };
     }
     const vault = pick(request);
-    if (sub === "keys" && method === "GET") return { keys: vault ? (state.keys[vault.id] ?? []) : [] };
+    if (sub === "keys" && method === "GET") return { keys: vault ? (state.keys[vault.id] ?? []) : [], ...(vault && state.claims[vault.id] ? { agents: state.claims[vault.id] } : {}) };
     if (sub === "keys" && method === "POST") return mint(request, body);
     if (sub === "keys/revoke" && method === "POST") {
       const id = (body as { id?: unknown } | undefined)?.id;

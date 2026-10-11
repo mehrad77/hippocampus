@@ -5,30 +5,24 @@ import type { Snippet } from "./setup.ts";
 // a new key, the demo fakes them, and the dashboard (`@hippocampus/dashboard/connect`) shows them.
 
 /**
- * Apps that connect with a key. Sign-in apps (Claude.ai, ChatGPT) use the vault's address alone. `multi`:
- * the app speaks as several agents (a bot with personalities), so a shared key is its default.
+ * Apps that connect with a key: one key each, whatever agents run in them (they name themselves).
+ * Sign-in apps (Claude.ai, ChatGPT) use the sign-in address alone.
  */
-export const CONNECT_APPS: readonly { id: string; name: string; where: string; agent: string; multi?: boolean }[] = [
-  { id: "claude-code", name: "Claude Code", where: "In a terminal", agent: "claude-code" },
-  { id: "claude-desktop", name: "Claude Desktop", where: "claude_desktop_config.json", agent: "claude-desktop" },
-  { id: "cursor", name: "Cursor", where: "~/.cursor/mcp.json", agent: "cursor" },
-  { id: "vscode", name: "VS Code", where: ".vscode/mcp.json", agent: "vscode" },
-  { id: "windsurf", name: "Windsurf", where: "~/.codeium/windsurf/mcp_config.json", agent: "windsurf" },
-  { id: "grok", name: "Grok (CLI)", where: "grok mcp add", agent: "grok" },
-  { id: "xai-api", name: "A Grok bot (xAI API)", where: "The bot's tools list", agent: "grok-bot", multi: true },
-  { id: "other", name: "Another MCP app", where: "Its MCP settings (HTTP)", agent: "my-agent" },
-  { id: "script", name: "A script or automation", where: "Environment variables", agent: "my-script" },
+export const CONNECT_APPS: readonly { id: string; name: string; where: string }[] = [
+  { id: "claude-code", name: "Claude Code", where: "In a terminal" },
+  { id: "claude-desktop", name: "Claude Desktop", where: "claude_desktop_config.json" },
+  { id: "cursor", name: "Cursor", where: "~/.cursor/mcp.json" },
+  { id: "vscode", name: "VS Code", where: ".vscode/mcp.json" },
+  { id: "windsurf", name: "Windsurf", where: "~/.codeium/windsurf/mcp_config.json" },
+  { id: "grok", name: "Grok (CLI)", where: "grok mcp add" },
+  { id: "xai-api", name: "A Grok bot (xAI API)", where: "The bot's tools list" },
+  { id: "other", name: "Another MCP app", where: "Its MCP settings (HTTP)" },
+  { id: "script", name: "A script or automation", where: "Environment variables" },
 ];
 
 export type ConnectAppId = "claude-code" | "claude-desktop" | "cursor" | "vscode" | "windsurf" | "grok" | "xai-api" | "other" | "script";
 
-/** Whether an app speaks as several agents, so it gets one shared key where each names itself. */
-export const speaksAsMany = (app: ConnectAppId) => CONNECT_APPS.some((a) => a.id === app && a.multi);
-
-/**
- * What a connection may do, in plain words, with the exact scopes behind each. `shared` is the
- * advanced "any agent" key, where each agent names itself.
- */
+/** What a connection may do, in plain words, with the exact scopes behind each. */
 export const ACCESS = {
   remember: { title: "Remember and recall", help: "Reads the memory, adds what it learns, and updates goals. Most apps want this.", scopes: ["read", "remember", "goal"] },
   read: { title: "Only look things up", help: "Reads and searches the memory; can't add to it.", scopes: ["read"] },
@@ -48,16 +42,6 @@ export function accessOf(scopes: readonly string[]): { title: string; exact: boo
   if (has("curate")) return { title: ACCESS.curate.title, exact: false };
   if (has("remember")) return { title: has("goal") ? ACCESS.remember.title : "Remember and recall (no goals)", exact: false };
   return { title: has("goal") ? "Look things up and update goals" : ACCESS.read.title, exact: false };
-}
-
-/** An agent id for an app, with an optional device or place (`claude-code-laptop`). */
-export function suggestAgentId(app: ConnectAppId, device = ""): string {
-  const base = CONNECT_APPS.find((a) => a.id === app)?.agent ?? "my-agent";
-  const tail = device
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return `${base}${tail ? `-${tail}` : ""}`.slice(0, 63).replace(/-+$/, "");
 }
 
 /** The MCP server's name in an app's config: the vault's repo name, so each vault gets its own (`hippo-lisbon-vault`). */
@@ -188,7 +172,7 @@ export function keySnippets(o: { publicUrl: string; token: string; kind: "agent"
   if (curator) return curatorSnippets({ ...t, ...((o.vault.provider ?? "github") === "github" ? { repo: o.vault.fullName } : {}) });
   return [
     ...connectSnippets(t, o.app),
-    { label: "Claude.ai or ChatGPT (sign-in, beta)", lang: "text", code: url, note: "These apps sign in with your account instead of a key: add a custom connector with this address. Still in beta: if signing in fails, use a key with another app." },
+    { label: "Claude.ai or ChatGPT (sign-in, beta)", lang: "text", code: `${o.publicUrl}/mcp`, note: "These apps sign in with your account instead of a key: add a custom connector with this address, and pick this vault when asked. Still in beta: if signing in fails, use a key with another app." },
   ];
 }
 

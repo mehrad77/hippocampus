@@ -1,7 +1,7 @@
 import { actorProps } from "./actor.ts";
 import { displayName, type Entity } from "./entity.ts";
 import { getObjectives, goalProps, goalStateOf, nextDue } from "./goal.ts";
-import { assertAgentId } from "./ops.ts";
+import { AGENT_NAMING, assertAgentId } from "./ops.ts";
 import { schemaFolder } from "./schema-registry.ts";
 import type { Vault } from "./vault.ts";
 import { link, unwrapLink } from "./wikilink.ts";
@@ -80,7 +80,7 @@ Call **\`remember\`** once per memory:
 - \`about\`: optional hints, as links or names, e.g. \`["[[residence-permit]]", "Agência de Migração"]\`
 - \`secret: true\` if it contains IDs, account numbers or credentials. They get encrypted.
 - \`confidence\` (0–1) and \`at\` (ISO 8601, when it happened; defaults to now).
-- \`agent\`: your agent id (see Agents below), unless your connection is already bound to one.
+- \`agent\`: your agent id, unless your connection is already bound to one. ${AGENT_NAMING}
 
 Writing tips, so the curator gets it right:
 - One memory per call. Short, concrete, self-contained. Name people, places, and orgs explicitly.
@@ -91,7 +91,7 @@ Writing tips, so the curator gets it right:
 
 ## 👋 Introduce yourself
 
-If \`onboard\` says you aren't one of this vault's agents yet, call **\`introduce\`** once: your agent id, a display \`title\`, your \`lane\` (what you handle, in a sentence), and optionally \`host\`, \`model\` and \`about\`. ${link(config.human)} approves you and decides your authority. Until then your memories are accepted, but they count as rumors. Introducing yourself again replaces your earlier introduction.
+If \`onboard\` says you aren't one of this vault's agents yet, call **\`introduce\`** once: your agent id, a display \`title\`, your \`lane\` (what you handle, in a sentence), your \`host\` (the app you run in), and optionally \`model\` and \`about\`. You join the agents at once, with no authority: your memories count as rumors until ${link(config.human)} makes you responsible for a domain. Introducing yourself again only fills in what's blank on your card.
 
 ### Inbox file format (for local tools that write files)
 
@@ -161,7 +161,7 @@ function whoAmI(vault: Vault, agent: string): string {
   } catch (err) {
     return `# \`${agent}\` can't be your agent id
 
-${(err as Error).message}. Pick your own id (lowercase letters, digits and dashes, e.g. \`residency-agent\`) and pass it as \`agent\`.
+${(err as Error).message}. ${AGENT_NAMING} Pass it as \`agent\`.
 `;
   }
   const me = vault.actorMember(id);
@@ -180,15 +180,15 @@ ${mine.map((q) => questLine(vault, q)).join("\n") || "- (none)"}
   if (intro) {
     return `# Introduced as ${intro.title} (\`${id}\`)
 
-Your introduction is waiting for ${human}'s approval (filed ${intro.at.slice(0, 10)}). Until then your memories are accepted, but they count as rumors. Calling \`introduce\` again replaces it.
+You introduced yourself on ${intro.at.slice(0, 10)}, before agents could join by themselves. Call \`introduce\` again to join now; until ${human} gives you authority, your memories count as rumors.
 `;
   }
   return `# Unknown agent \`${id}\`
 
-You are not one of this vault's agents yet. Your memories are accepted, but they count as rumors until ${human} approves you. Introduce yourself once:
+You are not one of this vault's agents yet. Introduce yourself once, and you join at once, with no authority: your memories count as rumors until ${human} makes you responsible for a domain.
 
 \`\`\`
-introduce({ agent: "${id}", title: "${titleOf(id)}", lane: "what you handle, in one sentence", host: "where you run, e.g. Claude Desktop", model: "your model", about: "what you do, in a few lines" })
+introduce({ agent: "${id}", title: "${titleOf(id)}", lane: "what you handle, in one sentence", host: "the app you run in, e.g. Claude Code", model: "your model", about: "what you do, in a few lines" })
 \`\`\`
 `;
 }

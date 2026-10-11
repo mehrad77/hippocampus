@@ -115,6 +115,12 @@ export interface DashboardSource {
   addParty?(input: NewPartyMember, via?: string): Promise<{ slug: string; path: string }>;
   /** Add domains to the vault's config: the ones that were new. */
   addDomains?(ids: string[], via?: string): Promise<{ added: string[] }>;
+  /** Set what an agent is responsible for (its authority domains). */
+  setAuthority?(agent: string, domains: string[], via?: string): Promise<{ agent: string; authority: string[] }>;
+  /** Hosted: where each agent's name stands (agent-claims.ts): held by a connection, free, or released when its app was disconnected. */
+  nameHolders?(): Promise<{ agent: string; state: "held" | "free" | "released" }[]>;
+  /** Hosted: let the next connection that writes as `agent` take the name. */
+  handOver?(agent: string, via?: string): Promise<{ agent: string }>;
   introduction?(input: IntroductionDecision, via?: string): Promise<IntroductionResult>;
   /** The agent-run sleep (hosted): its open run and history, and aborting a stuck run. */
   curator?: { status(): Promise<CuratorStatus>; abort(run: string, via?: string): Promise<CuratorStatus> };
@@ -162,6 +168,11 @@ export interface Capabilities {
   party: boolean;
   /** Add domains to the vault (`POST actions/domain`). */
   domains: boolean;
+  /** Set what an agent is responsible for (`POST actions/authority`). */
+  authority: boolean;
+  /** Which names connections hold (`GET names`), and handing one over (`POST actions/hand-over`): hosted only. */
+  names: boolean;
+  handOver: boolean;
   /** Approve or dismiss agents' introductions. */
   introductions: boolean;
   /** Which Session Zero backend answers `/setup/*`. */
@@ -186,7 +197,7 @@ export interface SessionInfo extends Partial<Omit<SourceInfo, "mode">> {
 
 /** A source with every write taken out: what a viewer of a shared vault gets. */
 export function readOnlySource(source: DashboardSource): DashboardSource {
-  const { rule: _r, goal: _g, quest: _q, proposal: _p, retract: _x, remember: _m, rememberFields: _f, addParty: _a, addDomains: _d, introduction: _i, curator: _c, upgradeVault: _u, ...reads } = source;
+  const { rule: _r, goal: _g, quest: _q, proposal: _p, retract: _x, remember: _m, rememberFields: _f, addParty: _a, addDomains: _d, setAuthority: _s, handOver: _h, introduction: _i, curator: _c, upgradeVault: _u, ...reads } = source;
   return reads;
 }
 
@@ -202,6 +213,9 @@ export function capabilities(source: DashboardSource | undefined, setup: SetupKi
     data: !!source?.remember && source.rememberFields?.data !== false,
     party: !!source?.addParty,
     domains: !!source?.addDomains,
+    authority: !!source?.setAuthority,
+    names: !!source?.nameHolders,
+    handOver: !!source?.handOver,
     introductions: !!source?.introduction,
     curator: !!source?.curator,
     upgrade: !!source?.upgradeVault,

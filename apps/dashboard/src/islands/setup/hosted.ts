@@ -1,7 +1,7 @@
 // Session Zero on the hosted app, its pure parts: the onboarding steps and when each unlocks, the
 // repo picker's verdicts, the campaign draft, and the curator recipes. No DOM here, so it is
 // unit-tested in hosted.test.ts.
-import type { HostedConnectedApp, HostedInitRequest, HostedKeyInfo, Snippet } from "@hippocampus/dashboard";
+import type { HostedAgentClaim, HostedConnectedApp, HostedInitRequest, HostedKeyInfo, Snippet } from "@hippocampus/dashboard";
 import { accessOf } from "@hippocampus/dashboard/connect";
 import type { IconName } from "../../lib/icons.ts";
 import type { HostedRepoView, HostedStatus } from "../../lib/types.ts";
@@ -431,6 +431,8 @@ export interface ConnectionRow {
   name: string;
   /** Who it writes as: one agent, any agent that names itself, or the curator. */
   actsAs: { agent: string } | { shared: true } | { curator: true };
+  /** For a shared connection: the agents that have spoken through it, from the vault's name claims. */
+  agents: { agent: string; since: string }[];
   /** What it may do, in words. */
   can: string;
   created: string;
@@ -441,10 +443,12 @@ export interface ConnectionRow {
 }
 
 /** The vault's keys and the sign-in apps connected to it (apps for other vaults are left out), newest first. */
-export function connectionRows(keys: readonly HostedKeyInfo[], apps: readonly HostedConnectedApp[], vaultId: string | undefined): ConnectionRow[] {
+export function connectionRows(keys: readonly HostedKeyInfo[], apps: readonly HostedConnectedApp[], vaultId: string | undefined, claims: readonly HostedAgentClaim[] = []): ConnectionRow[] {
+  const spoken = (credential: string) => claims.filter((c) => c.credential === credential).map(({ agent, since }) => ({ agent, since }));
   const fromKeys = keys.map((k): ConnectionRow => ({
     id: k.id,
     source: "key",
+    agents: spoken(`key:${k.id}`),
     name: k.label,
     actsAs: k.kind === "curator" ? { curator: true } : k.kind === "agent" || !k.agent ? { shared: true } : { agent: k.agent },
     can: accessOf(k.scopes).title,
@@ -458,6 +462,7 @@ export function connectionRows(keys: readonly HostedKeyInfo[], apps: readonly Ho
     .map((a): ConnectionRow => ({
       id: a.id,
       source: "app",
+      agents: spoken(`oauth:${a.id}`),
       name: a.client,
       actsAs: a.scopes.includes("curate") && !a.agent ? { curator: true } : a.agent ? { agent: a.agent } : { shared: true },
       can: accessOf(a.scopes).title,

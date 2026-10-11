@@ -9,12 +9,12 @@ Hippocampus is shared memory for one person's agents. You add memories to an inb
 
 ## 1. Start with `onboard`
 
-Call `onboard` first. Most connections are made for one agent (the person named it when connecting this app): then your id is fixed and the `agent` argument is ignored. Otherwise, pass your agent id: lowercase letters, digits and dashes, describing your job (for example `home-finder` or `job-scout`). Use the same id every time. Never use the person's own name or `human`, and don't take an id another app uses: the vault refuses it.
+Call `onboard` first, with your agent id. A connection is usually made for an app, not for one agent, so you name yourself: pass the same `agent` id on every call. Make it `<platform>-<role>`, lowercase letters, digits and dashes, like `claude-code-home-finder` or `grok-bot-trip-planner`. Use the same id every session. Never use the person's own name, `human`, `curator`, `unknown` or `hippocampus`, and don't take an id another app uses: the vault refuses it. (If the connection is bound to one agent, the server says so and ignores the argument.)
 
 Each connection serves **one vault**, named in the server's instructions. If the person has several, each has its own server; remember into the one the task belongs to.
 
 - If you're a known party member, it tells you your lane (what you're responsible for) and the goals you own. It also lists this vault's kinds of memory: the person may have added some (with presets) beyond the usual ones.
-- If you're unknown, call `introduce` with a `title`, your `lane` (one sentence), the `host` you run in, your `model` and a short `about`. Then carry on: until the person approves you on the dashboard, your memories count as rumors.
+- If you're unknown, call `introduce` with a `title`, your `lane` (one sentence), the `host` (the app you run in), your `model` and a short `about`. You join the person's agents at once, with no authority: your memories count as rumors until they make you responsible for a domain. Then carry on.
 
 ## 2. Read before you act
 

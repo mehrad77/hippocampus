@@ -8,9 +8,9 @@ import { createHippoServer, normalizeScopes, type Scope } from "./server.ts";
 // A residency contact with a confidential phone: residency-agent has authority there, campus-agent doesn't.
 const OFFICER = `---\ntype: character\ntitle: Case Officer\ntags: [residency]\nfacts:\n  phone: { value: "+351 900 000 000", confidential: true }\n  office: Alfama\n---\n`;
 
-async function connect(agent?: string, scopes?: Scope[]) {
+async function connect(agent?: string, scopes?: Scope[], holds?: (agent: string) => boolean) {
   const store = fixtureStore({ "characters/case-officer.md": OFFICER });
-  const server = createHippoServer({ service: new HippoService(store), agent, scopes });
+  const server = createHippoServer({ service: new HippoService(store), agent, scopes, ...(holds ? { holds } : {}) });
   const client = new Client({ name: "test", version: "0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -62,19 +62,20 @@ describe("MCP server", () => {
     expect(await bound.store.list("inbox")).toEqual([]);
   });
 
-  it("introduces an outsider, once, and tells a member it's already in", async () => {
+  it("seats an outsider that introduces itself, with no authority, and tells a member it's in", async () => {
     const { call, store } = await connect("job-scout");
     expect((await call("onboard")).text).toContain('introduce({ agent: "job-scout"');
     const r = await call("introduce", { title: "Job Scout", lane: "Part-time work in Lisbon", about: "I watch job boards." });
-    expect(r).toEqual({ text: "Introduced as job-scout: waiting for player's approval. Until then your memories count as rumors." });
-    await call("introduce", { title: "Job Scout", lane: "Part-time work" });
-    expect(await store.list("inbox/job-scout")).toEqual([expect.stringMatching(/^inbox\/job-scout\/_introduction-\w+\.md$/)]);
-    expect((await call("onboard")).text).toContain("waiting for player's approval");
+    expect(r).toEqual({ text: "Introduced as job-scout: you're on player's Agents page now, with no authority: what you remember counts as a rumor until player makes you responsible for a domain." });
+    expect((await call("introduce", { title: "Job Scout", lane: "Part-time work" })).text).toBe("You're in the party as Job Scout (party/job-scout.md).");
+    expect(await store.list("inbox/job-scout")).toEqual([]);
+    expect(await store.read("party/job-scout.md")).toContain("lane: Part-time work in Lisbon");
+    expect((await call("onboard")).text).toContain("# You are Job Scout (`job-scout`)");
 
     const unbound = await connect();
     expect((await unbound.call("introduce", { title: "Me" })).isError).toBe(true);
     expect((await unbound.call("introduce", { title: "Me", agent: "player" })).text).toContain('"player" is the human');
-    expect((await unbound.call("introduce", { title: "Residency", agent: "residency-agent" })).text).toBe("You're already in the party as Residency Agent (party/residency-agent.md). Nothing to do.");
+    expect((await unbound.call("introduce", { title: "Residency", agent: "residency-agent" })).text).toBe("You're in the party as Residency Agent (party/residency-agent.md).");
     expect(await unbound.store.list("inbox")).toEqual([]);
   });
 
@@ -156,6 +157,22 @@ describe("MCP server", () => {
     expect(got.text).toContain("confidential: true");
     expect((await lane.call("recall", { query: "case officer" })).text).toContain("+351 900 000 000");
     expect((await lane.call("briefing", { about: "Case Officer" })).text).toContain("+351 900 000 000");
+  });
+
+  it("shows a shared connection's agent confidential values only for a name it holds, with authority", async () => {
+    const masked = "◐ confidential";
+    // This connection holds residency-agent's name (it has written as it), not campus-agent's.
+    const shared = await connect(undefined, undefined, (agent) => agent === "residency-agent" || agent === "campus-agent");
+    const notMine = await connect(undefined, undefined, (agent) => agent === "campus-agent");
+    expect((await shared.call("get", { entity: "case-officer", agent: "Residency-Agent" })).text).toContain("+351 900 000 000");
+    expect((await shared.call("recall", { query: "case officer", agent: "residency-agent" })).text).toContain("+351 900 000 000");
+    expect((await shared.call("briefing", { about: "Case Officer", agent: "residency-agent" })).text).toContain("+351 900 000 000");
+    // Held, but no authority there; not held; no name: all masked.
+    expect((await shared.call("get", { entity: "case-officer", agent: "campus-agent" })).text).toContain(masked);
+    expect((await notMine.call("get", { entity: "case-officer", agent: "residency-agent" })).text).toContain(masked);
+    expect((await shared.call("get", { entity: "case-officer" })).text).toContain(masked);
+    // A bound connection's agent can't be swapped by the argument.
+    expect((await (await connect("campus-agent", undefined, () => true)).call("get", { entity: "case-officer", agent: "residency-agent" })).text).toContain(masked);
   });
 
   it("checks remember against the vault's kinds", async () => {

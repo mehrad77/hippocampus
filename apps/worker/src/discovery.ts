@@ -66,24 +66,25 @@ This is a hosted Hippocampus at ${publicUrl}. A person signs in with GitHub and 
 Rules for agents:
 
 - Never ask the person to paste a key into a chat. Keys go into an app's settings, or come to you through device sign-in (below), which the person approves.
-- One agent id per agent: lowercase letters, digits and dashes (\`home-finder\`). An id another connection holds is refused.
+- One key per app, shared by the agents in it. Each agent names itself on every call with the \`agent\` argument: \`<platform>-<role>\`, lowercase letters, digits and dashes (\`claude-code-home-finder\`), the same every session. An id another connection holds is refused.
+- An unknown agent calls \`introduce\` once and joins at once, with no authority: its memories count as rumors until the person makes it responsible for a domain.
 - The curator (the \`curate\` scope) sees every new memory in full, secrets included. Suggest a separate bot that only curates.
 
 ## Connect yourself (device sign-in)
 
 The person approves on the dashboard; you never see their password. The shapes are those of the OAuth device grant (RFC 8628), and what you get is a key for one vault.
 
-1. \`POST ${publicUrl}${DEVICE_PATH}\` with \`client_name\` (your app's name), and optionally \`agent\` (the id you'd like) and \`access\` (\`remember\`, \`read\` or \`curate\`). JSON or a form. You get \`device_code\`, \`user_code\`, \`verification_uri_complete\`, \`interval\` and \`expires_in\` (10 minutes).
-2. Show the person \`user_code\` and \`verification_uri_complete\` (${publicUrl}${DEVICE_VERIFY_PAGE}?code=…). They sign in, pick the vault, the agent's name and what it may do, and approve.
-3. \`POST ${publicUrl}${DEVICE_TOKEN_PATH}\` with \`grant_type=${DEVICE_GRANT}\` and \`device_code\`, every \`interval\` seconds. You get \`authorization_pending\`, \`slow_down\`, \`access_denied\` or \`expired_token\`, then once: \`access_token\` (the key), \`mcp_url\`, \`server_name\`, \`vault\`, \`agent\`, and \`claude_code\` (a ready \`claude mcp add\` line).
-4. Configure your MCP client with \`mcp_url\` and the header \`Authorization: Bearer <access_token>\`, then call \`onboard\`.
+1. \`POST ${publicUrl}${DEVICE_PATH}\` with \`client_name\` (your app's name), and optionally \`access\` (\`remember\`, the default; \`read\`, which also takes an \`agent\` id, since a read-only key is for one agent; or \`curate\`). JSON or a form. You get \`device_code\`, \`user_code\`, \`verification_uri_complete\`, \`interval\` and \`expires_in\` (10 minutes).
+2. Show the person \`user_code\` and \`verification_uri_complete\` (${publicUrl}${DEVICE_VERIFY_PAGE}?code=…). They sign in, pick the vault, and approve.
+3. \`POST ${publicUrl}${DEVICE_TOKEN_PATH}\` with \`grant_type=${DEVICE_GRANT}\` and \`device_code\`, every \`interval\` seconds. You get \`authorization_pending\`, \`slow_down\`, \`access_denied\` or \`expired_token\`, then once: \`access_token\` (the key), \`mcp_url\`, \`server_name\`, \`vault\`, \`agent\` (for a read-only key), and \`claude_code\` (a ready \`claude mcp add\` line).
+4. Configure your MCP client with \`mcp_url\` and the header \`Authorization: Bearer <access_token>\`, then call \`onboard\` with your agent id.
 
 ## Guide a person to connect an app
 
 1. They open ${publicUrl}/dashboard/setup/ and sign in with GitHub (new accounts may wait for an admin, unless someone invited them).
-2. In **Connected apps**, **Connect an app**: pick the app (Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Grok, another MCP app, a script), what it may do, and its name.
+2. In **Connected apps**, **Connect an app**: pick the app (Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Grok, a Grok bot, another MCP app, a script). That's all it asks.
 3. They paste the snippet it shows into that app. The key is shown once.
-4. Apps that sign in themselves (Claude.ai, ChatGPT) add a custom connector with ${publicUrl}/mcp and sign in (beta).
+4. Apps that sign in themselves (Claude.ai, ChatGPT) add a custom connector with ${publicUrl}/mcp and sign in (beta); the person picks the vault.
 
 ## MCP
 

@@ -7,7 +7,7 @@ People increasingly run **several specialist agents** for one project or one lif
 Hippocampus replaces that with **one shared, curated memory**:
 
 - **Storage:** an Obsidian-openable markdown vault, linked as a graph. It began as a TTRPG campaign wiki for a party of agents; its types and kinds are now notes in the vault, and presets shape it for people, software, business, study or a household.
-- **Access:** through a GitHub repo (the lowest common denominator), plus an MCP server for agents that speak MCP.
+- **Access:** through a GitHub or GitLab repo (the lowest common denominator), plus an MCP server for agents that speak MCP.
 - **Ownership:** Hippocampus owns the shape of memory. Agents submit observations. Hippocampus consolidates them into canon, links them, resolves conflicts, and hands agents a briefing.
 
 The name describes the mechanism. Agents write fast *episodic* memory. A nightly "sleep" pass consolidates it into *semantic* memory, the canonical entity notes.
@@ -25,7 +25,7 @@ Hippocampus absorbs the Archivist's job (canonical facts, disputes). The Game Ma
 | --- | --- |
 | Clients | Any agent that speaks MCP. Local tools that can't may write inbox files instead |
 | Curation | Hybrid: fast inbox writes, then an async curator. The curator is either `hippo sleep` with a model of your choice, or an agent the human trusts, answering the server's questions over MCP |
-| Deployment | The GitHub vault repo is the source of truth. Two runtimes: the local CLI, and a hosted multi-user app on Cloudflare (a GitHub App, one Durable Object per vault) |
+| Deployment | The vault repo (GitHub or GitLab) is the source of truth. Two runtimes: the local CLI, and a hosted multi-user app on Cloudflare (a GitHub App or a GitLab OAuth connection, one Durable Object per vault) |
 | Curator LLM | Provider-agnostic. Locally: LM Studio or Ollama (OpenAI-compatible) by default; Anthropic and xAI are supported. Hosted: whichever agent holds the curator key |
 | Sensitive data | Private vault repo. Secret fields are encrypted in an `age` sidecar and gated by scope |
 | Disputes | Resolved by lane authority, then corroboration, then recency. Anything still ambiguous becomes a dispute note for the human to rule on |
@@ -42,16 +42,17 @@ Hippocampus absorbs the Archivist's job (canonical facts, disputes). The Game Ma
      ▼                                                                     ▼
  ┌──────────────────────── Cloudflare Worker (hosted app) ─────────────────────────┐
  │ GitHub sign-in, waitlist + admin, onboarding, keys, OAuth consent, webhooks     │
- │ D1 REGISTRY: accounts, vault ↔ repo, hashed keys (never vault content)          │
+ │ D1 REGISTRY: accounts, users, vault ↔ repo, members, invites, hashed keys,      │
+ │   device connects, sealed GitLab tokens (never vault content)                   │
  │        │ authenticated request + grant                                          │
  │        ▼                                                                        │
  │ Durable Object VaultHost, one per vault:                                        │
  │   MCP + dashboard API · audited single writer · search index in its SQLite      │
  │   sleep relay (one run at a time, leased) · blob cache · quotas · alarms        │
  └────────┬────────────────────────────────────────────────────────────────────────┘
-          │ GitHub App installation token, scoped to the one repo
+          │ GitHub App installation token (one repo), or the owner's GitLab OAuth token
           ▼
- private GitHub repo (vault) ◄── the human, in Obsidian and on the dashboard
+ private GitHub repo or GitLab project (vault) ◄── the human, in Obsidian and on the dashboard
           │ vault CI: validate on push, `hippo audit` daily, optional Actions curator (sleep.yml)
 
  Locally instead: `hippo serve` (MCP over stdio or 127.0.0.1), `hippo dashboard`, `hippo sleep` with a local or hosted model
@@ -63,8 +64,8 @@ Key properties:
 - **Every write is audited.** A commit names its actor in a `Hippo-Actor` trailer. The hosted app checks the claim against the caller's credentials and the change set against what that actor may do (`packages/core/src/audit.ts`) before committing. `hippo sleep` runs the same audit before it flushes. `hippo audit` re-checks history in the vault's CI.
 - **The curator is a client, not a component.** It pulls pending episodes and writes structured changes back, so it can run wherever the model is: next to a local model (`hippo sleep`), or as an agent answering the server's questions (the relay, §4b).
 - **Human edits win.** The human's word outranks every agent. The curator only rewrites *managed regions* of a note and never touches human prose.
-- **Tenants are isolated.** Each vault has its own Durable Object (storage, caches, index, sleep runs), and its installation token is narrowed to that vault's repo. The Worker authenticates every caller before forwarding to the one object its key or session belongs to.
-- **Ports and adapters.** `core` defines a `VaultStore` port. Adapters: filesystem (local) and GitHub API (no checkout; the hosted app's backend). Stores with `apply()` persist each flush as one atomic batch.
+- **Tenants are isolated.** Each vault has its own Durable Object (storage, caches, index, sleep runs), and on GitHub its installation token is narrowed to that vault's repo. GitLab has no narrower scope that can commit, so a GitLab vault uses its owner's OAuth token with the `api` scope, which reaches every project they can; the app uses it only for that vault's project. The Worker authenticates every caller before forwarding to the one object its key or session belongs to.
+- **Ports and adapters.** `core` defines a `VaultStore` port. Adapters: filesystem (local), GitHub API (`packages/store-github`) and GitLab API (`packages/store-gitlab`), the last two sharing their caches and snapshots through `packages/store-git` (no checkout; the hosted app's backend). Stores with `apply()` persist each flush as one atomic batch.
 
 ## 2. Vault structure: generic building blocks
 
@@ -105,7 +106,7 @@ Types `extend` other types (fields, capabilities, statuses and template carry ov
 
 **Presets.** Use cases ship as data, not code: `presets/<name>/` holds type and kind notes, templates, starter notes and sections for the human's note (`people`, `developer`, `business`, `student`, `household`). `hippo init --preset`, Session Zero, or `hippo preset add` lay them over a vault (`presets.ts`); a `merge: true` schema note merges its fields into the vault's own type.
 
-**Where the TTRPG flavour went.** Hippocampus started as a campaign wiki for a party of agents, and the vocabulary stays where it helps: canon and rumor, the party (agents), the chronicle, the human's rulings, the dashboard's Tavern and Council. Quests became goals and campaigns became arcs (v2, migrated by `hippo migrate`), and clocks became one `progress`.
+**Where the TTRPG flavour went.** Hippocampus started as a campaign wiki for a party of agents, and the vocabulary stays where it helps: canon and rumor, the party (agents), the chronicle, the human's rulings, the dashboard's Tavern and Council. Quests became goals and campaigns became arcs (v2, migrated by `hippo migrate`), and clocks became one `progress`. Some old names live on in code, so grep for both: `activeQuests` and `questLine` (`handbook.ts`), `QuestUpdate` (`ops.ts`), the `campaign` fields in `views.ts` and the config, the `quest` scope, and the `quest`/`party`/`campaign` capability aliases (`schema-registry.ts`).
 
 **Note format** (Obsidian-native: properties + wikilinks, so the graph view works out of the box):
 ```markdown
@@ -138,20 +139,22 @@ Free human prose — never touched by the curator.
 | Tool | Purpose |
 | --- | --- |
 | `onboard()` | The handbook for *this* agent: conventions, its lane, its authority domains, its open goals. Call at session start. |
-| `introduce(title, lane?, host?, model?, about?)` | An unknown agent asks to join the party: `inbox/<agent>/_introduction-<ulid>.md`. The human approves (seats it with chosen authority) or dismisses it on the dashboard. |
+| `introduce(title, lane?, host?, model?, about?)` | An unknown agent joins the party: it writes its own `party/<agent>.md`, with no authority, signed as itself (the audit lets an agent fill only blanks on its own card). The human gives it authority on the dashboard. |
 | `remember(text?, kind?, data?, about?, scope?, confidential?, confidence?, secret?, at?)` | Append an episode to `inbox/`, checked against its kind (text policy, typed data). Returns immediately; never blocks on the LLM. At most 8 KB. |
 | `recall(query, types?, limit?)` | Full-text search plus graph expansion plus recent unconsolidated episodes (read-your-writes). Confidential facts and identity keys are never indexed. |
 | `get(entity)` | The full note: qualified facts with status and provenance, neighbors, goal props, guidelines (own and inherited), decisions, questions, stats, cadence, open disputes. |
 | `neighbors(entity, rel?, depth?)` | Graph traversal. |
 | `ask_canon(question)` | The fact-checker's job: the best canonical facts for a question, with status and any open dispute. |
 | `briefing(since?, horizon_days?, about?)` | "Previously on…": chronicle, recently changed notes, upcoming due dates and yearly dates, overdue contacts, open disputes. With `about`, a brief on one person or thing: canon facts, guidelines, recent interactions, open goals with them, proposals, stats. |
-| `update_goal(goal, status?, complete?, reopen?, add?, progress?, due?, owner?, counterparty?, repeat?)` | Structured goal edits, applied directly. A repeating goal marked done rolls to its next due date. `update_quest` is the old name, kept as an alias. |
+| `update_goal(goal, status?, complete?, reopen?, add?, progress?, due?, owner?, counterparty?, repeat?)` | Structured goal edits, applied directly. A repeating goal marked done rolls to its next due date. |
+| `update_quest(quest, …, clock?, deadline?)` | Alias: the old name of `update_goal`, kept for agents set up before goals. A clock becomes progress, a deadline the due date. |
+| `sleep_start`, `sleep_answer`, `sleep_skip`, `sleep_status`, `sleep_abort` | The curator's tools for agent-run sleep (§4b). Registered only where a relay is (the hosted app, `hippo serve`). |
 
 Agent ids are exact: lowercase slugs, never the human's id or a reserved one (`human`, `curator`, `unknown`, `hippocampus`), and never matched by alias (`assertAgentId` in `ops.ts`).
 
-Scopes: `read`, `remember`, `goal` (`quest` is its old name, still accepted and stored alongside), and `curate` for the curator's `sleep_*` tools and `sleep` prompt (§4b). Tools outside a connection's scopes are removed, so clients never see them. Confidential values are masked for everyone except **bound** callers (an OAuth grant's agent, a bound key, a local `--agent`) with authority over them; the curator sees them to curate, and the consent page says so.
+Scopes: `read` (`onboard`, `recall`, `get`, `neighbors`, `ask_canon`, `briefing`, the resources), `remember` (`remember`, `introduce`), `goal` (`update_goal`, `update_quest`; `quest` is its old name, still accepted and stored alongside), and `curate` for the `sleep_*` tools and the `sleep` prompt (§4b). Tools outside a connection's scopes are removed, so clients never see them. Confidential values are masked for everyone except **bound** callers (an OAuth grant's agent, a bound key, a local `--agent`) with authority over them; the curator sees them to curate, and the consent page says so.
 
-Resources: `hippo://handbook`, `hippo://entity/{slug}`. The dashboard's read models are also served as resource templates under `hippo://dashboard/…` (`overview`, `catalog`, `graph`, `whoami`, `entity/{slug}`, `chronicle/{month}`, `search{?q,limit}`). They are left out of `resources/list` so agent hosts never see them. A dashboard can therefore run on top of any Hippocampus MCP server with a `read` token.
+Prompt: `sleep` (`SLEEP_PROCEDURE`). Resources: `hippo://handbook`, `hippo://entity/{slug}`. The dashboard's read models are also served as resource templates under `hippo://dashboard/…` (`overview`, `catalog`, `graph`, `whoami`, `entity/{slug}`, `chronicle/{month}`, `search{?q,limit}`). They are left out of `resources/list` so agent hosts never see them. A dashboard can therefore run on top of any Hippocampus MCP server with a `read` token.
 
 ## 3b. The human's dashboard
 
@@ -220,26 +223,7 @@ Fields flagged secret by the model, by the episode (`secret: true`), or by the t
 
 ## 6. Code layout
 
-```
-packages/core        schemas, schema registry (types, kinds, capabilities), markdown + managed regions, vault model,
-                     reconcile, ops, goals, actors, kinds + reducers, inheritance, identity keys, presets, shape
-                     validation, search, handbook, service, secrets, audit + commit trailers, format migrations,
-                     introductions, buildVaultFiles (bootstrap), views
-packages/curator     LLM adapter (AI SDK), prompts, sleep pipeline, SleepRelay (agent-run sleep)
-packages/mcp         MCP tools/resources/prompts over the service
-packages/index       FTS5 + relations + vectors index; node:sqlite, D1 and Durable Object SQLite drivers
-packages/embeddings  Embedder adapters (OpenAI-compatible, Workers AI)
-packages/store-github VaultStore over the GitHub API; SQLite blob cache; FakeGitHub
-packages/template    vault-template/, seeds/ and presets/ bundled as data (`pnpm gen:template`), for the Worker and the CLI
-packages/dashboard   the dashboard's JSON API, sources (service, MCP), Session Zero contract, demo campaigns
-apps/dashboard       the dashboard UI (Astro + React islands), guides, Session Zero wizards (local and hosted)
-apps/worker          the hosted app: OAuth, sign-in, registry, onboarding, webhooks, VaultHost Durable Object
-apps/cli             `hippo`: init, preset, serve, dashboard, sleep, audit, migrate, fmt, validate, handbook, remember, secrets, index
-plugins/hippocampus  Claude Code plugin: MCP server config + memory and sleep skills
-vault-template/      starter vault: config, guardrails (AGENTS.md, CLAUDE.md, _hippo/curator.md), CI, templates
-seeds/               example campaigns (fictional)
-presets/             people, developer, business, student, household: schema notes, templates, starter notes
-```
+A pnpm monorepo: `packages/*` are libraries (core model and service, curator, MCP, index, embeddings, the git-host stores, the bundled template, the dashboard API), `apps/*` are what runs (the `hippo` CLI, the hosted Worker, the dashboard UI), and `vault-template/`, `seeds/` and `presets/` are data. The file-level map lives in one place, [AGENTS.md](AGENTS.md#project-map).
 
 ## 7. Roadmap
 
@@ -247,6 +231,7 @@ presets/             people, developer, business, student, household: schema not
 - **M3–M5 (done):** GitHub-API `VaultStore`, the Worker, OAuth connectors, embeddings for semantic recall, the dashboard.
 - **M6–M7 (done):** the hosted multi-user app (GitHub App, registry, one Durable Object per vault), agent-run sleep, audit and trailers, introductions, the Claude Code plugin.
 - **M8 (done):** generic building blocks (vault format v2): schema notes and capabilities, kinds, several humans, qualified and confidential facts, guidelines, decisions, questions, stats, goals, proposals, presets.
+- **M9 (done):** several vaults per account and sharing them, GitLab vaults, agents connecting themselves (device sign-in), discovery (`/llms.txt`, the MCP server card, the AI catalog).
 - **Next:** staleness jobs, per-vault usage reporting, more connector hosts.
 
 ## 8. Risks
@@ -280,18 +265,22 @@ presets/             people, developer, business, student, household: schema not
 | Search | ✅ | `Searcher` port. CLI default: persistent SQLite FTS5 index (`packages/index`, `node:sqlite`, a cache in `~/.cache/hippocampus`) that syncs by content hash, with trigram typo fallback and a relations table. In-memory MiniSearch remains the fallback (`--no-index`) |
 | Curator pipeline | ✅ | mentions → resolve → claims → reconcile → apply → chronicle → summaries → review + handbook |
 | LLM adapter | ✅ | `prompt` structured mode (default for local servers) and `native` (hosted). Per-call timeout and token cap |
-| MCP (stdio + local HTTP) | ✅ | 10 agent tools (`update_quest` is an alias of `update_goal`), 5 curator tools and a `sleep` prompt, 2 resources |
+| MCP (stdio + local HTTP) | ✅ | 10 agent tools (`update_quest` is an alias of `update_goal`), 5 curator tools and a `sleep` prompt, 2 listed resources plus the `hippo://dashboard/…` templates, left out of `resources/list` |
 | `hippo sleep` with git | ✅ | pull --rebase --autostash → curate → stage own paths → commit → push |
 | GitHub API store | ✅ | `packages/store-github`: reads pinned to one commit, blob cache by sha, each flush is one commit via the Git Data API, rebases past unrelated pushes, `StoreConflictError` on same-file races. `hippo --github owner/repo` |
 | Distribution | ✅ | npm package (tsup bundle + template + seeds), vault format version + `hippo migrate`, privacy guard + pre-commit hook, CI for this repo and for vaults |
-| Hosted app | ✅ | `apps/worker`: a GitHub App (Contents and Workflows read/write, Metadata read) with user authorization on install; D1 registry (accounts, vaults, hashed keys of kind `agent`, `curator` or `bound`); waitlist and admin approval; bootstrap of an empty private repo, or adoption of an existing vault (only missing guardrail files are added); a `VaultHost` Durable Object per vault with installation tokens stored in its SQLite, an audited single writer, the search index, a SQLite blob cache (inbox blobs stay in memory), the sleep run store and alarms; quotas; rate limits; webhooks that disconnect a vault when the app is uninstalled or the repo goes public; account deletion |
+| Hosted app | ✅ | `apps/worker`: a GitHub App (Contents and Workflows read/write, Metadata read) with user authorization on install; D1 registry (accounts and users, vaults, members and invites, device connects, sealed GitLab tokens, hashed keys of kind `agent`, `curator` or `bound`); waitlist and admin approval; bootstrap of an empty private repo, or adoption of an existing vault (only missing guardrail files are added); a `VaultHost` Durable Object per vault with installation tokens stored in its SQLite, an audited single writer, the search index, a SQLite blob cache (inbox blobs stay in memory), the sleep run store and alarms; quotas; rate limits; webhooks that disconnect a vault when the app is uninstalled or the repo goes public; account deletion |
 | Agent-run sleep | ✅ | `SleepRelay` behind the `curate` scope: questions and schema-checked answers, leased runs, replay on conflict. Served by the hosted app and `hippo serve`; the plugin skill and the Actions curator drive it |
 | Audit | ✅ | `auditChanges` per actor (agent, curator, human, bootstrap, migration) before every hosted commit and every `hippo sleep` flush: human-only fields, goal-scope limits, confidential leaks, migrations that only move notes; `Hippo-*` commit trailers; `hippo audit` over git history, daily in vault CI |
-| Introductions | ✅ | `introduce` tool, `inbox/<agent>/_introduction-*.md` (the `_` prefix keeps older tools from reading it as an episode), approve or dismiss on the dashboard |
+| Introductions | ✅ | `introduce` writes the agent's own card with no authority; the human sets authority on the dashboard. Older `inbox/<agent>/_introduction-*.md` files still approve or dismiss |
 | Semantic recall | ✅ | `packages/embeddings`: `Embedder` adapters for OpenAI-compatible servers (LM Studio, Ollama, hosted) and Workers AI, opt-in via `HIPPO_EMBED_*`. The index stores one normalized vector per doc version and model, mirrored in memory, and embeds only what changed. Search fuses FTS and cosine hits with reciprocal rank fusion, then lets the top hits lift related candidates (never above themselves). Embedder failures fall back to keywords |
 | OAuth for connectors | ✅ | `@cloudflare/workers-oauth-provider`: the Worker is authorization server and resource (RFC 9728 discovery, DCR, PKCE, refresh). `/authorize` signs the person in to the hosted app, then shows a consent page (agent id and scopes per app; unframeable, browser-bound) for one of their vaults. OAuth scopes come from the token, so refreshes can narrow them. Vault keys are accepted through `resolveExternalToken` |
 | Dashboard | ✅ | `packages/dashboard` + `apps/dashboard`: Tavern (with overdue contacts), Goals, Council (disputes, proposals, merges), Satchel, Codex, entity sheets (qualifiers, guidelines, stats, decisions, questions, inheritance), Map, Chronicle, Party (agents and humans), Guides, ⌘K, plus the curator panel, admin page and account menu on the hosted app. Sources: local dir, `--github`, `--mcp`, the hosted app, `--demo` (fictional, in memory) |
 | Session Zero onboarding | ✅ | Local `SetupPort` in the CLI (vault, party, secrets, curator model, git visibility, agent snippets, launchd schedule, dry-run sleep, remote check). The hosted port runs the waitlist, GitHub App install, repo pick, vault bootstrap with a browser-made age key, keys and the curator |
+| Several vaults and sharing | ✅ | Up to five vaults per person (`MAX_VAULTS_PER_USER`), each with its own keys, curator and `/mcp/<vault id>` address. Owners invite members or viewers (by username or one-time link); each joins as a human of their own. Invites to the app itself skip the waitlist |
+| GitLab vaults | ✅ | `packages/store-gitlab` (gitlab.com or one self-managed host): OAuth connect with scope `api`, tokens sealed with `HIPPO_TOKEN_KEY`, a Cron health check every six hours in place of webhooks |
+| Device sign-in | ✅ | `POST /connect/device` and `/connect/token` (an OAuth device grant): an agent shows a code, the person approves it at `/dashboard/connect/`, and the agent collects a key for that vault. The plugin's `connect` skill drives it |
+| Discovery | ✅ | `/llms.txt`, the MCP server card at `/mcp/server-card` and `/.well-known/ai-catalog.json` (`apps/worker/src/discovery.ts`) |
 | Push webhook reindex, CIMD | ⏳ | Every request syncs the index with the vault it loads, so a reindex webhook only matters once reads stop loading the whole vault. Client ID Metadata Documents need `global_fetch_strictly_public`, which would block the local fake GitHub in `wrangler dev`; DCR covers today's connectors |
 
 **Lessons from local models.** LM Studio with a reasoning model returned grammar-constrained JSON in `reasoning_content`, and constrained decoding suppressed its thinking, which made classification worse. Local providers therefore default to `prompt` mode:

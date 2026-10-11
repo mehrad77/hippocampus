@@ -1,4 +1,4 @@
-import { AuditError, HippoService, VaultVersionError, parseDoc, type MemoryStore } from "@hippocampus/core";
+import { AuditError, HippoService, VaultVersionError, createIntroduction, parseDoc, renderIntroduction, type MemoryStore } from "@hippocampus/core";
 import { afterAll, describe, expect, it } from "vitest";
 import { SECRET_PLAINTEXT, now, richStore } from "./__fixtures__/vault.ts";
 import { createDashboardApi, type DashboardApiOptions } from "./api.ts";
@@ -81,7 +81,7 @@ describe("dashboard API: reads", () => {
       humans: ["player"],
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
-      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, introductions: true, curator: false, upgrade: false, setup: "none" },
+      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, authority: true, names: false, handOver: false, introductions: true, curator: false, upgrade: false, setup: "none" },
     });
   });
 
@@ -263,10 +263,28 @@ describe("dashboard API: actions", () => {
   });
 });
 
-describe("dashboard API: introductions", () => {
+describe("dashboard API: authority", () => {
+  it("sets what an agent is responsible for, from the vault's domains", async () => {
+    const { post, store } = harness();
+    await new HippoService(store, { now }).introduce("job-scout", { title: "Job Scout", lane: "Part-time work" });
+    expect(await post("actions/authority", { agent: "job-scout", domains: ["Career"] })).toMatchObject({ status: 200, body: { agent: "job-scout", authority: ["career"] } });
+    expect(parseDoc((await store.read("party/job-scout.md"))!).data.authority).toEqual(["career"]);
+    expect(await post("actions/authority", { agent: "job-scout", domains: ["magic"] })).toMatchObject({ status: 400, body: { code: "VAULT" } });
+    expect(await post("actions/authority", { agent: "job-scout", domains: "career" })).toMatchObject({ status: 400, body: { code: "INVALID" } });
+    expect(await post("actions/authority", { agent: "job-scout", domains: [] })).toMatchObject({ status: 200, body: { authority: [] } });
+  });
+});
+
+describe("dashboard API: introductions filed before agents seated themselves", () => {
+  /** An introduction as agents filed them before `introduce` seated them. */
+  const legacy = async (store: { write(path: string, content: string): Promise<void> }, agent: string, input: { title: string; lane?: string; host?: string; about?: string }) => {
+    const intro = createIntroduction("inbox", agent, input, now());
+    await store.write(intro.path, renderIntroduction(intro));
+  };
+
   it("approve seats the agent with the human's choices", async () => {
     const { post, get, store } = harness();
-    await new HippoService(store, { now }).introduce("job-scout", { title: "Job Scout", lane: "Part-time work", host: "Claude Desktop", about: "I watch job boards." });
+    await legacy(store, "job-scout", { title: "Job Scout", lane: "Part-time work", host: "Claude Desktop", about: "I watch job boards." });
     expect((await get("overview")).body.attention).toMatchObject({
       unknownAgents: [],
       introductions: [{ agent: "job-scout", title: "Job Scout", lane: "Part-time work", host: "Claude Desktop", about: "I watch job boards." }],
@@ -280,7 +298,7 @@ describe("dashboard API: introductions", () => {
 
   it("dismiss removes the introduction, and the agent is a stranger again", async () => {
     const { post, get, store } = harness();
-    await new HippoService(store, { now }).introduce("job-scout", { title: "Job Scout" });
+    await legacy(store, "job-scout", { title: "Job Scout" });
     expect(await post("actions/introduction", { agent: "job-scout", decision: "dismiss" })).toMatchObject({ status: 200, body: { decision: "dismiss", agent: "job-scout" } });
     expect((await get("overview")).body.attention).toMatchObject({ unknownAgents: ["job-scout"], introductions: [] });
     expect(await post("actions/introduction", { agent: "job-scout", decision: "dismiss" })).toMatchObject({ status: 400, body: { code: "VAULT" } });
@@ -327,7 +345,7 @@ describe("dashboard API: errors", () => {
     expect((await get("session")).body).toEqual({
       mode: "setup",
       user: { login: "player" },
-      capabilities: { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, confidential: false, data: false, party: false, domains: false, introductions: false, curator: false, upgrade: false, setup: "none" },
+      capabilities: { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, confidential: false, data: false, party: false, domains: false, authority: false, names: false, handOver: false, introductions: false, curator: false, upgrade: false, setup: "none" },
     });
     expect(await get("setup/status")).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
   });
@@ -353,14 +371,15 @@ describe("dashboard API: errors", () => {
   });
 
   it("501 when the source lacks a capability", async () => {
-    const { get, post } = harness({ source: (full) => ({ ...full, rule: undefined, addParty: undefined, addDomains: undefined, introduction: undefined, proposal: undefined, retract: undefined }) });
-    expect((await get("session")).body.capabilities).toEqual({ rule: false, goal: true, quest: true, proposal: false, retract: false, remember: true, confidential: true, data: true, party: false, domains: false, introductions: false, curator: false, upgrade: false, setup: "none" });
+    const { get, post } = harness({ source: (full) => ({ ...full, rule: undefined, addParty: undefined, addDomains: undefined, setAuthority: undefined, introduction: undefined, proposal: undefined, retract: undefined }) });
+    expect((await get("session")).body.capabilities).toEqual({ rule: false, goal: true, quest: true, proposal: false, retract: false, remember: true, confidential: true, data: true, party: false, domains: false, authority: false, names: false, handOver: false, introductions: false, curator: false, upgrade: false, setup: "none" });
     expect(await post("actions/proposal", { dispute: "x", decision: "decline" })).toMatchObject({ status: 501 });
     expect(await post("actions/retract", { entity: "migration-agency", field: "phone" })).toMatchObject({ status: 501 });
     expect(await post("actions/upgrade-vault", {})).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
     expect(await post("actions/rule", { dispute: "dispute-migration-agency-office-address", claim: 0 })).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
     expect(await post("actions/party", { id: "job-scout", title: "Job Scout" })).toMatchObject({ status: 501 });
     expect(await post("actions/domain", { ids: ["health"] })).toMatchObject({ status: 501 });
+    expect(await post("actions/authority", { agent: "home-finder", domains: [] })).toMatchObject({ status: 501 });
     expect(await post("actions/introduction", { agent: "job-scout", decision: "dismiss" })).toMatchObject({ status: 501 });
     expect(await get("curator")).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
     expect(await post("actions/curator", { abort: "run-01" })).toMatchObject({ status: 501 });

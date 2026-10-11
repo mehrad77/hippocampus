@@ -9,6 +9,7 @@ import { bootstrapVault } from "./bootstrap.ts";
 import { curatorActionsEnabled, setCuratorActions } from "./curator-actions.ts";
 import type { GitHubApp, InstallationRepo } from "./github-app.ts";
 import { GitLabAuthError, type GitLabAccess, type GitLabProject } from "./gitlab.ts";
+import type { AgentClaim } from "./agent-claims.ts";
 import { MAX_VAULTS_PER_USER, keyRequest, type DisconnectReason, type MemberVault, type Provider, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
 import { clearPendingInstallation, pendingInstallation, type SessionKV } from "./session.ts";
 import { GITLAB_CONNECT_PATH } from "./gitlab.ts";
@@ -39,6 +40,8 @@ export interface HostedSetupDeps {
   releaseCredentials?: (vaultId: string, credentials: string[]) => Promise<void>;
   /** Seat a new agent in the vault's party (`seat: true` on a new key). */
   seatAgent?: (vault: MemberVault, agent: { id: string; title: string }, via: string) => Promise<void>;
+  /** Which connection holds which agent name in the vault, for the Connections panel. */
+  claims?: (vault: MemberVault) => Promise<AgentClaim[]>;
 }
 
 /** Checking emptiness costs a few requests per repo, so only this many get checked. */
@@ -269,7 +272,9 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       if (path === "vaults/remove" && method === "POST") return removeVault(body);
       if (path === "keys" && method === "GET") {
         const v = pickedVault(["owner", "member"]);
-        return { keys: (await registry.keys(v.id, keyOwner(v))).map(keyInfo) };
+        // With who each connection has spoken as: the vault's name claims, by connection (`key:<hash>`, `oauth:<grant>`).
+        const agents = v.status === "ready" ? await deps.claims?.(v).catch(() => undefined) : undefined;
+        return { keys: (await registry.keys(v.id, keyOwner(v))).map(keyInfo), ...(agents ? { agents } : {}) };
       }
       if (path === "keys" && method === "POST") {
         const vault = pickedVault(["owner", "member"]);
@@ -400,6 +405,7 @@ const keyInfo = (k: KeyRecord): HostedKeyInfo => ({
   ...(k.agent ? { agent: k.agent } : {}),
   scopes: k.scopes,
   label: k.label,
+  ...(k.app ? { app: k.app } : {}),
   created: k.created,
   ...(k.lastUsed ? { lastUsed: k.lastUsed } : {}),
 });

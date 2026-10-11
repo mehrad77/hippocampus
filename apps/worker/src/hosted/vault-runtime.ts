@@ -16,7 +16,7 @@ import type { InstallationToken, Narrowing, Permissions } from "./github-app.ts"
 import { logEvent } from "./limits.ts";
 import { DailyCounter, QUOTAS, limitRuns, quotaOverrides, sizeGuard, type Quotas, type SizeGuarded } from "./quotas.ts";
 import { SqlRunStore, onPut } from "./run-store.ts";
-import { AgentClaims } from "./agent-claims.ts";
+import { AgentClaims, type AgentClaim } from "./agent-claims.ts";
 
 // One hosted vault, served from its own Durable Object. Everything here is plain TypeScript over
 // ports (the object's storage, a token minter, fetch), so it runs under Node in tests; vault-host.ts
@@ -435,6 +435,8 @@ export class VaultRuntime {
         vault: { id: this.meta.vaultId, name: this.meta.fullName },
         agent: grant.agent,
         scopes: grant.scopes,
+        // A shared connection's reads name their agent; only a name it holds sees confidential details.
+        ...(!grant.agent && grant.credential ? { holds: (agent: string) => this.claims.holds(agent, grant.credential!) } : {}),
         relay: grant.scopes.includes("curate") ? this.relay : undefined,
         jsonSchemaValidator: this.d.jsonSchemaValidator,
       });
@@ -474,7 +476,7 @@ export class VaultRuntime {
       const full: DashboardSource =
         status === "older" && config
           ? awaitingUpgrade(config, { mode: "worker", vault }, human, upgradeVault)
-          : { ...serviceSource(this.service(), { mode: "worker", vault }, { curator: this.curator, ...(human ? { human } : {}) }), upgradeVault };
+          : { ...serviceSource(this.service(), { mode: "worker", vault }, { curator: this.curator, ...(human ? { human } : {}) }), upgradeVault, ...this.names() };
       // Viewers only read; only the owner upgrades the vault or runs the curator's controls.
       const { upgradeVault: _upgrade, curator: _curator, ...shared } = full;
       const source = role === "viewer" ? readOnlySource(full) : role === "member" ? shared : full;
@@ -489,6 +491,20 @@ export class VaultRuntime {
     } catch (err) {
       return errorResponse(err, this.report("vault/dashboard", started));
     }
+  }
+
+  /** Agent names and the connections holding them, for the Agents page: who holds what, and handing a name over. */
+  private names(): Pick<DashboardSource, "nameHolders" | "handOver"> {
+    return {
+      nameHolders: async () => (await this.party().catch(() => [])).map((p) => ({ agent: p.id, state: this.claims.state(p.id) })),
+      handOver: async (agent) => {
+        const id = agent.trim().toLowerCase();
+        if (!(await this.party()).some((p) => p.id === id)) throw new HttpError(400, `"${id}" isn't one of this vault's agents`, "VAULT");
+        this.claims.handOver(id);
+        void logEvent({ route: "vault/hand-over", status: 200, ms: 0, vault: this.meta.vaultId }, this.d.log).catch(() => undefined);
+        return { agent: id };
+      },
+    };
   }
 
   /**
@@ -520,6 +536,11 @@ export class VaultRuntime {
   /** A connection was revoked: the agent names it held are free again. */
   async releaseClaims(credentials: string[]): Promise<number> {
     return credentials.reduce((n, c) => n + this.claims.release(c), 0);
+  }
+
+  /** Which connection holds which agent name (the credential is `key:<hash>` or `oauth:<grant>`). */
+  async claimList(): Promise<AgentClaim[]> {
+    return this.claims.list().map(({ agent, credential, since }) => ({ agent, credential, since }));
   }
 
   /** Links (or, with `null`, unlinks) a person's logins to one of the vault's humans: someone joining or leaving a shared vault. */
@@ -697,6 +718,10 @@ export class HostedVault {
 
   async releaseClaims(credentials: string[]): Promise<number> {
     return this.require().releaseClaims(credentials);
+  }
+
+  async claims(): Promise<AgentClaim[]> {
+    return this.require().claimList();
   }
 
   /** Stop serving; storage stays until `destroy`, so a reconnect picks up where it left off. */

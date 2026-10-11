@@ -131,7 +131,7 @@ describe("VaultRuntime: MCP", () => {
   });
 
   it("keeps a shared key off agent names another connection holds", async () => {
-    const { repo, connect, runtime } = await setup();
+    const { repo, connect, runtime, api } = await setup();
     const shared = await connect({ ...AGENT_KEY, credential: "key:shared" });
     const other = await connect({ ...AGENT_KEY, credential: "key:other-shared" });
     const homeFinder = await connect({ ...bound("home-finder"), credential: "key:home-finder-laptop" });
@@ -149,10 +149,22 @@ describe("VaultRuntime: MCP", () => {
     expect((await homeFinder.call("remember", { text: "The landlord prefers email." })).isError).toBeFalsy();
     expect((await say(shared, "home-finder")).isError).toBe(true);
 
-    // Revoked, the bound key lets go.
+    // Revoked, the bound key lets go. But home-finder is responsible for housing: another connection
+    // can't just take the released name until the person hands it over.
     expect(await runtime.releaseClaims(["key:home-finder-laptop"])).toBe(1);
+    const pinned = await say(other, "home-finder");
+    expect(pinned.isError).toBe(true);
+    expect(pinned.text).toMatch(/responsible for part of this vault and its app was disconnected/);
+    expect((await api("GET", "names")).body).toMatchObject({ names: expect.arrayContaining([{ agent: "home-finder", state: "released" }, { agent: "campus-agent", state: "free" }]) });
+    expect((await api("POST", "actions/hand-over", { agent: "home-finder" })).status).toBe(200);
     expect((await say(other, "home-finder")).isError).toBeFalsy();
-    expect(repo.log().filter((c) => c.message.startsWith("remember(")).length).toBe(5);
+    expect((await say(shared, "home-finder")).isError).toBe(true);
+    expect((await api("GET", "names")).body).toMatchObject({ names: expect.arrayContaining([{ agent: "home-finder", state: "held" }]) });
+    expect((await api("POST", "actions/hand-over", { agent: "nobody-here" })).status).toBe(400);
+    // A responsible name nobody has held yet, and a new one, are first come, first served.
+    expect((await say(shared, "residency-agent")).isError).toBeFalsy();
+    expect((await say(other, "brand-new-agent")).isError).toBeFalsy();
+    expect(repo.log().filter((c) => c.message.startsWith("remember(")).length).toBe(7);
   });
 
   it("lets an agent introduce itself", async () => {
@@ -161,8 +173,30 @@ describe("VaultRuntime: MCP", () => {
     const r = await call("introduce", { agent: "job-scout", title: "Job Scout", lane: "Part-time work in Lisbon" });
     expect(r.isError).toBeFalsy();
     expect(r.text).toContain("Introduced as job-scout");
-    expect(Object.keys(repo.files()).filter((p) => p.startsWith("inbox/job-scout/_introduction-"))).toHaveLength(1);
+    expect(repo.files()["party/job-scout.md"]).toContain("lane: Part-time work in Lisbon");
+    expect(repo.files()["party/job-scout.md"]).not.toContain("authority");
     expect(trailers(repo.log()[0]!.message)).toContain("Hippo-Actor: agent:job-scout");
+  });
+
+  it("lets one shared key (a Grok bot, say) introduce several agents, each filed and signed as itself", async () => {
+    const { repo, connect } = await setup();
+    const bot = await connect({ ...AGENT_KEY, credential: "key:grok-bot" });
+    for (const [agent, title, lane] of [
+      ["grok-bot-trip-planner", "Trip Planner", "Plans trips and bookings"],
+      ["grok-bot-budget-keeper", "Budget Keeper", "Tracks spending"],
+    ] as const) {
+      const r = await bot.call("introduce", { agent, title, lane, host: "Grok bot (xAI API)" });
+      expect(r.isError, agent).toBeFalsy();
+      expect((await bot.call("remember", { agent, text: `${title} is checking in.` })).isError, agent).toBeFalsy();
+    }
+    const files = Object.keys(repo.files());
+    for (const agent of ["grok-bot-trip-planner", "grok-bot-budget-keeper"]) {
+      expect(files, agent).toContain(`party/${agent}.md`);
+      expect(files.filter((p) => p.startsWith(`inbox/${agent}/`)), agent).toHaveLength(1);
+    }
+    expect(repo.log().map((c) => trailers(c.message).find((t) => t.startsWith("Hippo-Actor")))).toEqual(
+      expect.arrayContaining(["Hippo-Actor: agent:grok-bot-trip-planner", "Hippo-Actor: agent:grok-bot-budget-keeper"]),
+    );
   });
 
   it("binds a bound key's memories to its agent, whatever the call says", async () => {
@@ -336,16 +370,13 @@ describe("VaultRuntime: storage", () => {
 });
 
 describe("VaultRuntime: quotas", () => {
-  it("refuses memories past the inbox limit, and introductions past theirs", async () => {
-    const { repo, connect } = await setup({ quotas: { pendingEpisodes: 1, pendingIntroductions: 0 } });
+  it("refuses memories past the inbox limit", async () => {
+    const { repo, connect } = await setup({ quotas: { pendingEpisodes: 1 } });
     const { call } = await connect(AGENT_KEY);
     expect((await call("remember", { agent: "home-finder", text: "Viewing on Friday." })).isError).toBeFalsy();
     const full = await call("remember", { agent: "home-finder", text: "Viewing on Saturday." });
     expect(full.isError).toBe(true);
     expect(full.text).toContain("The inbox already holds 1 memories waiting for sleep");
-    const intro = await call("introduce", { agent: "job-scout", title: "Job Scout" });
-    expect(intro.isError).toBe(true);
-    expect(intro.text).toContain("introductions are already waiting");
     expect(repo.log()).toHaveLength(2);
   });
 
@@ -404,7 +435,7 @@ describe("VaultRuntime: dashboard", () => {
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
       account: { status: "approved", admin: false },
-      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, introductions: true, curator: true, upgrade: true, setup: "hosted" },
+      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, authority: true, names: true, handOver: true, introductions: true, curator: true, upgrade: true, setup: "hosted" },
     });
 
     const r = await api("POST", "actions/remember", { text: "My residence card arrives next week." });

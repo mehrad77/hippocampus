@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessOf, CONNECT_APPS, connectSnippet, connectSnippets, curatorSnippets, mcpServerName, speaksAsMany, suggestAgentId, type ConnectAppId } from "./connect.ts";
+import { accessOf, CONNECT_APPS, connectSnippet, connectSnippets, curatorSnippets, keySnippets, mcpServerName, type ConnectAppId } from "./connect.ts";
 
 const t = { url: "https://hippo.test/mcp/01J9Z8D3M0V000000000000001", key: "hippo_secret", server: "hippo-lisbon-vault" };
 
@@ -18,14 +18,15 @@ describe("connecting an app", () => {
     expect(connectSnippets(t)).toHaveLength(CONNECT_APPS.length);
   });
 
-  it("names servers after the vault, and agents after the app", () => {
+  it("names servers after the vault", () => {
     expect(mcpServerName("player/Lisbon Vault")).toBe("hippo-lisbon-vault");
     expect(mcpServerName("player/vault", true)).toBe("hippo-vault-curator");
-    expect(suggestAgentId("claude-code")).toBe("claude-code");
-    expect(suggestAgentId("cursor", "Work Laptop!")).toBe("cursor-work-laptop");
-    // A bot with several personalities shares one key; an app is one agent.
-    expect(speaksAsMany("xai-api")).toBe(true);
-    expect(speaksAsMany("claude-code")).toBe(false);
+  });
+
+  it("sends the sign-in apps to the plain address, after the key apps", () => {
+    const all = keySnippets({ publicUrl: "https://hippo.test", token: "hippo_secret", kind: "agent", vault: { id: "01J9Z8D3M0V000000000000001", fullName: "player/vault" }, app: "cursor" });
+    expect(all[0]!.label).toMatch(/^Cursor/);
+    expect(all.at(-1)).toMatchObject({ label: "Claude.ai or ChatGPT (sign-in, beta)", code: "https://hippo.test/mcp" });
   });
 
   it("puts scopes in plain words", () => {

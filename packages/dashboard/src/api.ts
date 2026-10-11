@@ -117,6 +117,10 @@ const PartyBody = z.object({
 
 const DomainBody = z.object({ ids: z.array(text(60)).min(1).max(20) });
 
+const AuthorityBody = z.object({ agent: text(63), domains: z.array(text(60)).max(20) });
+
+const HandOverBody = z.object({ agent: text(63) });
+
 const CuratorBody = z.object({ abort: text(100) });
 
 const IntroductionBody = z.object({
@@ -170,6 +174,8 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
             return json(200, await source.chronicle(url.searchParams.get("month") ?? undefined));
           case "curator":
             return json(200, await need(source.curator, "the curator's status").status());
+          case "names":
+            return json(200, { names: await need(source.nameHolders, "which names connections hold").call(source) });
           case "search": {
             const q = text(200).parse(url.searchParams.get("q") ?? "");
             const limit = z.coerce.number().int().min(1).max(20).optional().parse(url.searchParams.get("limit") ?? undefined);
@@ -209,6 +215,12 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
             return json(200, await need(source.addParty, "adding party members").call(source, PartyBody.parse(body), via));
           case "actions/domain":
             return json(200, await need(source.addDomains, "adding domains").call(source, DomainBody.parse(body).ids, via));
+          case "actions/hand-over":
+            return json(200, await need(source.handOver, "handing names over").call(source, HandOverBody.parse(body).agent, via));
+          case "actions/authority": {
+            const { agent, domains } = AuthorityBody.parse(body);
+            return json(200, await need(source.setAuthority, "setting what agents are responsible for").call(source, agent, domains, via));
+          }
           case "actions/introduction":
             return json(200, await need(source.introduction, "introductions").call(source, IntroductionBody.parse(body), via));
           case "actions/curator":

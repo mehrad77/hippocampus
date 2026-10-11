@@ -5,6 +5,7 @@ import {
   StoreConflictError,
   VaultError,
   auditChanges,
+  hasAuthority,
   parseActorTrailer,
   parseConfig,
   type Actor,
@@ -105,7 +106,10 @@ export class AuditedStore implements PinnedStore {
     const actor = actorFor(meta.message, principal);
     if (isViolation(actor)) throw new AuditError([actor]);
     if (actor.kind === "agent" && principal.kind === "agent" && principal.credential && this.o.claims) {
-      const refused = this.o.claims.claim(actor.id, principal.credential, principal.agent !== undefined);
+      const bound = principal.agent !== undefined;
+      // Only worth reading the card for a name whose connection was revoked.
+      const responsible = !bound && this.o.claims.released(actor.id) && (await hasAuthority(reads, actor.id));
+      const refused = this.o.claims.claim(actor.id, principal.credential, bound, responsible);
       if (refused) throw new AuditError([{ path: COMMIT, rule: refused }]);
     }
     const violations = await auditChanges({ before: reads, changes, actor });

@@ -121,6 +121,7 @@ export type KeyKind = (typeof KEY_KINDS)[number];
 export const KEY_SCOPES = ["read", "remember", "goal", "quest", "curate"] as const;
 export type KeyScope = (typeof KEY_SCOPES)[number];
 
+// Also defined in packages/mcp/src/server.ts (SCOPES) and apps/worker/src/oauth.ts (SCOPE_LABELS).
 /** What each kind of key may do. Only `bound` keys choose (from `read`, `remember`, `goal`). */
 export const KIND_SCOPES: Record<KeyKind, readonly KeyScope[]> = {
   agent: ["read", "remember", "goal"],
@@ -143,6 +144,8 @@ export interface KeyRecord {
   agent?: string;
   scopes: KeyScope[];
   label: string;
+  /** The app it was made for (`claude-code`, `cursor`…); unset for older keys. */
+  app?: string;
   created: string;
   lastUsed?: string;
   /** The user who minted it; unset for keys from before sharing. */
@@ -160,6 +163,7 @@ export interface KeyRequest {
   label: string;
   agent?: string;
   scopes: KeyScope[];
+  app?: string;
 }
 
 export const MAX_KEYS_PER_VAULT = 50;
@@ -191,15 +195,17 @@ export function agentId(raw: unknown): string {
 
 /** `{ kind, label?, agent?, scopes? }` for a new key, checked and filled in. */
 export function keyRequest(body: unknown): KeyRequest {
-  const b = (body ?? {}) as { kind?: unknown; label?: unknown; agent?: unknown; scopes?: unknown };
+  const b = (body ?? {}) as { kind?: unknown; label?: unknown; agent?: unknown; scopes?: unknown; app?: unknown };
   const kind = b.kind as KeyKind;
   if (!KEY_KINDS.includes(kind)) throw new HttpError(400, `kind: expected one of ${KEY_KINDS.join(", ")}`, "INVALID");
   if (b.label !== undefined && typeof b.label !== "string") throw new HttpError(400, "label: expected text", "INVALID");
   const label = (b.label ?? "").trim();
   if (label.length > 80) throw new HttpError(400, "label: 80 characters at most", "INVALID");
+  // Only what a picker sends (`claude-code`); anything else is ignored rather than stored.
+  const app = typeof b.app === "string" && /^[a-z0-9][a-z0-9-]{0,29}$/.test(b.app) ? { app: b.app } : {};
   if (kind !== "bound") {
     if (b.agent !== undefined || b.scopes !== undefined) throw new HttpError(400, `${kind} keys have fixed scopes and no agent; use a bound key to choose`, "INVALID");
-    return { kind, label: label || (kind === "curator" ? "Curator" : "Any agent"), scopes: [...KIND_SCOPES[kind]] };
+    return { kind, label: label || (kind === "curator" ? "Curator" : "Any agent"), scopes: [...KIND_SCOPES[kind]], ...app };
   }
   const agent = agentId(b.agent);
   const allowed = KIND_SCOPES.bound;
@@ -210,7 +216,7 @@ export function keyRequest(body: unknown): KeyRequest {
   const unknown = asked.filter((s) => !allowed.includes(s as KeyScope));
   if (unknown.length) throw new HttpError(400, `scopes: unknown ${unknown.map(String).join(", ")}; choose from ${allowed.join(", ")}`, "INVALID");
   if (!asked.includes("read")) throw new HttpError(400, "scopes: every key needs read", "INVALID");
-  return { kind, label: label || agent, agent, scopes: allowed.filter((s) => asked.includes(s)) };
+  return { kind, label: label || agent, agent, scopes: allowed.filter((s) => asked.includes(s)), ...app };
 }
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -289,6 +295,8 @@ interface KeyRow {
   agent: string | null;
   scopes: string;
   label: string;
+  /** Null for keys from before the column (migration 0007). */
+  app?: string | null;
   created: string;
   last_used: string | null;
 }
@@ -362,6 +370,7 @@ function toKey(r: KeyRow): KeyRecord {
     ...(r.agent ? { agent: r.agent } : {}),
     scopes,
     label: r.label,
+    ...(r.app ? { app: r.app } : {}),
     created: r.created,
     ...(r.last_used ? { lastUsed: r.last_used } : {}),
     ...(r.created_by ? { createdBy: r.created_by } : {}),
@@ -755,10 +764,10 @@ export class Registry {
     const token = newToken();
     const hash = await hashToken(token);
     const row = await this.one<KeyRow>(
-      `INSERT INTO keys (hash, vault_id, kind, agent, scopes, label, created, created_by)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM keys WHERE vault_id = ?) < ?
+      `INSERT INTO keys (hash, vault_id, kind, agent, scopes, label, app, created, created_by)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM keys WHERE vault_id = ?) < ?
        RETURNING *`,
-      [hash, vaultId, req.kind, req.agent ?? null, JSON.stringify(stored(req.scopes)), req.label, this.stamp(), createdBy ?? null, vaultId, MAX_KEYS_PER_VAULT],
+      [hash, vaultId, req.kind, req.agent ?? null, JSON.stringify(stored(req.scopes)), req.label, req.app ?? null, this.stamp(), createdBy ?? null, vaultId, MAX_KEYS_PER_VAULT],
     );
     if (!row) throw new HttpError(409, `A vault can have ${MAX_KEYS_PER_VAULT} keys; revoke some first.`, "TOO_MANY_KEYS");
     return { token, key: toKey(row) };
