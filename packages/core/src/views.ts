@@ -12,6 +12,7 @@ import type { ResolvedKind, ResolvedType } from "./schema-registry.ts";
 import { isSecretRef } from "./secrets.ts";
 import { fromLocal, localParts, parseFactKey } from "./text.ts";
 import type { Authority, Dispute, Vault } from "./vault.ts";
+import type { VaultStore } from "./store.ts";
 
 /** Authority as the dashboard shows it: any human is "human", whether or not the domain is theirs. */
 export type ShownAuthority = "human" | "authority" | "none";
@@ -167,6 +168,8 @@ export interface EpisodeView {
   confidence?: number;
   /** Older than the last sleep: it failed or didn't fit the batch. */
   waitedThroughSleep: boolean;
+  /** How many nights in a row it failed to consolidate, and why (the rule, never a value). Read from the review. */
+  failure?: { attempts: number; reason: string };
 }
 
 export interface ChronicleEntryView {
@@ -354,6 +357,8 @@ export interface Overview {
   lastSleep?: string;
   /** Domains the last sleep wanted that the config still lacks, for the human to add. */
   suggestedDomains?: string[];
+  /** Whether the vault has a secrets recipient: without one, secret facts are held back, not stored. */
+  secretsKey?: boolean;
   version: { vault: number; tool: number; status: "current" | "older" | "newer" };
   counts: {
     entities: number;
@@ -653,7 +658,7 @@ export function disputeView(ctx: ViewContext, d: Dispute): DisputeView {
   };
 }
 
-export function episodeView(ep: Episode, lastSleep?: string): EpisodeView {
+export function episodeView(ep: Episode, lastSleep?: string, failure?: { attempts: number; reason: string }): EpisodeView {
   return {
     id: ep.id,
     agent: ep.agent,
@@ -666,6 +671,7 @@ export function episodeView(ep: Episode, lastSleep?: string): EpisodeView {
     about: ep.secret || ep.confidential ? [] : ep.about,
     confidence: ep.confidence,
     waitedThroughSleep: !!lastSleep && ep.at < lastSleep,
+    ...(failure ? { failure } : {}),
   };
 }
 
@@ -711,19 +717,45 @@ export async function lastSleepAt(vault: Vault): Promise<string | undefined> {
   return (await readReview(vault)).generated;
 }
 
+/** Episodes that failed to consolidate, by id: nights failed in a row, and the rule it tripped. */
+export type Failures = Record<string, { attempts: number; reason: string }>;
+
+/** The review's `failures:` as found: the file is the vault's, so only well-formed entries pass. */
+export function failuresOf(raw: unknown): Failures {
+  const out: Failures = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [id, f] of Object.entries(raw)) {
+    const { attempts, reason } = (f ?? {}) as { attempts?: unknown; reason?: unknown };
+    if (/^[\w.-]{1,100}$/.test(id) && Number.isInteger(attempts) && (attempts as number) > 0) out[id] = { attempts: attempts as number, reason: typeof reason === "string" ? reason.slice(0, 200) : "" };
+  }
+  return out;
+}
+
+/** What the last sleep recorded about episodes that keep failing. Empty before any sleep, or when none did. */
+export async function readFailures(store: Pick<VaultStore, "read">): Promise<Failures> {
+  const raw = await store.read(REVIEW_PATH);
+  if (!raw) return {};
+  // Only sleep rewrites the review, so one it can't parse (a merge left markers in it) must not stop sleep: it counts as no history.
+  try {
+    return failuresOf(parseDoc(raw).data.failures);
+  } catch {
+    return {};
+  }
+}
+
 /**
  * What the morning review's frontmatter says: when the last sleep ran, and the domains it suggested
  * that the config still lacks (one added since drops out at once). The file is the vault's, so only ids pass.
  */
-async function readReview(vault: Vault): Promise<{ generated?: string; suggestedDomains: string[] }> {
+async function readReview(vault: Vault): Promise<{ generated?: string; suggestedDomains: string[]; failures: Failures }> {
   const raw = await vault.store.read(REVIEW_PATH);
-  if (!raw) return { suggestedDomains: [] };
+  if (!raw) return { suggestedDomains: [], failures: {} };
   const data = parseDoc(raw).data;
   const generated = typeof data.generated === "string" ? data.generated : data.generated instanceof Date ? data.generated.toISOString() : undefined;
   const known = new Set(vault.config.domains.map((d) => d.toLowerCase()));
   const listed = Array.isArray(data.suggested_domains) ? data.suggested_domains : [];
   const suggestedDomains = [...new Set(listed.filter((d): d is string => typeof d === "string").map((d) => d.toLowerCase()))].filter((d) => SLUG.test(d) && !known.has(d));
-  return { generated, suggestedDomains };
+  return { generated, suggestedDomains, failures: failuresOf(data.failures) };
 }
 
 // ── Findings shared with the morning review ─────────────────────────────────────
@@ -944,7 +976,7 @@ export async function overview(vault: Vault, read: ReadAs = {}): Promise<Overvie
   const lastSleep = review.generated;
   const from30 = addDays(ctx.today, -29);
   const chronicle30d = await readChronicle(vault, from30, ctx.today);
-  const inbox = vault.episodes.map((ep) => episodeView(ep, lastSleep));
+  const inbox = vault.episodes.map((ep) => episodeView(ep, lastSleep, review.failures[ep.id]));
 
   const byType: Record<string, number> = {};
   const facts = emptyStatusCounts();
@@ -983,6 +1015,7 @@ export async function overview(vault: Vault, read: ReadAs = {}): Promise<Overvie
     today: ctx.today,
     lastSleep,
     suggestedDomains: review.suggestedDomains,
+    secretsKey: !!config.secrets.recipient,
     version: { vault: config.version, tool: CURRENT_VAULT_VERSION, status: vaultVersionStatus(config) },
     counts: { entities: vault.entities.size, byType, facts, inbox: vault.episodes.length, disputes: vault.openDisputes().length, goals: questCounts, quests: questCounts },
     attention: {

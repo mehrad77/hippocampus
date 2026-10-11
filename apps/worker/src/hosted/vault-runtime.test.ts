@@ -233,6 +233,47 @@ describe("VaultRuntime: MCP", () => {
   });
 });
 
+describe("VaultRuntime: an app's curating switch", () => {
+  const APP: VaultGrant = { scopes: ["read", "remember", "goal", "curate"], via: "oauth", credential: "oauth:claude", curate: false };
+  it("holds the app's curate scope back until the owner switches it on, and tells the agent how", async () => {
+    const { connect, runtime } = await setup();
+    const tools = async (grant: VaultGrant) => (await (await connect(grant)).client.listTools()).tools.map((t) => t.name);
+    const off = await connect(APP);
+    expect((await off.client.listTools()).tools.map((t) => t.name)).not.toContain("sleep_start");
+    expect(off.client.getInstructions()).toMatch(/turned "May curate" off.*Setup → Connected apps/);
+    expect((await off.call("onboard", { agent: "residency-agent" })).text).toMatch(/can't run sleep right now.*Setup → Connected apps/);
+
+    await runtime.setCurate("oauth:claude", true);
+    const on = await connect(APP);
+    expect((await on.client.listTools()).tools.map((t) => t.name)).toEqual(expect.arrayContaining(["sleep_start", "sleep_answer", "sleep_skip"]));
+    expect(on.client.getInstructions()).toContain("sleep_start");
+    expect((await on.call("onboard", { agent: "residency-agent" })).text).not.toContain("can't run sleep");
+
+    // The switch beats what the app was connected with, in both directions.
+    await runtime.setCurate("oauth:claude", false);
+    expect(await tools({ ...APP, curate: true })).not.toContain("sleep_start");
+    expect(await tools({ ...APP, credential: "oauth:other", curate: true })).toContain("sleep_start");
+  });
+
+  it("lists what was switched, forgets it with the connection, and says who can curate when the app can't", async () => {
+    const { connect, runtime } = await setup();
+    await runtime.setCurate("oauth:claude", true);
+    expect(await runtime.curation(["oauth:claude", "oauth:never"])).toEqual({ "oauth:claude": true });
+    await runtime.releaseClaims(["oauth:claude"]);
+    expect(await runtime.curation(["oauth:claude"])).toEqual({});
+
+    // A member's app never had the scope: only an owner can let an app curate.
+    const member = await connect({ scopes: ["read", "remember", "goal"], via: "oauth", credential: "oauth:member" });
+    expect(member.client.getInstructions()).toMatch(/only a vault's owner can let an app curate/);
+    // A key with no curate scope points at the curator key.
+    const key = await connect(AGENT_KEY);
+    expect(key.client.getInstructions()).toMatch(/no curator key.*Nightly curation/);
+    // A curator key gets the usual instructions and nothing about not curating.
+    const curator = await connect(CURATOR_KEY);
+    expect(curator.client.getInstructions()).not.toContain("can't run sleep");
+  });
+});
+
 describe("VaultRuntime: sleep through a curator key", () => {
   it("runs a whole night over MCP, committing as the curator, with status and abort on the dashboard", async () => {
     const { repo, connect, api, storage } = await setup();
@@ -435,7 +476,7 @@ describe("VaultRuntime: dashboard", () => {
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
       account: { status: "approved", admin: false },
-      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, authority: true, names: true, handOver: true, introductions: true, curator: true, upgrade: true, setup: "hosted" },
+      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, secrets: true, authority: true, names: true, handOver: true, introductions: true, curator: true, upgrade: true, setup: "hosted" },
     });
 
     const r = await api("POST", "actions/remember", { text: "My residence card arrives next week." });
@@ -489,17 +530,20 @@ describe("VaultRuntime: dashboard humans", () => {
     };
     const member = await session(user("member", "flatmate"));
     expect(member.body.actor).toEqual({ kind: "human", id: "flatmate" });
-    expect(member.body.capabilities).toMatchObject({ remember: true, domains: true, upgrade: false, curator: false });
+    expect(member.body.capabilities).toMatchObject({ remember: true, domains: true, secrets: false, upgrade: false, curator: false });
     // Their human was taken out of the config: no seat, no fallback to the primary human.
     expect(await session(user("member", "nobody"))).toMatchObject({ status: 403, body: { code: "NO_HUMAN" } });
     expect(await session(user("member"))).toMatchObject({ status: 403 });
     const post = (path: string, body: unknown, u: DashboardUser) =>
       runtime.dashboard(new Request(`${ORIGIN}/dashboard/api/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), u);
     expect((await post("actions/domain", { ids: ["side-project"] }, user("member", "flatmate"))).status).toBe(200);
+    // The secrets key decides who can read the vault's secrets: a member can't set or replace it.
+    expect((await post("actions/secrets", { recipient: `age1${"q".repeat(58)}`, replace: true }, user("member", "flatmate"))).status).toBe(501);
+    expect(repo.files()["_hippo/config.yaml"]).not.toContain("age1qqqq");
     expect(repo.files()["_hippo/config.yaml"]).toMatch(/^domains: \[.*side-project\]$/m);
 
     const viewer = await session(user("viewer", "flatmate"));
-    expect(viewer.body.capabilities).toMatchObject({ remember: false, rule: false, goal: false, party: false, domains: false });
+    expect(viewer.body.capabilities).toMatchObject({ remember: false, rule: false, goal: false, party: false, domains: false, secrets: false });
     const write = await runtime.dashboard(new Request(`${ORIGIN}/dashboard/api/actions/remember`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "x" }) }), user("viewer", "flatmate"));
     expect(write.status).toBe(501);
     expect((await post("actions/domain", { ids: ["garden"] }, user("viewer", "flatmate"))).status).toBe(501);

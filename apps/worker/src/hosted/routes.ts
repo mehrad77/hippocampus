@@ -32,6 +32,8 @@ export interface HostedHooks extends AccountHooks {
   seatAgent?: (vault: MemberVault, agent: { id: string; title: string }, via: string) => Promise<void>;
   /** Connections to a vault were revoked (`key:<hash>`, `oauth:<grant>`): free the agent names they held. */
   releaseCredentials?: (vaultId: string, credentials: string[]) => Promise<void>;
+  /** An app connected over OAuth (by grant id) may or may not run sleep in a vault: its owner's switch. */
+  setCurate?: (vault: MemberVault, grant: string, on: boolean) => Promise<void>;
   /** Which connection holds which agent name in a vault. */
   claims?: (vault: MemberVault) => Promise<AgentClaim[]>;
 }
@@ -142,7 +144,24 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
         vaults: vaults.map((v) => ({ id: v.id, fullName: v.fullName, status: v.status })),
       });
     }
-    if (sub === "apps" && method === "GET") return json(200, { apps: deps.apps ? await deps.apps.list(account.id) : [] });
+    if (sub === "apps" && method === "GET") {
+      // Whether the viewer can flip an app's curating is theirs to know: only a vault's owner can.
+      const apps = (deps.apps ? await deps.apps.list(account.id) : []).map((a) => ({ ...a, mayCurate: a.mayCurate && vaults.find((v) => v.id === a.vault)?.role === "owner" }));
+      return json(200, { apps });
+    }
+    if (sub === "apps/curate" && method === "POST") {
+      const { id, on } = (body ?? {}) as { id?: unknown; on?: unknown };
+      if (typeof id !== "string" || !GRANT_ID.test(id)) throw new HttpError(400, "id: expected a connected app's id", "INVALID");
+      if (typeof on !== "boolean") throw new HttpError(400, "on: expected true or false", "INVALID");
+      const app = (deps.apps ? await deps.apps.list(account.id) : []).find((a) => a.id === id);
+      if (!app) throw new HttpError(404, "No such app: it may be disconnected already.", "NOT_FOUND");
+      const target = vaults.find((v) => v.id === app.vault);
+      if (target?.role !== "owner") throw new HttpError(403, "Only the vault's owner can let an app curate.", "OWNER_ONLY");
+      if (!app.mayCurate) throw new HttpError(409, "This app was connected before curating could be switched on. Disconnect it and connect it again.", "RECONNECT");
+      if (!hooks.setCurate) throw new HttpError(501, "Not available on this instance.", "UNSUPPORTED");
+      await hooks.setCurate(target, id, on);
+      return json(200, { ok: true });
+    }
     if (sub === "apps/revoke" && method === "POST") {
       const id = (body as { id?: unknown } | undefined)?.id;
       if (typeof id !== "string" || !GRANT_ID.test(id)) throw new HttpError(400, "id: expected a connected app's id", "INVALID");

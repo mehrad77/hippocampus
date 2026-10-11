@@ -1,5 +1,5 @@
 import { actorProps } from "./actor.ts";
-import { CONFIG_PATH, addDomains, domainIds, linkHuman, type HumanLogins } from "./config.ts";
+import { CONFIG_PATH, addDomains, domainIds, linkHuman, setRecipient, type HumanLogins } from "./config.ts";
 import { displayName, formatValue, getHumanGuidelines, getSummary, type Entity } from "./entity.ts";
 import { applyGoalUpdate, getObjectives, goalProps, goalStateOf, legacyClocks, nextDue, type Clock, type GoalState, type GoalUpdate, type Progress, type Repeat } from "./goal.ts";
 import { createEpisode, type NewEpisode } from "./episode.ts";
@@ -746,6 +746,25 @@ export class HippoService {
       vault.writeFile(HANDBOOK_PATH, renderHandbook(after));
       const message = signed(`config(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): add domain${added.length > 1 ? "s" : ""} ${added.join(", ")}`);
       return { message, result: { added, message } };
+    });
+  }
+
+  /**
+   * The human sets the vault's secrets recipient (an age public key), so secret facts can be stored from now on.
+   * The private key never reaches the vault or this method. A different recipient already set is kept unless `replace`.
+   */
+  async setSecretsRecipient(recipient: string, opts: { via?: string; replace?: boolean } = {}): Promise<{ changed: boolean; message?: string }> {
+    return this.mutate<{ changed: boolean; message?: string }>(async (vault) => {
+      const raw = await vault.store.read(CONFIG_PATH);
+      if (raw === undefined) throw new VaultError(`no ${CONFIG_PATH}; is this a vault?`);
+      const next = setRecipient(raw, recipient, opts);
+      if (next === raw) return { message: "", result: { changed: false } };
+      // The Handbook reads the config the vault was loaded with, so render it from one that has the recipient.
+      const after = await Vault.load(bufferedStore(vault.store, [{ path: CONFIG_PATH, content: next }]).store, this.opts);
+      vault.writeFile(CONFIG_PATH, next);
+      vault.writeFile(HANDBOOK_PATH, renderHandbook(after));
+      const message = signed(`config(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): set the secrets recipient`);
+      return { message, result: { changed: true, message } };
     });
   }
 

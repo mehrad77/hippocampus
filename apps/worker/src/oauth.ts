@@ -2,7 +2,7 @@ import { AuthorizationError, CimdFetchError, type ConsentDescription, type Grant
 import { LEGACY_GOAL_SCOPE, SCOPES, type Scope } from "@hippocampus/mcp";
 import { isScope } from "./auth.ts";
 import type { ConnectedApp, ConnectedApps } from "./hosted/account.ts";
-import { KIND_SCOPES, type Account, type KeyGrant, type KeyKind, type VaultRecord } from "./hosted/registry.ts";
+import { KIND_SCOPES, type Account, type KeyGrant, type KeyKind, type MemberVault, type VaultRecord } from "./hosted/registry.ts";
 import type { Caller } from "./hosted/routes.ts";
 import { LOGIN_PATH } from "./hosted/session.ts";
 import { vaultMeta, type VaultGrant, type VaultMeta, type VaultStub } from "./hosted/vault-port.ts";
@@ -112,6 +112,8 @@ export interface OAuthProps {
   accountId: number;
   /** Grants made before apps named their own agents are bound to one; new ones have none. */
   agent?: string;
+  /** Whether the person let the app curate when connecting it; the switch they can flip later starts here. */
+  curate?: boolean;
 }
 
 export type GrantProps = KeyProps | OAuthProps;
@@ -149,10 +151,10 @@ export function grantOf(raw: unknown, tokenScopes: string[], token?: string): { 
     const p = props as KeyProps;
     return { props: p, grant: { ...(p.agent ? { agent: p.agent } : {}), scopes: p.scopes.filter(isScope), via: "key", keyKind: p.keyKind, credential: keyCredential(p.keyId) } };
   }
-  if (props.kind === "oauth" && typeof props.accountId === "number" && (props.agent === undefined || typeof props.agent === "string")) {
+  if (props.kind === "oauth" && typeof props.accountId === "number" && (props.agent === undefined || typeof props.agent === "string") && (props.curate === undefined || typeof props.curate === "boolean")) {
     const p = props as OAuthProps;
     const grantId = token?.split(":")[1];
-    return { props: p, grant: { ...(p.agent ? { agent: p.agent } : {}), scopes: tokenScopes.filter(isScope), via: "oauth", ...(grantId ? { credential: oauthCredential(grantId) } : {}) } };
+    return { props: p, grant: { ...(p.agent ? { agent: p.agent } : {}), scopes: tokenScopes.filter(isScope), via: "oauth", ...(grantId ? { credential: oauthCredential(grantId) } : {}), ...(p.curate !== undefined ? { curate: !!p.curate } : {}) } };
   }
   return undefined;
 }
@@ -218,6 +220,8 @@ export function connectedApps(
   oauth: OAuthHelpers,
   /** A grant for a vault was revoked: free the agent name it held there. */
   revoked: (vaultId: string, credential: string) => Promise<void> = async () => {},
+  /** What the person switched since connecting these (credentials `oauth:<grant>`), in one vault. */
+  switched: (vaultId: string, credentials: string[]) => Promise<Record<string, boolean>> = async () => ({}),
 ): ConnectedApps & { revokeAll(accountId: number): Promise<void>; revokeVault(accountId: number, vaultId: string): Promise<void> } {
   const revoke = async (g: GrantSummary, accountId: number) => {
     await oauth.revokeGrant(g.id, oauthUserId(accountId));
@@ -234,8 +238,10 @@ export function connectedApps(
     } while (cursor);
     return out;
   }
-  const view = async (g: GrantSummary): Promise<ConnectedApp> => {
-    const meta = (g.metadata ?? {}) as { label?: unknown; agent?: unknown; vaultId?: unknown };
+  const view = async (g: GrantSummary, switches: Record<string, boolean>): Promise<ConnectedApp> => {
+    const meta = (g.metadata ?? {}) as { label?: unknown; agent?: unknown; vaultId?: unknown; curate?: unknown };
+    // The ceiling is the scope; whether it does now is the person's switch, else what they chose connecting it.
+    const ceiling = g.scope.includes("curate");
     const client = typeof meta.label === "string" && meta.label ? meta.label : ((await oauth.lookupClient(g.clientId).catch(() => null))?.clientName ?? g.clientId);
     return {
       id: g.id,
@@ -244,11 +250,22 @@ export function connectedApps(
       ...(typeof meta.agent === "string" ? { agent: meta.agent } : {}),
       ...(typeof meta.vaultId === "string" ? { vault: meta.vaultId } : {}),
       created: new Date(g.createdAt * 1000).toISOString(),
+      mayCurate: ceiling,
+      curate: ceiling && (switches[oauthCredential(g.id)] ?? meta.curate === true),
     };
   };
   return {
     async list(accountId) {
-      const apps = await Promise.all((await grants(accountId)).map(view));
+      const all = await grants(accountId);
+      const vaults = [...new Set(all.map((g) => (g.metadata as { vaultId?: unknown } | undefined)?.vaultId).filter((v): v is string => typeof v === "string"))];
+      const switches: Record<string, Record<string, boolean>> = {};
+      await Promise.all(
+        vaults.map(async (v) => {
+          const credentials = all.filter((g) => (g.metadata as { vaultId?: unknown } | undefined)?.vaultId === v && g.scope.includes("curate")).map((g) => oauthCredential(g.id));
+          switches[v] = credentials.length ? await switched(v, credentials).catch(() => ({})) : {};
+        }),
+      );
+      const apps = await Promise.all(all.map((g) => view(g, switches[String((g.metadata as { vaultId?: unknown } | undefined)?.vaultId)] ?? {})));
       return apps.sort((a, b) => b.created.localeCompare(a.created));
     },
     async revoke(accountId, id) {
@@ -326,17 +343,21 @@ export function authorizePage(deps: AuthorizeDeps): (request: Request) => Promis
     }
 
     // Granted under its old name too, so a rolled-back Worker (which knows only `quest`) keeps it.
-    const scope: Scope[] = [...SHARED_SCOPES, LEGACY_GOAL_SCOPE];
+    // An owner's app may also curate, as the most it can do: a token's scopes can't change later, so
+    // whether it does is a switch the person flips on the Connected apps list (starting at their choice here).
+    const owner = vault.role === "owner";
+    const curate = owner && form.get("curate") === "on";
+    const scope: Scope[] = [...SHARED_SCOPES, LEGACY_GOAL_SCOPE, ...(owner ? (["curate"] as const) : [])];
 
     const approved = await oauth.approveConsent(request, handle, { scope });
     const client = await oauth.lookupClient(approved.request.clientId).catch(() => null);
-    const props: OAuthProps = { kind: "oauth", vaultId: vault.id, accountId: caller.account.id };
+    const props: OAuthProps = { kind: "oauth", vaultId: vault.id, accountId: caller.account.id, ...(owner ? { curate } : {}) };
     // Named after the app itself: nothing to ask.
     const label = client?.clientName?.slice(0, 80) ?? "";
     const { redirectTo } = await oauth.completeAuthorization({
       request: approved.request,
       userId: oauthUserId(caller.account.id),
-      metadata: { label, vaultId: vault.id },
+      metadata: { label, vaultId: vault.id, ...(owner ? { curate } : {}) },
       scope: approved.request.scope,
       props,
     });
@@ -375,7 +396,7 @@ function notReady(caller: Caller): Response | undefined {
 /** What a connector app gets: what a shared key has (registry's `KIND_SCOPES.agent`). */
 const SHARED_SCOPES = KIND_SCOPES.agent.filter((x): x is Scope => isScope(x) && x !== LEGACY_GOAL_SCOPE);
 
-function consentPage(o: { details: ConsentDescription; handle: string; account: Account; vault: VaultRecord; vaults: VaultRecord[] }): string {
+function consentPage(o: { details: ConsentDescription; handle: string; account: Account; vault: MemberVault; vaults: MemberVault[] }): string {
   const { details } = o;
   const name = escape(details.clientName);
   const origin = details.clientDomain ? `Published by <strong>${escape(details.clientDomain)}</strong>.` : "This app registered itself; its name is not verified.";
@@ -384,6 +405,11 @@ function consentPage(o: { details: ConsentDescription; handle: string; account: 
       ? `<fieldset><legend>Vault</legend><label>It connects to <select name="vault">${o.vaults.map((v) => `<option value="${escape(v.id)}"${v.id === o.vault.id ? " selected" : ""}>${escape(v.fullName)}</option>`).join("")}</select></label>
 <small>One vault per connection: to use another vault in the same app, connect it again.</small></fieldset>`
       : `<input type="hidden" name="vault" value="${escape(o.vault.id)}"><p>Vault <strong>${escape(o.vault.fullName)}</strong>.</p>`;
+  // Only an owner can hand out the curator's view of secrets, so only a vault they own shows the choice (the server checks again).
+  const curateField = o.vaults.some((v) => v.role === "owner")
+    ? `<fieldset><legend>Curating</legend><label><input type="checkbox" name="curate" checked> Let this app run nightly curation (vaults you own)</label>
+<small>Curating turns what your agents saved into notes. It shows the app every memory in full, <strong>secret and confidential values included</strong>, so use an app and a provider you trust with them. Turn it off any time under Setup → Connected apps.</small></fieldset>`
+    : "";
   return `<h1>Connect ${name} to your vault?</h1>
 <p>${origin} Access will be sent to <strong>${escape(details.redirectHost)}</strong>.</p>
 ${details.redirectIsLoopback ? "<p><strong>This sends access to an app on your computer.</strong> Continue only if you just started connecting from it.</p>" : ""}
@@ -393,6 +419,7 @@ ${details.redirectIsLoopback ? "<p><strong>This sends access to an app on your c
 <input type="hidden" name="account" value="${o.account.id}">
 ${vaultField}
 <p><small>It can read the vault, remember, and update goals. Each agent in the app names itself (say, <code>chatgpt-home-finder</code>) and joins your Agents page with no authority: what it says counts as a rumor until you give it a domain there. Disconnect it from your settings at any time.</small></p>
+${curateField}
 <p><button name="decision" value="approve">Connect</button> <button name="decision" value="deny">Deny</button></p>
 </form>`;
 }

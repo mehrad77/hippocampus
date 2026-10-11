@@ -18,6 +18,7 @@ import { logEvent } from "./limits.ts";
 import { DailyCounter, QUOTAS, limitRuns, quotaOverrides, sizeGuard, type Quotas, type SizeGuarded } from "./quotas.ts";
 import { SqlRunStore, onPut } from "./run-store.ts";
 import { AgentClaims, type AgentClaim } from "./agent-claims.ts";
+import { ConnectionSettings } from "./connection-settings.ts";
 
 // One hosted vault, served from its own Durable Object. Everything here is plain TypeScript over
 // ports (the object's storage, a token minter, fetch), so it runs under Node in tests; vault-host.ts
@@ -48,6 +49,21 @@ export interface VaultGrant {
   keyKind?: "agent" | "curator" | "bound";
   /** Which connection this is (`key:<hash>`, `oauth:<grant>`), for holding agent names (agent-claims.ts). */
   credential?: string;
+  /** An app's choice when it was connected: may it curate. The person can change it later (`ConnectionSettings`). */
+  curate?: boolean;
+}
+
+/** Where the person turns an app's curating on or off, and who can sign in to do it. Told to agents that can't curate. */
+const CURATION_CONTROL = "Setup → Connected apps in the Hippocampus dashboard (/dashboard/setup/#connections)";
+
+/**
+ * What a connection that can't run sleep tells its agent, so the agent can tell the person: an app
+ * the owner could switch on, or a connection that has to be replaced by a curator.
+ */
+export function curationNote(grant: VaultGrant, ceiling: boolean): string {
+  if (grant.via === "oauth" && ceiling) return `This connection can't run sleep right now: the vault's owner has turned "May curate" off for this app. They can turn it on under ${CURATION_CONTROL}; tell them if they ask you to curate.`;
+  if (grant.via === "oauth") return `This connection can't run sleep: only a vault's owner can let an app curate. They can connect this app again as the owner and leave "Let this app run nightly curation" ticked, or set up a curator under Setup → Nightly curation in the Hippocampus dashboard (/dashboard/setup/#curation).`;
+  return "This connection can't run sleep: it has no curator key. The vault's owner can set one up under Setup → Nightly curation in the Hippocampus dashboard (/dashboard/setup/#curation); tell them if they ask you to curate.";
 }
 
 /** The signed-in person on the dashboard: the vault's owner, or someone it's shared with. */
@@ -232,6 +248,7 @@ export class VaultRuntime {
   private upgrading?: Promise<VaultUpgrade>;
   private readonly runs: RunStore;
   private readonly claims: AgentClaims;
+  private readonly settings: ConnectionSettings;
 
   constructor(private readonly d: VaultRuntimeDeps) {
     this.meta = d.meta;
@@ -249,6 +266,7 @@ export class VaultRuntime {
     this.writer = new ScribeQueue(this.reads());
     this.runs = this.leased(limitRuns(new SqlRunStore(d.storage.sql), this.counter, this.quotas.sleepRunsPerDay));
     this.claims = new AgentClaims(d.storage.sql, this.clock);
+    this.settings = new ConnectionSettings(d.storage.sql);
     this.relay = new SleepRelay({
       open: async (at) => {
         await this.ready();
@@ -424,13 +442,26 @@ export class VaultRuntime {
     if ((await this.d.storage.getAlarm()) === null) await this.d.storage.setAlarm(this.clock().getTime() + GC_EVERY_MS);
   }
 
+  /**
+   * The grant as it stands now. An app's token carries `curate` as the most it may do; the person's
+   * switch (set when they connected it, changeable later) says whether it does. `ceiling` is whether
+   * the token could curate at all.
+   */
+  private curating(token: VaultGrant): { grant: VaultGrant; ceiling: boolean } {
+    const ceiling = token.via === "oauth" && token.scopes.includes("curate");
+    if (!ceiling) return { grant: token, ceiling };
+    const on = (token.credential ? this.settings.curate(token.credential) : undefined) ?? token.curate ?? false;
+    return { grant: on ? token : { ...token, scopes: token.scopes.filter((s) => s !== "curate") }, ceiling };
+  }
+
   /** MCP over HTTP (stateless, JSON responses) for an authenticated grant. */
-  async mcp(request: Request, grant: VaultGrant): Promise<Response> {
+  async mcp(request: Request, token: VaultGrant): Promise<Response> {
     const started = Date.now();
     if (request.method !== "POST") return json(405, { error: "Method not allowed", code: "METHOD" }, { allow: "POST" });
     try {
       await this.keepAlarm();
       await this.ready();
+      const { grant, ceiling } = this.curating(token);
       const store = this.store(grantPrincipal(grant));
       // Named by its repo: loading the vault for its title would cost listing tools a full read.
       const server = createHippoServer({
@@ -442,6 +473,7 @@ export class VaultRuntime {
         // A shared connection's reads name their agent; only a name it holds sees confidential details.
         ...(!grant.agent && grant.credential ? { holds: (agent: string) => this.claims.holds(agent, grant.credential!) } : {}),
         relay: grant.scopes.includes("curate") ? this.relay : undefined,
+        ...(grant.scopes.includes("curate") ? {} : { curation: curationNote(grant, ceiling) }),
         jsonSchemaValidator: this.d.jsonSchemaValidator,
       });
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
@@ -482,7 +514,7 @@ export class VaultRuntime {
           ? awaitingUpgrade(config, { mode: "worker", vault }, human, upgradeVault)
           : { ...serviceSource(this.service(), { mode: "worker", vault }, { curator: this.curator, ...(human ? { human } : {}) }), upgradeVault, ...this.names() };
       // Viewers only read; only the owner upgrades the vault or runs the curator's controls.
-      const { upgradeVault: _upgrade, curator: _curator, ...shared } = full;
+      const { upgradeVault: _upgrade, curator: _curator, setSecretsRecipient: _key, ...shared } = full;
       const source = role === "viewer" ? readOnlySource(full) : role === "member" ? shared : full;
       const api = createDashboardApi({
         basePath: DASHBOARD_API,
@@ -539,7 +571,18 @@ export class VaultRuntime {
 
   /** A connection was revoked: the agent names it held are free again. */
   async releaseClaims(credentials: string[]): Promise<number> {
+    for (const c of credentials) this.settings.forget(c);
     return credentials.reduce((n, c) => n + this.claims.release(c), 0);
+  }
+
+  /** The person turns an app's curating on or off. */
+  setCurate(credential: string, on: boolean): void {
+    this.settings.setCurate(credential, on);
+  }
+
+  /** What the person chose for these connections since connecting them (the rest are on their defaults). */
+  curation(credentials: string[]): Record<string, boolean> {
+    return this.settings.curation(credentials);
   }
 
   /** Which connection holds which agent name (the credential is `key:<hash>` or `oauth:<grant>`). */
@@ -726,6 +769,14 @@ export class HostedVault {
 
   async claims(): Promise<AgentClaim[]> {
     return this.require().claimList();
+  }
+
+  async setCurate(credential: string, on: boolean): Promise<void> {
+    await this.require().setCurate(credential, on);
+  }
+
+  async curation(credentials: string[]): Promise<Record<string, boolean>> {
+    return this.require().curation(credentials);
   }
 
   /** Stop serving; storage stays until `destroy`, so a reconnect picks up where it left off. */

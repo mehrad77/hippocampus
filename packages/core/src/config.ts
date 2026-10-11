@@ -134,3 +134,22 @@ export function addDomains(raw: string, ids: string[]): string {
   const changed = unionList(doc, "domains", domainIds(ids), (n, d) => scalarValue(n)?.toLowerCase() === d);
   return changed ? renderConfig(doc) : raw;
 }
+
+/** An age X25519 recipient: `age1` and 58 bech32 characters. */
+export const AGE_RECIPIENT = /^age1[02-9ac-hj-np-z]{58}$/;
+
+/**
+ * The config (raw YAML) with `secrets.recipient` set, comments kept; `raw` itself when it already has it. Throws on
+ * something that isn't an age public key, and on a different recipient already set unless `replace`: secrets locked
+ * to the old key stay readable only with its identity, so swapping it is the human's explicit choice.
+ */
+export function setRecipient(raw: string, recipient: string, opts: { replace?: boolean } = {}): string {
+  const key = recipient.trim();
+  if (!AGE_RECIPIENT.test(key)) throw new VaultError("a secrets recipient is an age public key: it starts with age1 and is 62 characters long");
+  const doc = parseDocument(raw);
+  const current = doc.getIn(["secrets", "recipient"]);
+  if (current === key) return raw;
+  if (current && !opts.replace) throw new VaultError("this vault already has a secrets recipient; replacing it leaves secrets already stored readable only with the old key");
+  doc.setIn(["secrets", "recipient"], key);
+  return renderConfig(doc);
+}

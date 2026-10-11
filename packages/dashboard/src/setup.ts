@@ -410,6 +410,8 @@ export interface HostedInitResult {
   vault: HostedVault;
   /** `initialized`: the template went in; `adopted`: an existing vault got only its missing guardrail files. */
   mode: "initialized" | "adopted";
+  /** Adopted a vault that already has a different secrets recipient: the key made at setup was not used. */
+  recipientKept?: boolean;
 }
 
 export interface HostedKeyRequest {
@@ -440,6 +442,10 @@ export interface HostedConnectedApp {
   /** The vault it's connected to (its id). */
   vault?: string;
   created: string;
+  /** Whether it may run sleep now (its owner's switch). */
+  curate: boolean;
+  /** Whether the viewer can flip that switch: an owner, for an app connected with curating on offer. */
+  mayCurate: boolean;
 }
 
 /**

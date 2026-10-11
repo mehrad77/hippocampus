@@ -1,4 +1,4 @@
-import { CURATOR_RULES_PATH, CURRENT_VAULT_VERSION, buildVaultFiles } from "@hippocampus/core";
+import { CURATOR_RULES_PATH, CURRENT_VAULT_VERSION, buildVaultFiles, generateKeyPair, parseConfig, setRecipient } from "@hippocampus/core";
 import type { HttpError } from "@hippocampus/dashboard";
 import { TEMPLATE } from "@hippocampus/template";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -103,6 +103,20 @@ describe("bootstrapVault", () => {
     expect(Object.keys(files).filter((p) => !before.includes(p)).sort()).toEqual([".github/workflows/validate.yml", "CLAUDE.md", CURATOR_RULES_PATH].sort());
     expect(after.log()).toHaveLength(2);
     expect(after.log()[0]!.message).toBe("chore: add Hippocampus guardrail files [skip ci]\n\nHippo-Actor: bootstrap");
+  });
+
+  it("puts the setup's secrets key into an adopted vault that has none, and keeps one it already has", async () => {
+    const { gh, registry, installation, app, addRepo } = await setup();
+    const { recipient } = await generateKeyPair();
+    const other = await generateKeyPair();
+    const existing = await buildVaultFiles(TEMPLATE, { ...SETTINGS, now: NOW });
+    const adopt = (repo: { id: number; fullName: string }, key: string) =>
+      bootstrapVault({ app, registry, accountId: 4242, installationId: installation.id, repo, settings: { ...SETTINGS, recipient: key }, now: NOW });
+    await adopt(await addRepo("player/keyless", 9010, existing), recipient);
+    expect(parseConfig(gh.at("player/keyless").files()["_hippo/config.yaml"]!).secrets.recipient).toBe(recipient);
+    const keyed = { ...existing, "_hippo/config.yaml": setRecipient(existing["_hippo/config.yaml"]!, other.recipient) };
+    expect((await adopt(await addRepo("player/keyed", 9011, keyed), recipient)).recipientKept).toBe(true);
+    expect(parseConfig(gh.at("player/keyed").files()["_hippo/config.yaml"]!).secrets.recipient).toBe(other.recipient);
   });
 
   it("adopts an older vault as it is, and refuses one newer than the app", async () => {

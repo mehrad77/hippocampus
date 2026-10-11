@@ -1,10 +1,10 @@
-import { CURRENT_VAULT_VERSION, MemoryStore, Vault, decryptSecret, generateKeyPair, hash, normalizeName, parseDoc, searchDocs, type Change, type CommitMeta } from "@hippocampus/core";
+import { CURRENT_VAULT_VERSION, MemoryStore, Vault, decryptSecret, generateKeyPair, hash, normalizeName, parseDoc, readFailures, searchDocs, type Change, type CommitMeta } from "@hippocampus/core";
 import { describe, expect, it } from "vitest";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
 import { episode, now, script, setup } from "./__fixtures__/night.ts";
 import { ScriptedLLM } from "./llm.ts";
 import { claimsSchema } from "./prompts.ts";
-import { CURATOR_AUTHOR, describeEpisode, loadHouseRules, sleep } from "./sleep.ts";
+import { CURATOR_AUTHOR, SET_ASIDE_AFTER, describeEpisode, loadHouseRules, pickBatch, sleep } from "./sleep.ts";
 
 describe("sleep", () => {
   it("consolidates the inbox into canon, chronicle and review", async () => {
@@ -138,6 +138,32 @@ describe("sleep keeps secrets and half-done work out of the vault", () => {
     expect(await store.list("secrets")).toEqual([]);
   });
 
+  it("keeps no secret in the review's failure record, only the rule", async () => {
+    const store = await passportEpisode(true);
+    const llm = new ScriptedLLM()
+      .push("mentions", { entities: [{ name: "U12345678", type: "item", aliases: [], domains: [] }] })
+      .push("claims", { facts: [{ entity: "u12345678", field: "number", value: "U12345678", secret: true }], relations: [], quests: [] });
+    await sleep({ store, llm, now });
+    const failures = await readFailures(store);
+    expect(Object.values(failures)).toEqual([{ attempts: 1, reason: "a new note would be named after a secret value" }]);
+    expect((await store.read("_hippo/review.md"))!).not.toContain("U12345678");
+  });
+
+  it("counts the nights an episode fails in a row, and tries a stuck one after newer memories", async () => {
+    const { store } = await setup();
+    for (let night = 1; night <= SET_ASIDE_AFTER; night++) {
+      await sleep({ store, llm: new ScriptedLLM(), now });
+      expect(Object.values(await readFailures(store)).map((f) => f.attempts)).toEqual([night, night, night]);
+    }
+    expect(await store.read("_hippo/review.md")).toContain(`failed ${SET_ASIDE_AFTER} nights in a row; tried last`);
+    await store.write("inbox/home-finder/2026-09-28T100000-new.md", memory("home-finder", "2026-09-28T10:00:00Z", "fact", "Landlord confirmed the lease."));
+    const vault = await Vault.load(store, { now });
+    // Oldest first would pick a stuck one; a stuck one waits behind the new one, but is never dropped.
+    expect(pickBatch(vault, 1, await readFailures(store))[0]!.path).toContain("new");
+    expect(pickBatch(vault, 4, await readFailures(store))).toHaveLength(4);
+    expect(pickBatch(vault, 1)[0]!.path).not.toContain("new");
+  });
+
   it("doesn't log the text of secret-bearing episodes", async () => {
     const store = await passportEpisode(true);
     const lines: string[] = [];
@@ -187,7 +213,7 @@ describe("sleep keeps secrets and half-done work out of the vault", () => {
     expect(await store.list("inbox")).toEqual(["inbox/residency-agent/2026-09-27T100000-passport.md"]);
     expect(await store.read("items/passport.md")).toBeUndefined();
     expect(await store.read("characters/joao-silva.md")).toContain("landlord");
-    expect(await store.read("_hippo/review.md")).toContain("`inbox/residency-agent/2026-09-27T100000-passport.md` — refused to commit");
+    expect(await store.read("_hippo/review.md")).toContain("`inbox/residency-agent/2026-09-27T100000-passport.md` — contains a secret value (failed 1 night in a row)");
     expect(outsideInbox(store)).not.toContain("U12345678");
   });
 });
@@ -644,7 +670,54 @@ describe("review fixes: one episode never spoils the run, and private words stay
     expect(await store.list("goals")).toEqual(["goals/residence-permit.md", "goals/send-the-signed-lease.md"]);
     expect(await read(store, "goals/send-the-signed-lease.md")).toMatchObject({ owner: "[[player]]", counterparty: "[[landlord]]", due: "2026-10-05" });
     expect(await read(store, "goals/residence-permit.md")).toMatchObject({ owner: "[[residency-agent]]", due: "2026-11-30", status: "active" });
-    expect(report.consolidated[3]!.notes).toEqual(["residence-permit: status change not applied: campus-agent neither owns it nor has authority over it"]);
+    expect(report.consolidated[3]!.notes).toEqual(["residence-permit: status change not applied: campus-agent neither owns it nor has authority over it; set an owner on the goal or grant campus-agent authority"]);
+  });
+
+  it("a promise that names no owner belongs to the party member who reported it, and to nobody when an outsider did", async () => {
+    const store = fixtureStore({
+      "inbox/home-finder/2026-09-27T100000-a.md": memory("home-finder", "2026-09-27T10:00:00Z", "task", "Will book the flat viewing."),
+      "inbox/stranger-agent/2026-09-27T110000-b.md": memory("stranger-agent", "2026-09-27T11:00:00Z", "task", "Will water the plants."),
+    });
+    const llm = new ScriptedLLM()
+      .push("mentions", { entities: [] }, { entities: [] })
+      .push("claims", { ...none, commitments: [{ title: "Book the flat viewing" }] }, { ...none, commitments: [{ title: "Water the plants" }] })
+      .respond("summary", () => ({ summary: "A note." }));
+    const report = await sleep({ store, llm, now });
+    expect(report.failed).toEqual([]);
+    expect(await read(store, "goals/book-the-flat-viewing.md")).toMatchObject({ owner: "[[home-finder]]" });
+    expect((await read(store, "goals/water-the-plants.md")).owner).toBeUndefined();
+  });
+
+  it("a promise that matches an existing goal with no owner doesn't hand it to the agent that mentioned it", async () => {
+    const store = fixtureStore({
+      "goals/renew-the-lease.md": "---\ntype: goal\ntitle: Renew the lease\nstatus: active\n---\n\n## Notes\n",
+      "inbox/home-finder/2026-09-27T100000-a.md": memory("home-finder", "2026-09-27T10:00:00Z", "task", "Will renew the lease."),
+    });
+    const llm = new ScriptedLLM()
+      .push("mentions", { entities: [{ name: "Renew the lease", type: "goal", aliases: [], domains: [] }] })
+      .push("claims", { ...none, commitments: [{ title: "Renew the lease" }] })
+      .respond("summary", () => ({ summary: "A note." }));
+    await sleep({ store, llm, now });
+    expect((await read(store, "goals/renew-the-lease.md")).owner).toBeUndefined();
+  });
+
+  it("goes on when the review can't be parsed, and rewrites it", async () => {
+    const { store } = await setup();
+    await store.write("_hippo/review.md", "---\n<<<<<<< HEAD\nfailures: {\n=======\n---\n");
+    const report = await sleep({ store, llm: new ScriptedLLM(), now });
+    expect(report.failed).toHaveLength(3);
+    expect(Object.values(await readFailures(store)).map((f) => f.attempts)).toEqual([1, 1, 1]);
+  });
+
+  it("lists the run's warnings in the review, with the fix for a missing secrets recipient", async () => {
+    const { store } = await setup();
+    const config = (await store.read("_hippo/config.yaml"))!;
+    await store.write("_hippo/config.yaml", config.replace(/secrets:\n {2}recipient: age1\S+\n$/, ""));
+    await sleep({ store, llm: script(), now });
+    const review = (await store.read("_hippo/review.md"))!;
+    expect(review).toContain("What to do next");
+    expect(review).toContain("set secrets.recipient");
+    expect(review).not.toContain("U12345678");
   });
 
   it("a new note whose identity key belongs to an unrelated type is kept, with a merge proposal (finding 9)", async () => {

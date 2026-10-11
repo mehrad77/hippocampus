@@ -18,8 +18,9 @@ import { ConnectionsPanel, CurationSetup } from "./Connections.tsx";
 import { HostedOnboarding } from "./HostedOnboarding.tsx";
 import { AppInvitesPanel, IncomingInvites, MembersPanel } from "./HostedSharing.tsx";
 import { HostedVaultsPanel } from "./HostedVaults.tsx";
+import { SecretsPanel } from "./SecretsPanel.tsx";
 
-const SECTION: Record<string, string> = { access: "#account", install: "#sz-repo", vault: "#sz-repo", keys: "#connections", curator: "#curation" };
+const SECTION: Record<string, string> = { access: "#account", install: "#sz-repo", vault: "#sz-repo", keys: "#connections", curator: "#curation", secrets: "#secrets" };
 
 /**
  * Setup on the hosted app. Until the vault is ready it's the onboarding wizard; after that it's the
@@ -107,6 +108,7 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
         </Panel>
       </div>
 
+      {vault.role === "owner" && session.capabilities.secrets && <SecretsPanel vaultName={vault.fullName.split("/").pop() ?? vault.fullName} />}
       <HostedVaultsPanel status={status} />
       <MembersPanel session={session} status={status} />
       {vault.role !== "viewer" && <ConnectionsPanel status={status} />}

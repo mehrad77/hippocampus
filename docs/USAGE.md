@@ -114,7 +114,7 @@ Optionally, use the [obsidian-git](https://github.com/Vinzent03/obsidian-git) pl
 npx @mehrad77/hippocampus -v ~/vaults/my-vault secrets keygen
 ```
 
-This writes the public key into `_hippo/config.yaml` and the private identity to `~/.config/hippocampus/age-identity.txt`. **Back the identity up** (e.g. in a password manager). Without it, secret facts can't be decrypted. To read secrets:
+This writes the public key into `_hippo/config.yaml` and the private identity to `~/.config/hippocampus/age-identity.txt`. **Back the identity up** (e.g. in a password manager). Without it, secret facts can't be decrypted. Already have an age public key? `secrets set age1…` writes it instead of making an identity. On the hosted app, the dashboard's Setup page has a **Secrets key** panel that does the same in the browser. Until a vault has a key, secret facts are held back, and the sleep report says so. To read secrets:
 
 ```bash
 npx @mehrad77/hippocampus -v ~/vaults/my-vault secrets show passport
@@ -308,7 +308,7 @@ The setup page has snippets for Claude Code, Claude Desktop, Cursor, VS Code, Wi
 
 **Nightly curation.** **Setup → Nightly curation** asks where the curator runs (one of your own agents, such as Claude Code or a Grok bot, at no new charge; a cron line; or GitHub Actions, which needs Claude paid for), makes its key and shows what to run there. Give curation a bot of its own that only curates. In Claude Code, `/hippocampus:sleep-setup` does the same, step by step.
 
-**Sign-in apps (Claude.ai, ChatGPT; beta).** Add a custom connector with the URL `https://<your-instance>/mcp`. The app signs you in with GitHub and shows a consent page: pick the vault it connects to (one per connection), the agent id the app acts as (a party member, or a new one you can seat right away) and what it may do. Allowing curating makes the app a curator, with a curator key's view of secrets. Your account menu lists connected apps and disconnects them.
+**Sign-in apps (Claude.ai, ChatGPT; beta).** Add a custom connector with the URL `https://<your-instance>/mcp`. The app signs you in with GitHub and shows a consent page: pick the vault it connects to (one per connection). The app's agents name themselves on each call and join your Agents page. For a vault you own, the page also has a ticked box, **Let this app run nightly curation**: leave it ticked and the app can run sleep (`sleep_start` and the other tools), with a curator key's view of secrets. You can turn that off and on again any time under **Setup → Connected apps** (**May curate**), and only a vault's owner can. A member's app can't curate at all. An app connected before this existed has to be connected again to get the switch. An agent that can't run sleep is told why in its instructions and in `onboard`, and says where you can change it. Your account menu lists connected apps and disconnects them.
 
 **Reconnecting.** If the app is uninstalled or suspended, the repo is removed from the installation or deleted, or the repo is made public, the vault is disconnected and stops answering. The setup page says why. Undo it on GitHub (install again, make the repo private) and it reconnects. On GitLab, make the project private again, or connect GitLab again if you revoked the app.
 

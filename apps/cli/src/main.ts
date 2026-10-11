@@ -384,6 +384,21 @@ secrets
   });
 
 secrets
+  .command("set")
+  .argument("<recipient>", "an age public key (age1…) you already have")
+  .description(`Set the vault's secrets recipient from a public key you already have, instead of making a new identity.`)
+  .option("--replace", "replace a different recipient already set (secrets stored under the old one stay readable only with the old identity)")
+  .action(async (recipient: string, opts: { replace?: boolean }) => {
+    const r = await new HippoService(openStore()).setSecretsRecipient(recipient, { replace: opts.replace });
+    if (!r.changed) {
+      err(`✓ ${CONFIG_PATH} already has that recipient`);
+      return;
+    }
+    await commitLocal([CONFIG_PATH, HANDBOOK_PATH], r.message!, { asUser: true });
+    err(`✓ recipient ${recipient.trim()} written to ${CONFIG_PATH}`);
+  });
+
+secrets
   .command("show")
   .argument("<entity>")
   .argument("[field]")

@@ -36,6 +36,13 @@ export function ConnectionsPanel({ status }: { status: HostedStatus }) {
     void refreshSetup();
   };
 
+  const setCurate = async (r: ConnectionRow, on: boolean) => {
+    const res = await act.run(() => postJson("/account/apps/curate", { id: r.id, on }));
+    if (!res) return;
+    toast(on ? `${r.name} may run sleep now. It sees secret memories while it does.` : `${r.name} can't run sleep anymore.`, "ok");
+    void apps.reload();
+  };
+
   return (
     <Panel
       title={v("Connected apps", "Who's at the table")}
@@ -79,7 +86,14 @@ export function ConnectionsPanel({ status }: { status: HostedStatus }) {
                     <td data-label="Agents">
                       <AgentsOf row={r} />
                     </td>
-                    <td data-label="Can">{r.can}</td>
+                    <td data-label="Can">
+                      {r.can}
+                      {r.curating && (
+                        <label className="small row sz-tight-row">
+                          <input type="checkbox" checked={r.curating.on} disabled={act.busy} onChange={(e) => void setCurate(r, e.target.checked)} /> May curate (sees secrets)
+                        </label>
+                      )}
+                    </td>
                     <td data-label="Last used">{r.lastUsed ? <RelTime at={r.lastUsed} /> : <span className="muted">{r.source === "app" ? "—" : "not yet"}</span>}</td>
                     <td className="sz-tokens__act">
                       <span className="row sz-tight-row">

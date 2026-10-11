@@ -21,7 +21,7 @@ The connection needs a **curator key** (the `curate` scope). If there are no `sl
    - A question can come back when the vault changed meanwhile: answer it again.
 5. If an episode is unclear, or isn't yours to decide, call `sleep_skip` with a short reason. It stays in the inbox for the person.
    - If you have to stop partway, call `sleep_abort` with the run id. What it already committed stays; the rest stays in the inbox.
-6. Finish with a short report: how many memories were consolidated, failed and skipped. Don't quote memory content.
+6. Finish with a short report in plain words: how many memories were consolidated, failed and skipped, and how many are still queued. Then go through `report.next`: for each item say what it means and what the person does about it (each names the dashboard page), and explain any term in it. Don't invent steps or quote memory content. If `next` is empty, say nothing is waiting on them.
 
 ## Rules
 

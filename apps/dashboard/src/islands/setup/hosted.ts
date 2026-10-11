@@ -439,7 +439,10 @@ export interface ConnectionRow {
   lastUsed?: string;
   /** The exact kind and scopes, for the details. */
   kind: "single-agent key" | "shared key" | "curator key" | "sign-in app";
+  /** What it may do now: an app's curating shows only while its switch is on. */
   scopes: string[];
+  /** A sign-in app the viewer (an owner) can let curate or not, and whether it may now. */
+  curating?: { may: boolean; on: boolean };
 }
 
 /** The vault's keys and the sign-in apps connected to it (apps for other vaults are left out), newest first. */
@@ -459,16 +462,21 @@ export function connectionRows(keys: readonly HostedKeyInfo[], apps: readonly Ho
   }));
   const fromApps = apps
     .filter((a) => !a.vault || a.vault === vaultId)
-    .map((a): ConnectionRow => ({
-      id: a.id,
-      source: "app",
-      agents: spoken(`oauth:${a.id}`),
-      name: a.client,
-      actsAs: a.scopes.includes("curate") && !a.agent ? { curator: true } : a.agent ? { agent: a.agent } : { shared: true },
-      can: accessOf(a.scopes).title,
-      created: a.created,
-      kind: "sign-in app",
-      scopes: a.scopes,
-    }));
+    .map((a): ConnectionRow => {
+      // The token carries curate as the most the app may do; it counts only while the owner's switch is on.
+      const scopes = a.curate ? a.scopes : a.scopes.filter((s) => s !== "curate");
+      return {
+        id: a.id,
+        source: "app",
+        agents: spoken(`oauth:${a.id}`),
+        name: a.client,
+        actsAs: a.curate && !a.agent ? { curator: true } : a.agent ? { agent: a.agent } : { shared: true },
+        can: accessOf(scopes).title,
+        created: a.created,
+        kind: "sign-in app",
+        scopes,
+        ...(a.mayCurate ? { curating: { may: true, on: a.curate } } : {}),
+      };
+    });
   return [...fromKeys, ...fromApps].sort((a, b) => b.created.localeCompare(a.created));
 }

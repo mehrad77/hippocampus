@@ -219,8 +219,8 @@ describe("connections", () => {
         { id: "k3", kind: "curator", scopes: ["read", "curate"], label: "Curator", created: "2026-09-30T00:00:00Z" },
       ],
       [
-        { id: "g1", client: "Claude", scopes: ["read"], agent: "claude-web", vault: "v1", created: "2026-10-04T00:00:00Z" },
-        { id: "g2", client: "ChatGPT", scopes: ["read"], agent: "chatgpt", vault: "v2", created: "2026-10-05T00:00:00Z" },
+        { id: "g1", client: "Claude", scopes: ["read"], agent: "claude-web", vault: "v1", created: "2026-10-04T00:00:00Z", curate: false, mayCurate: false },
+        { id: "g2", client: "ChatGPT", scopes: ["read"], agent: "chatgpt", vault: "v2", created: "2026-10-05T00:00:00Z", curate: false, mayCurate: false },
       ],
       "v1",
       [
@@ -240,5 +240,17 @@ describe("connections", () => {
     expect(rows.find((r) => r.id === "k2")!.agents.map((a) => a.agent)).toEqual(["cursor-home-finder", "cursor-job-scout"]);
     expect(rows.find((r) => r.id === "g1")!.agents.map((a) => a.agent)).toEqual(["chatgpt-planner"]);
     expect(rows.find((r) => r.id === "k1")!.agents).toEqual([]);
+  });
+
+  it("counts an app's curating only while its switch is on, and offers the switch to an owner", () => {
+    const app = { id: "g3", client: "Claude", scopes: ["read", "remember", "goal", "curate"], vault: "v1", created: "2026-10-06T00:00:00Z", mayCurate: true };
+    const [off] = connectionRows([], [{ ...app, curate: false }], "v1");
+    expect(off).toMatchObject({ actsAs: { shared: true }, can: "Remember and recall", curating: { may: true, on: false } });
+    expect(off!.scopes).not.toContain("curate");
+    const [on] = connectionRows([], [{ ...app, curate: true }], "v1");
+    expect(on).toMatchObject({ actsAs: { curator: true }, curating: { may: true, on: true } });
+    expect(on!.scopes).toContain("curate");
+    // A member sees the app, but not the switch.
+    expect(connectionRows([], [{ ...app, curate: true, mayCurate: false }], "v1")[0]!.curating).toBeUndefined();
   });
 });

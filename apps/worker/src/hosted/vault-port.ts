@@ -27,6 +27,10 @@ export interface VaultStub {
   releaseClaims(credentials: string[]): Promise<number>;
   /** Which connection holds which agent name, for the Connections panel. */
   claims(): Promise<AgentClaim[]>;
+  /** The person turns an app's curating (`oauth:<grant>`) on or off. */
+  setCurate(credential: string, on: boolean): Promise<void>;
+  /** What the person chose for these connections since connecting them; the rest are on their defaults. */
+  curation(credentials: string[]): Promise<Record<string, boolean>>;
   disconnect(reason: string): Promise<void>;
   /** Wipe the vault's Durable Object (account deletion). The repo stays. */
   destroy(): Promise<void>;
