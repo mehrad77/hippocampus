@@ -247,6 +247,16 @@ function brief(vault: Vault, e: Entity, opts: ReadAs & { limit?: number } = {}):
   return { ref: link(e.slug), type: e.fm.type, title: displayName(e), summary: truncate(getSummary(e), 400), facts: factViews(vault, e, { limit: 8, ...opts }) };
 }
 
+// `HippoService`, in file order:
+// - Plumbing: `vault` (fresh load per call), `searcher`, `mutate` (one commit per write).
+// - Agent tools, sized for context windows: `handbook`, `onboard`, `remember`, `recall`, `get`,
+//   `personBrief`, `neighbors`, `askCanon`, `briefing`, `updateGoal` (and its old name `updateQuest`).
+// - Dashboard reads, over the read models in views.ts: `overview`, `catalog`, `graph`, `chronicle`,
+//   `entityDetail`, `search`.
+// - Human actions: `rule` (disputes), `decideProposal`, `retract`, `addPartyMember`, `linkHuman`.
+// - Introductions: `introduce` (an agent asks), `approveIntroduction`, `dismissIntroduction`.
+// Above the class: the agent-facing shapes (`FactView`, `EntityView`, `PersonBrief`, …) and their builders.
+
 /** The operations agents perform on memory. Transport-agnostic: used by the MCP server and CLI. */
 export class HippoService {
   constructor(

@@ -7,8 +7,8 @@ Agents don't dump memory and read it back. They submit *episodes* (raw memories)
 ## Two repos: public tool, private memory
 
 ```
-  this repo (PUBLIC)                         your vault (PRIVATE GitHub repo, open in Obsidian)
-  ──────────────────                         ─────────────────────────────────────────────────
+  this repo (PUBLIC)                         your vault (PRIVATE GitHub or GitLab repo, in Obsidian)
+  ──────────────────                         ───────────────────────────────────────────────────────
   code · template · seeds · presets          HANDBOOK.md · goals/ · characters/ · chronicle/
   CLI on npm, hosted app on Cloudflare ──►   inbox/<agent>/*.md   ◄── agents, over MCP
                                              sleep: a curator agent (or `hippo sleep`) turns the inbox into canon
@@ -18,7 +18,7 @@ The vault uses the tool, and the tool never knows about any vault. Your memory n
 
 ## Quick start
 
-There are two ways in. Both keep your memory in a private GitHub repo that you own.
+There are two ways in. Both keep your memory in a private GitHub or GitLab repo that you own.
 
 ### The hosted app
 
@@ -26,7 +26,7 @@ A hosted Hippocampus runs the MCP server, the dashboard and the vault's single w
 
 1. **Sign in** with GitHub on the instance's welcome page, and ask for access. An admin approves accounts by hand.
 2. **Create an empty private repo** on GitHub. The setup page opens GitHub's form for you, already filled in.
-3. **Install the Hippocampus GitHub App** on that one repo (or, where the instance offers it, connect GitLab and pick a project), then name your campaign. A key for secret facts is made in your browser (only its public half goes to the vault), and the app sets the vault up in one commit.
+3. **Install the Hippocampus GitHub App** on that one repo (or, where the instance offers it, connect GitLab and pick a project), then name your vault. A key for secret facts is made in your browser (only its public half goes to the vault), and the app sets the vault up in one commit.
 4. **Connect your agents.** Mint an agent key and paste the snippet into Claude Code, Cursor or any MCP client, or add the MCP URL to Claude.ai or ChatGPT as a custom connector.
 5. **Set up a curator.** Mint a curator key for your best agent and run sleep with it (the Claude Code plugin's `/hippocampus:sleep`, on a schedule you pick), or turn on the GitHub Actions curator.
 
@@ -45,20 +45,20 @@ npx @mehrad77/hippocampus dashboard
 Or set it up by hand. Create a vault (omit `--seed` for an empty one, or pass your own seed directory; `hippo preset list` shows the presets):
 
 ```bash
-npx @mehrad77/hippocampus init ~/vaults/my-campaign --seed example-relocation
+npx @mehrad77/hippocampus init ~/vaults/my-vault --seed example-relocation
 npx @mehrad77/hippocampus init ~/vaults/my-memory --human sam --preset people developer
 ```
 
 Create a key for secret facts:
 
 ```bash
-npx @mehrad77/hippocampus -v ~/vaults/my-campaign secrets keygen
+npx @mehrad77/hippocampus -v ~/vaults/my-vault secrets keygen
 ```
 
 Push the vault to a **private** GitHub repo, open it in Obsidian, and connect your agents with `hippo serve`. Then run the curator nightly (here with LM Studio; `ollama`, `anthropic`, and `xai` also work):
 
 ```bash
-HIPPO_LLM_PROVIDER=lmstudio HIPPO_LLM_MODEL=google/gemma-4-26b-a4b-qat npx @mehrad77/hippocampus@0.1 -v ~/vaults/my-campaign sleep
+HIPPO_LLM_PROVIDER=lmstudio HIPPO_LLM_MODEL=google/gemma-4-26b-a4b-qat npx @mehrad77/hippocampus@0 -v ~/vaults/my-vault sleep
 ```
 
 The full guide, [docs/USAGE.md](docs/USAGE.md), covers connecting agents, the curator, scheduling, the daily review, disputes, upgrades, and vault CI. [SECURITY.md](SECURITY.md) explains what the hosted app can see.
@@ -82,11 +82,11 @@ It reads a local vault (`-v`), a GitHub repo (`--github`), or any Hippocampus MC
 npx @mehrad77/hippocampus dashboard --demo
 ```
 
-The hosted app serves the same dashboard at `/dashboard`, behind GitHub sign-in. Each account sees only its own vault. There it also walks you through setup, manages keys, shows the curator's runs, and lets you approve agents that introduced themselves.
+The hosted app serves the same dashboard at `/dashboard`, behind GitHub sign-in. A person can keep up to five vaults there, plus vaults others share with them, and each request reaches only those. There it also walks you through setup, manages keys, shows the curator's runs, and lets you approve agents that introduced themselves.
 
 ## MCP tools
 
-The hosted app serves these at `/mcp`. For local agents, `hippo serve --agent <id>` (stdio) or `hippo serve --http <port>` provides them:
+The hosted app serves these at `/mcp/<vault id>` (the plain `/mcp` still works, and the key decides the vault). For local agents, `hippo serve --agent <id>` (stdio) or `hippo serve --http <port>` provides them:
 
 | Tool | Purpose |
 | --- | --- |
@@ -97,7 +97,8 @@ The hosted app serves these at `/mcp`. For local agents, `hippo serve --agent <i
 | `get` / `neighbors` | Full entity note / graph walk |
 | `ask_canon` | The canonical answer to a factual question, with status and disputes |
 | `briefing` | "Previously on…": chronicle, changes, upcoming dates, overdue contacts, disputes; with `about`, a brief on one person before contacting them |
-| `update_goal` | Objectives, status, progress, due date, owner, counterparty, repeat (`update_quest` is its old name) |
+| `update_goal` | Objectives, status, progress, due date, owner, counterparty, repeat |
+| `update_quest` | Alias: the old name of `update_goal`, kept for agents set up before goals |
 | `sleep_start`, `sleep_answer`, `sleep_skip`, `sleep_status`, `sleep_abort` | Curator keys only: run sleep as the vault's curator, one question at a time |
 
 ## How facts stay honest
@@ -123,22 +124,7 @@ pnpm test
 pnpm typecheck
 ```
 
-| Path | What |
-| --- | --- |
-| `packages/core` | Schemas, the schema registry (types, kinds, capabilities), markdown and managed regions, vault model, reconcile rules, goals, presets, search, handbook, service, secrets, audit, migrations |
-| `packages/curator` | LLM adapter (AI SDK), the sleep pipeline, and the relay that lets an agent run sleep |
-| `packages/mcp` | MCP tools and resources |
-| `packages/index`, `packages/embeddings`, `packages/store-github` | Search index, embedding adapters, the GitHub API store |
-| `apps/worker` | The hosted app on Cloudflare (not on npm; CI deploys the official instance, and you can run your own from a clone) |
-| `plugins/hippocampus` | The Claude Code plugin: MCP server plus the memory and sleep skills |
-| `packages/dashboard` | The dashboard's JSON API, its data sources (vault, GitHub, MCP), and the demo campaign |
-| `apps/dashboard` | The dashboard UI (Astro + React), including the guides and Session Zero |
-| `apps/cli` | The `hippo` CLI, published as `@mehrad77/hippocampus` |
-| `vault-template/` | What `hippo init` copies |
-| `seeds/example-relocation/` | Fictional example campaign |
-| `presets/` | People, developer, business, student and household presets: type and kind notes, templates, starter notes |
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPING.md](docs/DEVELOPING.md) (developing against your own private vault without leaking it). Coding agents: see [AGENTS.md](AGENTS.md). Architecture: [DESIGN.md](DESIGN.md).
+[AGENTS.md](AGENTS.md) has the project map, the commands and the conventions. Read [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPING.md](docs/DEVELOPING.md) (developing against your own private vault without leaking it). Architecture: [DESIGN.md](DESIGN.md).
 
 ## License
 
