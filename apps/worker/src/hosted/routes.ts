@@ -1,4 +1,4 @@
-import { HttpError, capabilities, errorResponse, json, readJson, type HostedSessionInfo } from "@hippocampus/dashboard";
+import { HttpError, VAULT_HEADER, capabilities, errorResponse, json, readJson, type HostedSessionInfo, type HostedVaults } from "@hippocampus/dashboard";
 import type { SqlDriver } from "@hippocampus/index";
 import { CALLBACK_PATH } from "../github-login.ts";
 import { GRANT_ID, confirmDeletion, deleteAccount, type AccountHooks, type ConnectedApps } from "./account.ts";
@@ -8,8 +8,8 @@ import { GITLAB_CALLBACK_PATH, GITLAB_CONNECT_PATH, GitLabAccess } from "./gitla
 import { gitlabConnect } from "./gitlab-connect.ts";
 import { checkGitLabVaults } from "./gitlab-health.ts";
 import { logEvent, rateLimit, type RateLimiter } from "./limits.ts";
-import { hostedSetup } from "./onboarding.ts";
-import { Registry, type Account, type VaultRecord } from "./registry.ts";
+import { hostedSetup, hostedVault } from "./onboarding.ts";
+import { MAX_VAULTS_PER_USER, Registry, type Account, type VaultRecord } from "./registry.ts";
 import { LOGIN_PATH, LOGOUT_PATH, createSessions, type SessionKV, type Sessions } from "./session.ts";
 import { apiUrlOf, type HostedSettings } from "./settings.ts";
 import { WEBHOOK_PATH, handleWebhook } from "./webhooks.ts";
@@ -40,10 +40,25 @@ export interface HostedDeps {
   log?: (line: string) => void;
 }
 
-/** Who's calling: a live session's account, and its vault if it has one. */
+/** Who's calling: a live session's account, its vaults, and the one this request is about. */
 export interface Caller {
   account: Account;
+  /** Every vault the person has, oldest first. */
+  vaults: VaultRecord[];
+  /** The vault VAULT_HEADER names, else the one used last, else the oldest. */
   vault?: VaultRecord;
+  /** VAULT_HEADER named a vault that isn't theirs (or is gone). */
+  unknownVault?: boolean;
+}
+
+/** Which of `vaults` a request means: the one it names, else the one used last, else the oldest. */
+export function pickVault(vaults: readonly VaultRecord[], asked: string | null, last?: string): { vault?: VaultRecord; unknownVault?: boolean } {
+  if (asked) {
+    const vault = vaults.find((v) => v.id === asked);
+    return vault ? { vault } : { unknownVault: true };
+  }
+  const vault = vaults.find((v) => v.id === last) ?? vaults[0];
+  return vault ? { vault } : {};
 }
 
 export interface HostedRoutes {
@@ -61,7 +76,7 @@ export interface HostedRoutes {
 }
 
 /** Sections of `/dashboard/api/` answered here whatever the vault's state. */
-const OWN = new Set(["setup", "admin", "account"]);
+const OWN = new Set(["setup", "admin", "account", "vaults"]);
 
 export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
   const { settings, kv } = deps;
@@ -81,8 +96,13 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
       found = (async () => {
         const signedIn = await sessions.current(request);
         if (!signedIn) return undefined;
-        const vault = await registry.vaultOf(signedIn.account.id);
-        return { account: signedIn.account, ...(vault ? { vault } : {}) };
+        const { account } = signedIn;
+        const vaults = await registry.vaultsOf(account);
+        const asked = request.headers.get(VAULT_HEADER)?.trim() || null;
+        const picked = pickVault(vaults, asked, account.lastVault);
+        // Remember an explicit choice, so a new tab (or the consent page) opens the same vault.
+        if (asked && picked.vault && account.lastVault !== picked.vault.id) await registry.setLastVault(account.user, picked.vault.id);
+        return { account, vaults, ...picked };
       })();
       memo.set(request, found);
     }
@@ -96,9 +116,17 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
     account: { status: account.status === "approved" ? "approved" : "waitlisted", admin: settings.admins.has(account.id) },
   });
 
-  async function accountRoute(request: Request, method: string, sub: string, body: unknown, { account, vault }: Caller): Promise<Response> {
+  async function accountRoute(request: Request, method: string, sub: string, body: unknown, { account, vault, vaults }: Caller): Promise<Response> {
     if (sub === "" && method === "GET") {
-      return json(200, { id: account.id, login: account.login, status: account.status, admin: settings.admins.has(account.id), ...(vault ? { vault: { id: vault.id, fullName: vault.fullName, status: vault.status } } : {}) });
+      return json(200, {
+        id: account.id,
+        login: account.login,
+        status: account.status,
+        admin: settings.admins.has(account.id),
+        identities: await registry.identities(account.user),
+        ...(vault ? { vault: { id: vault.id, fullName: vault.fullName, status: vault.status } } : {}),
+        vaults: vaults.map((v) => ({ id: v.id, fullName: v.fullName, status: v.status })),
+      });
     }
     if (sub === "apps" && method === "GET") return json(200, { apps: deps.apps ? await deps.apps.list(account.id) : [] });
     if (sub === "apps/revoke" && method === "POST") {
@@ -109,7 +137,7 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
     }
     if (sub === "delete" && method === "POST") {
       confirmDeletion(account, body);
-      await deleteAccount(account.id, { registry, app, gitlab, kv, hooks });
+      await deleteAccount(account, { registry, app, gitlab, kv, hooks });
       return json(200, { ok: true }, { "set-cookie": await sessions.end(request) });
     }
     throw new HttpError(404, `No such account route: ${method} ${sub}`, "NOT_FOUND");
@@ -129,6 +157,7 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
       const caller = await who(request);
       if (!caller) throw new HttpError(401, "Sign in with GitHub to continue.", "SIGN_IN", { login: LOGIN_PATH });
       vault = caller.vault?.id;
+      if (caller.unknownVault) throw new HttpError(404, "That vault isn't one of yours, or it was removed.", "NO_VAULT");
       const ready = caller.vault?.status === "ready";
       if (path === "session") {
         if (ready) return undefined;
@@ -149,11 +178,16 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
       const body = method === "POST" ? await readJson(request) : undefined;
       const sub = path.slice(section.length).replace(/^\//, "");
       if (section === "account") return done(await accountRoute(request, method, sub, body, caller));
+      if (section === "vaults") {
+        if (sub !== "" || method !== "GET") throw new HttpError(404, `No such route: ${method} ${path}`, "NOT_FOUND");
+        const found: HostedVaults = { vaults: caller.vaults.map((v) => hostedVault(v, settings)), ...(caller.vault ? { current: caller.vault.id } : {}), limit: MAX_VAULTS_PER_USER };
+        return done(json(200, found));
+      }
       let result: unknown;
       if (section === "admin") result = await admin(method, sub, body, url, caller.account);
       else {
-        const port = hostedSetup({ account: caller.account, settings, registry, app, gitlab, kv, now, onVaultChanged: hooks.onVaultChanged });
-        result = (sub === "" || sub === "status") && method === "GET" ? await port.status() : await port.handle(method, sub, body, url);
+        const port = hostedSetup({ caller, settings, registry, app, gitlab, kv, now, onVaultChanged: hooks.onVaultChanged, destroyVault: hooks.destroyVault, revokeVaultGrants: hooks.revokeVaultGrants });
+        result = (sub === "" || sub === "status") && method === "GET" ? await port.status(url) : await port.handle(method, sub, body, url);
       }
       return done(json(200, result ?? { ok: true }));
     } catch (err) {

@@ -74,6 +74,8 @@ export interface BootstrapOptions {
   gitlab?: GitLabAccess;
   registry: Registry;
   accountId: number;
+  /** The owning user; default the account's. */
+  owner?: string;
   /** The repo picked; `branch` defaults to `main` (an empty repo's first commit creates it). */
   repo: { id: number; fullName: string; branch?: string };
   settings: VaultSettings;
@@ -139,8 +141,6 @@ function target(o: BootstrapOptions): Target {
 export interface BootstrapResult {
   vault: VaultRecord;
   mode: "initialized" | "adopted";
-  /** A disconnected vault on another repo that this one replaced. */
-  replaced?: string;
 }
 
 /**
@@ -187,7 +187,7 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
   const built = p.mode === "initialize" ? await buildVaultFiles(TEMPLATE, { ...o.settings, seed, presets: o.presets, presetFiles: PRESETS, now: o.now }) : undefined;
   const files = built && t.provider === "gitlab" ? Object.fromEntries(Object.entries(built).filter(([path]) => !path.startsWith(".github/"))) : built;
 
-  const { vault, replaced } = await o.registry.claimVault({ accountId: o.accountId, provider: t.provider, installationId: t.installationId, repoId: info.id, fullName: info.fullName, branch: info.branch });
+  const { vault } = await o.registry.claimVault({ accountId: o.accountId, ...(o.owner ? { owner: o.owner } : {}), provider: t.provider, installationId: t.installationId, repoId: info.id, fullName: info.fullName, branch: info.branch });
   try {
     if (files) await store.initialize(files, bootstrapCommit("chore: initialize Hippocampus vault"));
     else if (p.mode === "adopt") {
@@ -199,7 +199,7 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
     throw t.explain(err, info.fullName);
   }
   const ready = (await o.registry.setVaultStatus(vault.id, "ready"))!;
-  return { vault: ready, mode: files ? "initialized" : "adopted", ...(replaced ? { replaced } : {}) };
+  return { vault: ready, mode: files ? "initialized" : "adopted" };
 }
 
 /** GitHub's refusals, in words that say what to do about them. */

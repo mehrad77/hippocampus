@@ -32,11 +32,13 @@ A good session follows the server's own instructions. Call `onboard` first. Use 
 
 ## On the hosted app
 
-Agents connect to your vault's address, `https://<your-instance>/mcp`, shown on the Setup page. They need a key, or, for Claude.ai and ChatGPT, a GitHub sign-in.
+Agents connect to your vault's own address, `https://<your-instance>/mcp/<vault id>`, shown on the Setup page. They need a key, or, for Claude.ai and ChatGPT, a GitHub sign-in.
+
+Every connection is to **one vault**. If you have several, each has its own address and its own keys, and a key used at another vault's address is refused. To use two vaults from one app, connect it twice; the snippets name each server after its vault, so they sit side by side.
 
 ### Keys
 
-Mint keys under **Setup → Connect agents**. A key is shown **once**: copy it, or copy one of the snippets next to it, which already carry it. Only a hash is stored, so a lost key can't be shown again; mint a new one. **Revoke** stops a key at once.
+Mint keys on the **Setup** page, for the vault the dashboard shows (switch vaults from the menu at the top of the sidebar). A key is shown **once**: copy it, or copy one of the snippets next to it, which already carry it. Only a hash is stored, so a lost key can't be shown again; mint a new one. **Revoke** stops a key at once.
 
 | Kind | Scopes | Use it for |
 | --- | --- | --- |
@@ -45,7 +47,7 @@ Mint keys under **Setup → Connect agents**. A key is shown **once**: copy it, 
 | Curator key | read, curate | The agent that runs sleep. Never give it to an everyday agent |
 
 ```bash
-claude mcp add --transport http hippocampus https://<your-instance>/mcp --header "Authorization: Bearer hippo_…"
+claude mcp add --transport http hippo-vault https://<your-instance>/mcp/<vault id> --header "Authorization: Bearer hippo_…"
 ```
 
 The Setup page also has snippets for `.mcp.json`, Cursor and VS Code.
@@ -55,7 +57,7 @@ The Setup page also has snippets for `.mcp.json`, Cursor and VS Code.
 ```bash
 claude plugin marketplace add mehrad77/hippocampus
 claude plugin install hippocampus@hippocampus
-export HIPPO_MCP_URL=https://<your-instance>/mcp
+export HIPPO_MCP_URL=https://<your-instance>/mcp/<vault id>
 export HIPPO_KEY=<your agent key>
 ```
 
@@ -63,12 +65,14 @@ Then `/hippocampus:memory` loads the habits: onboard first, read before acting, 
 
 ### Connectors (Claude.ai, ChatGPT)
 
-In Claude.ai or ChatGPT, add a custom connector with the URL `https://<your-instance>/mcp`. The app asks you to sign in with GitHub, then shows a consent page for your vault:
+In Claude.ai or ChatGPT, add a custom connector with the URL `https://<your-instance>/mcp`. The app asks you to sign in with GitHub, then shows a consent page:
+
+- pick the **vault** it connects to, if you have more than one;
 
 - pick the **agent id** the app acts as: a party member, to give it that lane, or a new id, which you can seat in the party right away;
 - choose what it may do: read and remember are ticked; goals and curating are yours to add. Curating shows the app every new memory in full, secret and confidential ones in plain text, so allow it only for an app you'd trust as the curator.
 
-Your account menu lists connected apps, and disconnects any of them.
+The **Connected apps** panel on the Setup page lists them, and disconnects any of them.
 
 <Aside kind="tip">
 

@@ -26,15 +26,25 @@
 //   hosted  POST keys              HostedKeyRequest → HostedMintedKey
 //   hosted  POST keys/revoke       { id } → { ok: true }
 //   hosted  POST curator-actions   { enable: boolean } → { enabled, path }  (the vault's nightly sleep on GitHub Actions)
+//   hosted  POST vaults/remove     { id, confirm: fullName } → { ok: true }  (forgets the vault; its repo stays)
+//
+// On the hosted app a person can have several vaults. Every request may name one in the `x-hippo-vault`
+// header (VAULT_HEADER); without it the one they used last is meant. Keys, curator-actions and the
+// vault's own API act on that vault.
 //
 // The hosted app's account routes, under `<base>/api/account/`:
 //
 //   GET  apps                      → { apps: HostedConnectedApp[] }  (apps connected over OAuth)
 //   POST apps/revoke               { id } → { ok: true }
 //
+// And `GET <base>/api/vaults` → HostedVaults: the person's vaults, for the switcher.
+//
 // Party members are added through the main API (`POST actions/party`), so it works in every writable mode.
 
 import type { Capabilities, SessionInfo } from "./source.ts";
+
+/** The request header naming which of the person's vaults a hosted request is about. */
+export const VAULT_HEADER = "x-hippo-vault";
 
 export type SetupState = "done" | "todo" | "warn" | "error" | "optional" | "na";
 
@@ -209,6 +219,16 @@ export interface HostedVault {
   provider?: "github" | "gitlab";
   /** The repo's page on its host, for links. */
   url?: string;
+  /** What the signed-in person may do with it. */
+  role?: "owner";
+}
+
+/** `GET /vaults`: the person's vaults, oldest first, and which one requests without VAULT_HEADER act on. */
+export interface HostedVaults {
+  vaults: HostedVault[];
+  current?: string;
+  /** How many vaults one person may have. */
+  limit: number;
 }
 
 /** The account's GitLab connection, when the instance offers GitLab. */
@@ -257,7 +277,12 @@ export interface HostedSetupStatus {
   gitlab?: HostedGitLab;
   /** The installation just made, until a vault is set up on it. */
   installation?: { id: number; repos: HostedRepo[]; error?: string };
+  /** The vault this status is about (VAULT_HEADER's, else the last one used). */
   vault?: HostedVault;
+  /** All of the person's vaults, oldest first. */
+  vaults?: HostedVault[];
+  /** How many vaults one person may have. */
+  vaultLimit?: number;
   keys?: HostedKeyInfo[];
   /** Whether the vault runs sleep nightly on GitHub Actions (its `.github/workflows/sleep.yml`). Absent when it couldn't be checked, and for GitLab vaults. */
   curatorActions?: boolean;
@@ -321,6 +346,8 @@ export interface HostedConnectedApp {
   scopes: string[];
   /** The agent it acts as. */
   agent?: string;
+  /** The vault it's connected to (its id). */
+  vault?: string;
   created: string;
 }
 
@@ -330,7 +357,8 @@ export interface HostedConnectedApp {
  */
 export interface HostedSetupPort {
   kind: "hosted";
-  status(): Promise<HostedSetupStatus>;
+  /** `?add` in `url`: the person is setting up another vault. */
+  status(url?: URL): Promise<HostedSetupStatus>;
   handle(method: "GET" | "POST", path: string, body: unknown, url: URL): Promise<unknown>;
 }
 

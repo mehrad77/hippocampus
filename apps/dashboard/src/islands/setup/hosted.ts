@@ -144,7 +144,27 @@ export function hostedProvider(ctx: HostedContext): HostedProvider {
 
 /** The repos the person can pick from, on the chosen host. */
 export function hostedRepos(ctx: HostedContext): HostedRepoView[] {
-  return hostedProvider(ctx) === "gitlab" ? (ctx.status.gitlab?.repos ?? []) : (ctx.status.installation?.repos ?? []);
+  const provider = hostedProvider(ctx);
+  const repos = provider === "gitlab" ? (ctx.status.gitlab?.repos ?? []) : (ctx.status.installation?.repos ?? []);
+  const mine = new Set((ctx.status.vaults ?? []).filter((v) => (v.provider ?? "github") === provider).map((v) => v.fullName.toLowerCase()));
+  return mine.size ? repos.map((r) => (mine.has(r.fullName.toLowerCase()) ? { ...r, yours: true } : r)) : repos;
+}
+
+/** Where the setup status comes from; `?add` also lists GitLab projects beside a ready vault. */
+export const statusKey = (adding: boolean) => (adding ? "/setup/status?add" : "/setup/status");
+
+/** The status as a new vault's setup sees it: nothing of the vault the tab shows, so the wizard starts fresh. */
+export function forNewVault(s: HostedStatus): HostedStatus {
+  const { vault: _vault, keys: _keys, curatorActions: _actions, ...rest } = s;
+  return { ...rest, items: s.items.filter((i) => i.id === "access") };
+}
+
+/** Whether the person may add another vault, and why not. */
+export function canAddVault(s: Pick<HostedStatus, "account" | "vaults" | "vaultLimit">): { ok: boolean; why?: string } {
+  if (s.account.status !== "approved") return { ok: false, why: "An admin approves your account first." };
+  const n = s.vaults?.length ?? 0;
+  if (s.vaultLimit !== undefined && n >= s.vaultLimit) return { ok: false, why: `You have ${n} vaults, the most one person can have here. Remove one to add another.` };
+  return { ok: true };
 }
 
 /** Whether the host is connected, so repos can be listed: the GitHub App installed, or GitLab signed in. */
@@ -243,6 +263,7 @@ export function repoVerdict(r: HostedRepoView, provider: HostedProvider = "githu
   if (!r.private && provider === "gitlab")
     return { usable: false, tone: "error", tag: "Not private", detail: "Anyone could read your memory there (internal projects are open to every signed-in user of the instance). Set it to Private in the project's visibility settings on GitLab, or pick another." };
   if (!r.private) return { usable: false, tone: "error", tag: "Public", detail: "Anyone could read your memory there. Make it private on GitHub (Settings → Danger Zone → Change visibility), or pick another." };
+  if (r.yours) return { usable: false, tone: "optional", tag: "Already yours", detail: "It's one of your vaults here already. Switch to it from the vault menu, or pick another repo." };
   if (r.adoptable) return { usable: true, tone: "done", tag: "Existing vault", detail: "Already a Hippocampus vault: it's adopted as it is, and only missing rule files are added." };
   if (r.empty === true) return { usable: true, tone: "done", tag: "Empty", detail: "Private and empty: ready to become your vault." };
   if (r.empty === false && r.adoptable === false) return { usable: false, tone: "error", tag: "Has files", detail: "It already holds other files. Pick an empty repo (one with only a README, LICENSE or .gitignore works too)." };

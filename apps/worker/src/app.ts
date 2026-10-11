@@ -8,7 +8,7 @@ import { isLive, type AccountStatus, type VaultRecord } from "./hosted/registry.
 import { createHostedRoutes, type Caller, type HostedRoutes } from "./hosted/routes.ts";
 import { hostedMissing, hostedSettings, type HostedSettings, type HostedVars } from "./hosted/settings.ts";
 import { vaultMeta, type DashboardUser, type VaultHosts, type VaultMeta, type VaultStub } from "./hosted/vault-port.ts";
-import { AUTHORIZE_PATH, REGISTER_PATH, authorizePage, connectedApps, grantOf, invalidToken, keyProps, providerOptions, type OAuthContext } from "./oauth.ts";
+import { AUTHORIZE_PATH, REGISTER_PATH, addressedVault, authorizePage, connectedApps, grantOf, invalidToken, keyProps, providerOptions, type OAuthContext } from "./oauth.ts";
 import { page, plain } from "./pages.ts";
 
 // The hosted Worker's request handling, independent of the Workers runtime: the OAuth provider in
@@ -134,6 +134,7 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
     hooks: {
       onVaultChanged,
       revokeOAuthGrants: (accountId) => apps.revokeAll(accountId),
+      revokeVaultGrants: (accountId, vaultId) => apps.revokeVault(accountId, vaultId),
       destroyVault: async (id) => {
         forget(id);
         await deps.vaults.get(id).destroy();
@@ -143,10 +144,15 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
   const provider = new OAuthProvider(options);
   const authorize = authorizePage({ publicUrl, oauth, who: (request) => routes.who(request), vault: (v) => stubFor(vaultMeta(v)) });
 
-  /** `/mcp` with a valid key or OAuth token. */
+  /** `/mcp` or `/mcp/<vault>` with a valid key or OAuth token. */
   async function mcp(request: Request, ctx: OAuthContext): Promise<Response> {
     const started = Date.now();
     const route = `${request.method} mcp`;
+    const addressed = addressedVault(new URL(request.url).pathname);
+    if (addressed === null) {
+      await log(route, started, 404, undefined, "NOT_FOUND");
+      return json(404, { error: "not_found", error_description: `MCP lives at ${publicUrl}/mcp/<vault id>.` });
+    }
     const found = grantOf(ctx.props, ctx.auth?.scope ?? []);
     if (!found) {
       await log(route, started, 401, undefined, "REAUTHORIZE");
@@ -154,6 +160,12 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
     }
     const { props, grant } = found;
     const done = async (res: Response, code?: string) => (await log(route, started, res.status, props.vaultId, code), res);
+    // One connection, one vault: a key or app used at another vault's address is refused rather than
+    // quietly writing where it belongs. Only its own vault is named, so addresses can't be probed.
+    if (addressed && addressed !== props.vaultId) {
+      const own = props.kind === "key" ? ` It belongs to ${props.vault.fullName}, at ${publicUrl}/mcp/${props.vaultId}.` : "";
+      return done(json(403, { error: "wrong_vault", error_description: `This ${props.kind === "key" ? "key" : "connection"} isn't for the vault at this address.${own} Use that address, or connect this vault with its own key.` }), "WRONG_VAULT");
+    }
     let meta: VaultMeta;
     let limitKey: string;
     if (props.kind === "key") {

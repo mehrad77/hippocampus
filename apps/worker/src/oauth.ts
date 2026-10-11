@@ -13,6 +13,19 @@ import { escape, html, page } from "./pages.ts";
 // that picks the agent it acts as and what it may do. Vault keys (`hippo_…`) work alongside.
 
 export const MCP_PATH = "/mcp";
+/** A vault id (a ULID). */
+const VAULT_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
+
+/**
+ * The vault an MCP address names: `/mcp/<vault id>` gives the id, plain `/mcp` gives undefined (the
+ * credential's vault), anything else null.
+ */
+export function addressedVault(pathname: string): string | undefined | null {
+  const rest = pathname.slice(MCP_PATH.length).replace(/\/+$/, "");
+  if (!rest) return undefined;
+  const id = rest.slice(1);
+  return rest.startsWith("/") && VAULT_ID.test(id) ? id : null;
+}
 export const AUTHORIZE_PATH = "/authorize";
 export const TOKEN_PATH = "/oauth/token";
 export const REGISTER_PATH = "/oauth/register";
@@ -126,7 +139,7 @@ export function invalidToken(publicUrl: string, description: string): Response {
 // ── Connected apps ───────────────────────────────────────────────────────────
 
 /** The account's OAuth grants, for its settings page and for deleting the account. */
-export function connectedApps(oauth: OAuthHelpers): ConnectedApps & { revokeAll(accountId: number): Promise<void> } {
+export function connectedApps(oauth: OAuthHelpers): ConnectedApps & { revokeAll(accountId: number): Promise<void>; revokeVault(accountId: number, vaultId: string): Promise<void> } {
   async function grants(accountId: number): Promise<GrantSummary[]> {
     const out: GrantSummary[] = [];
     let cursor: string | undefined;
@@ -138,9 +151,16 @@ export function connectedApps(oauth: OAuthHelpers): ConnectedApps & { revokeAll(
     return out;
   }
   const view = async (g: GrantSummary): Promise<ConnectedApp> => {
-    const meta = (g.metadata ?? {}) as { label?: unknown; agent?: unknown };
+    const meta = (g.metadata ?? {}) as { label?: unknown; agent?: unknown; vaultId?: unknown };
     const client = typeof meta.label === "string" && meta.label ? meta.label : ((await oauth.lookupClient(g.clientId).catch(() => null))?.clientName ?? g.clientId);
-    return { id: g.id, client, scopes: g.scope, ...(typeof meta.agent === "string" ? { agent: meta.agent } : {}), created: new Date(g.createdAt * 1000).toISOString() };
+    return {
+      id: g.id,
+      client,
+      scopes: g.scope,
+      ...(typeof meta.agent === "string" ? { agent: meta.agent } : {}),
+      ...(typeof meta.vaultId === "string" ? { vault: meta.vaultId } : {}),
+      created: new Date(g.createdAt * 1000).toISOString(),
+    };
   };
   return {
     async list(accountId) {
@@ -155,6 +175,9 @@ export function connectedApps(oauth: OAuthHelpers): ConnectedApps & { revokeAll(
     async revokeAll(accountId) {
       for (const g of await grants(accountId)) await oauth.revokeGrant(g.id, oauthUserId(accountId));
     },
+    async revokeVault(accountId, vaultId) {
+      for (const g of await grants(accountId)) if ((g.metadata as { vaultId?: unknown } | undefined)?.vaultId === vaultId) await oauth.revokeGrant(g.id, oauthUserId(accountId));
+    },
   };
 }
 
@@ -163,15 +186,16 @@ export function connectedApps(oauth: OAuthHelpers): ConnectedApps & { revokeAll(
 export interface AuthorizeDeps {
   publicUrl: string;
   oauth: OAuthHelpers;
-  /** The signed-in caller (the hosted session), and their vault. */
+  /** The signed-in caller (the hosted session), and their vaults. */
   who(request: Request): Promise<Caller | undefined>;
   /** The vault's Durable Object, configured. */
   vault(vault: VaultRecord): Promise<VaultStub>;
 }
 
 /**
- * `GET /authorize` signs the person in (or sends them to), then asks which agent the app acts as
- * and what it may do; `POST /authorize` grants that, for the signed-in account's vault.
+ * `GET /authorize` signs the person in (or sends them to), then asks which of their vaults the app
+ * connects to, which agent it acts as and what it may do; `POST /authorize` grants that. A grant is
+ * for one vault, as a key is.
  */
 export function authorizePage(deps: AuthorizeDeps): (request: Request) => Promise<Response> {
   const { oauth, publicUrl } = deps;
@@ -186,7 +210,8 @@ export function authorizePage(deps: AuthorizeDeps): (request: Request) => Promis
     }
     const blocked = notReady(caller);
     if (blocked) return blocked;
-    const vault = caller.vault!;
+    const vaults = readyVaults(caller);
+    const vault = vaults.find((v) => v.id === caller.vault?.id) ?? vaults[0]!;
     const details = await oauth.describeConsent(authRequest);
     // Without the party the form still works: a new id typed in.
     const party = await deps
@@ -194,7 +219,7 @@ export function authorizePage(deps: AuthorizeDeps): (request: Request) => Promis
       .then((stub) => stub.party())
       .catch(() => undefined);
     const consent = await oauth.beginConsent(authRequest);
-    return html(200, consentPage({ details, handle: consent.handle, account: caller.account, vault, party }), consent.headers);
+    return html(200, consentPage({ details, handle: consent.handle, account: caller.account, vault, vaults, party }), consent.headers);
   }
 
   async function decide(request: Request): Promise<Response> {
@@ -205,10 +230,11 @@ export function authorizePage(deps: AuthorizeDeps): (request: Request) => Promis
     if (!caller) return page(401, "You're signed out", "<p>Start connecting again from the app; you'll be asked to sign in.</p>");
     const blocked = notReady(caller);
     if (blocked) return blocked;
-    const vault = caller.vault!;
     const form = await request.formData();
     // Signed out and in as someone else since the page loaded: this approval isn't theirs to give.
     if (String(form.get("account") ?? "") !== String(caller.account.id)) return page(400, "You've switched accounts", "<p>Start again from the app you were connecting.</p>");
+    const vault = readyVaults(caller).find((v) => v.id === String(form.get("vault") ?? ""));
+    if (!vault) return page(400, "Pick one of your vaults", "<p>That vault isn't ready, or it isn't yours. Go back and pick another.</p>");
     const handle = String(form.get("handle") ?? "");
     if (form.get("decision") !== "approve") {
       const denied = await oauth.denyConsent(request, handle);
@@ -269,11 +295,14 @@ export function authorizePage(deps: AuthorizeDeps): (request: Request) => Promis
   };
 }
 
+const readyVaults = (caller: Caller) => caller.vaults.filter((v) => v.status === "ready");
+
 /** Connecting needs an approved account with a ready vault. */
-function notReady({ account, vault }: Caller): Response | undefined {
+function notReady(caller: Caller): Response | undefined {
+  const { account, vaults } = caller;
   const setup = `<p>Finish setting up at <a href="${SETUP_PAGE}">${SETUP_PAGE}</a>, then connect again from the app.</p>`;
   if (account.status !== "approved") return page(403, "Your account isn't approved yet", `<p>An admin has to approve <strong>@${escape(account.login)}</strong> before apps can connect.</p>${setup}`);
-  if (vault?.status !== "ready") return page(409, vault ? "Your vault isn't ready" : "You don't have a vault yet", setup);
+  if (!readyVaults(caller).length) return page(409, vaults.length ? "Your vault isn't ready" : "You don't have a vault yet", setup);
   return undefined;
 }
 
@@ -286,7 +315,7 @@ const SCOPE_LABELS: Record<CurrentScope, string> = {
 /** Pre-ticked whatever the app asks for: the rest is the person's call. */
 const DEFAULT_SCOPES = new Set<Scope>(["read", "remember"]);
 
-function consentPage(o: { details: ConsentDescription; handle: string; account: Account; vault: VaultRecord; party?: PartyMember[] }): string {
+function consentPage(o: { details: ConsentDescription; handle: string; account: Account; vault: VaultRecord; vaults: VaultRecord[]; party?: PartyMember[] }): string {
   const { details } = o;
   const name = escape(details.clientName);
   const origin = details.clientDomain ? `Published by <strong>${escape(details.clientDomain)}</strong>.` : "This app registered itself; its name is not verified.";
@@ -298,13 +327,20 @@ function consentPage(o: { details: ConsentDescription; handle: string; account: 
       `<label><input type="checkbox" name="scope" value="${s}"${DEFAULT_SCOPES.has(s) ? " checked" : ""}> ${escape(SCOPE_LABELS[s])}</label>` +
       (s === "curate" ? `<p class="warn"><small>Curating shows the app every new memory in full: <strong>secret memories in plain text, and confidential details</strong>. Allow it only for an app you trust with them.</small></p>` : ""),
   ).join("\n");
+  // The party listed is the preselected vault's; another vault's agents are named by typing a new id.
+  const vaultField =
+    o.vaults.length > 1
+      ? `<fieldset><legend>Vault</legend><label>It connects to <select name="vault">${o.vaults.map((v) => `<option value="${escape(v.id)}"${v.id === o.vault.id ? " selected" : ""}>${escape(v.fullName)}</option>`).join("")}</select></label>
+<small>One vault per connection: to use another vault in the same app, connect it again.</small></fieldset>`
+      : `<input type="hidden" name="vault" value="${escape(o.vault.id)}"><p>Vault <strong>${escape(o.vault.fullName)}</strong>.</p>`;
   return `<h1>Connect ${name} to your vault?</h1>
 <p>${origin} Access will be sent to <strong>${escape(details.redirectHost)}</strong>.</p>
 ${details.redirectIsLoopback ? "<p><strong>This sends access to an app on your computer.</strong> Continue only if you just started connecting from it.</p>" : ""}
-<p>Vault <strong>${escape(o.vault.fullName)}</strong>, as <strong>@${escape(o.account.login)}</strong>.</p>
+<p>Signed in as <strong>@${escape(o.account.login)}</strong>.</p>
 <form method="post">
 <input type="hidden" name="handle" value="${escape(o.handle)}">
 <input type="hidden" name="account" value="${o.account.id}">
+${vaultField}
 <fieldset><legend>It acts as</legend>
 ${party.length ? `<label>A party member <select name="agent">${members}</select></label>\n<p><small>Or a new agent (this wins if filled in):</small></p>` : ""}
 <label>New agent id <input name="new_agent" value="${party.length ? "" : escape(suggested)}" pattern="[a-z0-9][a-z0-9\\-]{0,62}"${party.length ? "" : " required"}></label>

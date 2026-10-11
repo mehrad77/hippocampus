@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ApiError, postJson } from "../../lib/api.ts";
 import { clearCache, useResource } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
 import { repoLinks } from "../../lib/vaultLinks.ts";
+import { addingVaultNow, stopAddingVault } from "../../lib/vault.ts";
 import { signOut } from "../../lib/session.ts";
 import type { AccountApp, HostedStatus, SessionInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -13,9 +14,10 @@ import { Personalization } from "../../ui/Personalization.tsx";
 import { ConfirmDialog, CopyLine, ErrorCallout, Facts, Field, ToneTag, useAction, useHash, useScrollToHash } from "./common.tsx";
 import { CuratorPanel } from "./Curator.tsx";
 import { HealthChecklist } from "./Health.tsx";
-import { parseHostedStep, VAULT_TONE } from "./hosted.ts";
+import { forNewVault, parseHostedStep, VAULT_TONE } from "./hosted.ts";
 import { HostedKeysPanel } from "./HostedKeys.tsx";
 import { HostedOnboarding } from "./HostedOnboarding.tsx";
+import { HostedVaultsPanel } from "./HostedVaults.tsx";
 
 const SECTION: Record<string, string> = { access: "#account", install: "#sz-repo", vault: "#sz-repo", keys: "#sz-keys" };
 
@@ -26,6 +28,7 @@ const SECTION: Record<string, string> = { access: "#account", install: "#sz-repo
 export function HostedSetup({ session, status }: { session: SessionInfo; status: HostedStatus }) {
   const hash = useHash();
   const ready = status.vault?.status === "ready";
+  if (addingVaultNow(location.search, hash)) return <HostedOnboarding session={session} status={forNewVault(status)} adding footer={<AccountPanel session={session} status={status} />} />;
   if (ready && !parseHostedStep(hash)) return <HostedManage session={session} status={status} hash={hash} />;
   return <HostedOnboarding session={session} status={status} footer={<AccountPanel session={session} status={status} />} />;
 }
@@ -36,6 +39,8 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
   const tone = VAULT_TONE[vault.status];
   const links = repoLinks({ kind: vault.provider ?? "github", repo: vault.fullName, branch: vault.branch, url: vault.url });
   useScrollToHash(hash, false);
+  // Back on the plain setup page: whatever vault was being added, that's over.
+  useEffect(stopAddingVault, []);
   return (
     <div className="stack sz">
       <header className="page-head">
@@ -84,6 +89,7 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
         </Panel>
       </div>
 
+      <HostedVaultsPanel status={status} />
       <HostedKeysPanel status={status} />
       {session.capabilities.curator && <CuratorPanel commits={links ? { url: links.commits, host: links.host } : undefined} />}
       <AppsPanel />
@@ -204,7 +210,7 @@ function AccountPanel({ session, status }: { session: SessionInfo; status: Hoste
           rows={[
             ["Signed in as", <strong>@{login}</strong>],
             ["Access", <ToneTag tone={word.tone} word={word.word} compact />],
-            ...(status.vault ? ([["Vault", <span className="mono sz-break">{status.vault.fullName}</span>]] as [string, React.ReactNode][]) : []),
+            ...((status.vaults?.length ?? 0) > 0 ? ([["Vaults", <a href="#vaults">{status.vaults!.map((x) => x.fullName).join(", ")}</a>]] as [string, React.ReactNode][]) : []),
             ...((session.account?.admin ?? status.account.admin) ? ([["Admin", <a href={href.page("admin")}>Yes: the admin page</a>]] as [string, React.ReactNode][]) : []),
           ]}
         />
@@ -242,11 +248,11 @@ function AccountPanel({ session, status }: { session: SessionInfo; status: Hoste
         <p>This can't be undone. Right away:</p>
         <ul className="sz-howto">
           <li>Every key stops working, and connected apps are signed out.</li>
-          <li>{status.vault?.provider === "gitlab" ? "Hippocampus' connection to your GitLab account is revoked." : "The Hippocampus app is uninstalled from your repository."}</li>
-          <li>Everything this Hippocampus keeps for you goes: your account, keys, the vault's search index and cache.</li>
+          <li>The Hippocampus app is uninstalled from your GitHub repositories, and its connection to your GitLab account (if any) is revoked.</li>
+          <li>Everything this Hippocampus keeps for you goes: your account, keys, and every vault's search index and cache.</li>
         </ul>
         <p>
-          <strong>Your repository stays on {status.vault?.provider === "gitlab" ? "GitLab" : "GitHub"}, untouched.</strong> {v(`Your memory is yours: delete the repository on ${status.vault?.provider === "gitlab" ? "GitLab" : "GitHub"} if you want it gone too.`, `The campaign is yours: delete the repository on ${status.vault?.provider === "gitlab" ? "GitLab" : "GitHub"} if you want it gone too.`)}
+          <strong>Your repositories stay where they are, untouched.</strong> {v("Your memory is yours: delete the repositories yourself if you want them gone too.", "The campaigns are yours: delete the repositories yourself if you want them gone too.")}
         </p>
         <Field label={<>Type your GitHub login ({login}) to confirm</>}>
           {(f) => <input id={f.id} className="input mono" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} aria-describedby={f.describedBy} />}

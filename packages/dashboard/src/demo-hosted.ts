@@ -1,6 +1,6 @@
 import { demoPresets } from "./demo-setup.ts";
 import { HttpError, errorResponse, json, readJson, securityHeaders } from "./http.ts";
-import type { HostedConnectedApp, HostedCuratorActionsResult, HostedInitResult, HostedKeyInfo, HostedMintedKey, HostedRepo, HostedSessionInfo, HostedSetupStatus, HostedVault, SetupItem, Snippet } from "./setup.ts";
+import { VAULT_HEADER, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem, type Snippet } from "./setup.ts";
 import { capabilities, type CuratorStatus, type DashboardSource, type SessionInfo } from "./source.ts";
 
 // The hosted app for `astro dev` (HIPPO_DEMO_HOSTED=1): an in-memory stand-in for the Worker's
@@ -12,7 +12,8 @@ import { capabilities, type CuratorStatus, type DashboardSource, type SessionInf
 //
 // `GET <base>/api/__demo/stage?to=<stage>` jumps straight to a stage: signed-out, waitlisted,
 // requested, approved, installed, ready. Add `&provider=gitlab` for the GitLab path: `installed`
-// then means GitLab is connected, and `ready` is a vault on GitLab.
+// then means GitLab is connected, and `ready` is a vault on GitLab. `ready` gives two vaults (one on
+// each host), so the vault switcher has something to switch; both show the same demo campaign.
 
 export type HostedDemoStage = "signed-out" | "waitlisted" | "requested" | "approved" | "installed" | "ready";
 
@@ -42,6 +43,9 @@ interface DemoAccount {
 
 const LOGIN = "player";
 const USER_ID = 1001;
+const VAULT_LIMIT = 5;
+/** Demo vault ids, shaped like the Worker's (ULIDs), so the dashboard takes them in `?vault=`. */
+const vaultId = (n: number) => `01J9Z8D3M0V${String(n).padStart(15, "0")}`;
 const STAGES: HostedDemoStage[] = ["signed-out", "waitlisted", "requested", "approved", "installed", "ready"];
 
 const REPOS: DemoRepo[] = [
@@ -76,9 +80,12 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     installation: undefined as { id: number } | undefined,
     /** GitLab connected (the demo's stand-in for the consent page). */
     gitlab: false,
-    vault: undefined as HostedVault | undefined,
-    keys: [] as HostedKeyInfo[],
-    curatorActions: false,
+    vaults: [] as HostedVault[],
+    /** The vault used last, opened when a request doesn't name one. */
+    last: undefined as string | undefined,
+    keys: {} as Record<string, HostedKeyInfo[]>,
+    curatorActions: {} as Record<string, boolean>,
+    made: 0,
     apps: [] as HostedConnectedApp[],
     run: undefined as CuratorStatus["run"],
     history: [] as CuratorStatus["history"],
@@ -98,7 +105,29 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     state.admin = true;
   };
 
-  const ready = () => state.vault?.status === "ready";
+  /** The vault a request is about: the one it names, else the one used last, else the oldest. */
+  const pick = (request: Request): HostedVault | undefined => {
+    const asked = request.headers.get(VAULT_HEADER)?.trim();
+    if (asked) {
+      const vault = state.vaults.find((v) => v.id === asked);
+      if (!vault) throw new HttpError(404, "That vault isn't one of yours, or it was removed.", "NO_VAULT");
+      state.last = vault.id;
+      return vault;
+    }
+    return state.vaults.find((v) => v.id === state.last) ?? state.vaults[0];
+  };
+  const ready = (request: Request) => pick(request)?.status === "ready";
+  /** The repo can become a vault: not one already, and the person has room for another. */
+  const claimable = (fullName: string, provider: "github" | "gitlab") => {
+    if (state.vaults.some((v) => v.fullName === fullName && (v.provider ?? "github") === provider)) throw new HttpError(409, `${fullName} is already one of your vaults.`, "ALREADY_VAULT");
+    if (state.vaults.length >= VAULT_LIMIT) throw new HttpError(409, `You can have ${VAULT_LIMIT} vaults; remove one first.`, "VAULT_LIMIT");
+  };
+  const addVault = (vault: Omit<HostedVault, "id" | "role">): HostedVault => {
+    const made = { ...vault, id: vaultId(++state.made), role: "owner" as const };
+    state.vaults.push(made);
+    state.keys[made.id] = [];
+    return made;
+  };
 
   /** Curator runs for a vault that has been around a while: two finished, one that ran out of time, one going now. */
   const seedCurator = () => {
@@ -108,7 +137,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       { id: "run-1", curator: "game-master", model: "qwen3.5-9b", started: ago(3 * DAY + 20 * 60_000), ended: ago(3 * DAY), outcome: "expired", consolidated: 2, failed: 0, skipped: 0, summaries: 0, remaining: 5, commits: 1 },
     ];
     state.run = { id: "run-4", curator: "archivist", model: "claude-sonnet-4-5", started: ago(3 * 60_000), leaseUntil: new Date(now().getTime() + 2 * 60_000).toISOString(), live: true, progress: { done: 3, total: 8, unit: "episode" } };
-    state.apps = [{ id: "grant-1", client: "Claude", scopes: ["read", "remember"], agent: "home-finder", created: ago(DAY / 2) }];
+    state.apps = [{ id: "grant-1", client: "Claude", scopes: ["read", "remember"], agent: "home-finder", vault: state.vaults[0]?.id ?? vaultId(1), created: ago(DAY / 2) }];
   };
 
   const toStage = (stage: HostedDemoStage, provider?: string) => {
@@ -125,12 +154,14 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     }
     if (at >= 5) {
       state.installation = undefined;
-      state.vault = gitlab ? gitlabVault(`${LOGIN}/lisbon-vault`) : { id: "vault-demo", fullName: `${LOGIN}/vault`, branch: "main", status: "ready" };
+      const github = { fullName: `${LOGIN}/vault`, branch: "main", status: "ready" as const, provider: "github" as const };
+      const lab = gitlabVault(`${LOGIN}/lisbon-vault`);
+      for (const v of gitlab ? [lab, github] : [github, lab]) addVault(v);
       seedCurator();
     }
   };
 
-  const gitlabVault = (fullName: string): HostedVault => ({ id: "vault-demo", fullName, branch: "main", status: "ready", provider: "gitlab", url: `${GITLAB_URL}/${fullName}` });
+  const gitlabVault = (fullName: string): Omit<HostedVault, "id"> => ({ fullName, branch: "main", status: "ready", provider: "gitlab", url: `${GITLAB_URL}/${fullName}` });
 
   const me = (): DemoAccount => ({ id: USER_ID, login: LOGIN, status: state.status, note: state.note, created: ago(DAY), updated: ago(HOUR), admin: state.admin });
 
@@ -159,15 +190,17 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     return out;
   }
 
-  function status(request: Request): HostedSetupStatus {
+  function status(request: Request, url: URL): HostedSetupStatus {
     const publicUrl = origin(request);
+    const vault = pick(request);
+    const adding = url.searchParams.has("add");
     const s: HostedSetupStatus = {
       kind: "hosted",
       account: { login: LOGIN, status: state.status === "approved" ? "approved" : state.status === "denied" ? "denied" : "waitlisted", requested: state.note !== undefined, admin: state.admin },
       installUrl: `${api}/__demo/install`,
       newRepoUrl: `${api}/__demo/new-repo`,
       providers: ["github", "gitlab"],
-      ...(state.status === "approved" && !ready()
+      ...(state.status === "approved" && (adding || vault?.status !== "ready")
         ? {
             gitlab: {
               connected: state.gitlab,
@@ -178,9 +211,11 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
           }
         : {}),
       ...(state.installation && state.status === "approved" ? { installation: { id: state.installation.id, repos: REPOS.map(({ id, fullName, private: p }) => ({ id, fullName, private: p })) } } : {}),
-      ...(state.vault ? { vault: state.vault, keys: state.keys, curatorActions: state.curatorActions } : {}),
+      ...(vault ? { vault, keys: state.keys[vault.id] ?? [], ...(vault.provider === "gitlab" ? {} : { curatorActions: !!state.curatorActions[vault.id] }) } : {}),
+      vaults: state.vaults,
+      vaultLimit: VAULT_LIMIT,
       publicUrl,
-      mcpUrl: `${publicUrl}/mcp`,
+      mcpUrl: vault ? `${publicUrl}/mcp/${vault.id}` : `${publicUrl}/mcp`,
       presets: demoPresets(),
       items: [],
     };
@@ -188,22 +223,23 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     return s;
   }
 
-  async function session(): Promise<SessionInfo | HostedSessionInfo> {
+  async function session(request: Request): Promise<SessionInfo | HostedSessionInfo> {
     const account = { status: state.status === "approved" ? ("approved" as const) : ("waitlisted" as const), admin: state.admin };
-    if (!ready()) return { mode: "setup", user: { login: LOGIN }, account, capabilities: { ...capabilities(undefined, "hosted"), setup: "hosted" } };
+    const v = pick(request);
+    if (v?.status !== "ready") return { mode: "setup", user: { login: LOGIN }, account, capabilities: { ...capabilities(undefined, "hosted"), setup: "hosted" } };
     const info = await source.info();
-    const v = state.vault!;
     return { ...info, mode: "worker", vault: { kind: v.provider === "gitlab" ? "gitlab" : "github", repo: v.fullName, branch: v.branch, ...(v.url ? { url: v.url } : {}) }, user: { login: LOGIN }, account, capabilities: { ...capabilities(source, "hosted"), curator: true } };
   }
 
   async function mint(request: Request, body: unknown): Promise<HostedMintedKey> {
-    if (!ready()) throw new HttpError(409, "Your vault isn't ready, so it can't take new keys.", "NOT_READY");
+    const vault = pick(request);
+    if (vault?.status !== "ready") throw new HttpError(409, "This vault isn't ready, so it can't take new keys.", "NOT_READY");
     const b = (body ?? {}) as { kind?: unknown; label?: unknown; agent?: unknown; scopes?: unknown };
     const kind = b.kind;
     if (kind !== "agent" && kind !== "curator" && kind !== "bound") throw new HttpError(400, "kind: expected one of agent, curator, bound", "INVALID");
     const label = typeof b.label === "string" ? b.label.trim().slice(0, 80) : "";
     let agent: string | undefined;
-    let scopes = kind === "curator" ? ["read", "curate"] : ["read", "remember", "goal", "quest"];
+    let scopes = kind === "curator" ? ["read", "curate"] : ["read", "remember", "goal"];
     if (kind === "bound") {
       agent = typeof b.agent === "string" ? b.agent.trim().toLowerCase() : "";
       if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(agent)) throw new HttpError(400, "agent: use lowercase letters, digits and dashes, like home-finder", "INVALID");
@@ -213,12 +249,12 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     }
     const token = `hippo_demo_${hex(16)}`;
     const key: HostedKeyInfo = { id: hex(32), kind, ...(agent ? { agent } : {}), scopes, label: label || (kind === "curator" ? "Curator" : kind === "bound" ? agent! : "Any agent"), created: now().toISOString() };
-    state.keys.push(key);
-    return { ...key, token, snippets: keySnippets(origin(request), token, kind) };
+    (state.keys[vault.id] ??= []).push(key);
+    return { ...key, token, snippets: keySnippets(origin(request), token, kind, vault) };
   }
 
   async function setupRoute(request: Request, method: string, sub: string, body: unknown, url: URL): Promise<unknown> {
-    if ((sub === "" || sub === "status") && method === "GET") return status(request);
+    if ((sub === "" || sub === "status") && method === "GET") return status(request, url);
     if (sub === "access" && method === "POST") {
       const note = (body as { note?: unknown } | undefined)?.note ?? "";
       if (typeof note !== "string" || note.length > 500) throw new HttpError(400, "note: up to 500 characters of text", "INVALID");
@@ -234,7 +270,8 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       return { gitlab: { login: LOGIN }, repos: GITLAB_REPOS };
     }
     if (sub === "gitlab/disconnect" && method === "POST") {
-      if (state.vault?.provider === "gitlab") throw new HttpError(409, "Your vault is on GitLab: disconnecting would cut it off. Delete your account instead.", "HAS_VAULT");
+      const onGitLab = state.vaults.find((v) => v.provider === "gitlab");
+      if (onGitLab) throw new HttpError(409, `${onGitLab.fullName} is on GitLab: disconnecting would cut it off. Remove that vault first.`, "HAS_VAULT");
       state.gitlab = false;
       return { ok: true };
     }
@@ -243,7 +280,6 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       return { installation: state.installation, repos: REPOS };
     }
     if (sub === "init" && method === "POST" && (body as { provider?: unknown } | undefined)?.provider === "gitlab") {
-      if (ready()) throw new HttpError(409, `You already have a vault: ${state.vault!.fullName}.`, "HAS_VAULT");
       if (!state.gitlab) throw new HttpError(409, "Connect your GitLab account first.", "NO_GITLAB_CONNECTION");
       const b = (body ?? {}) as { repoId?: unknown; campaign?: unknown };
       const repo = GITLAB_REPOS.find((r) => r.id === b.repoId);
@@ -251,15 +287,14 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       if (typeof b.campaign !== "string" || !b.campaign.trim()) throw new HttpError(400, "campaign: a name, up to 120 characters", "INVALID");
       if (!repo.private) throw new HttpError(400, `${repo.fullName} is not private: anyone could read this memory. Make it private on GitLab (Settings → General → Visibility), then try again.`, "PUBLIC_REPO");
       if (repo.empty === false && !repo.adoptable) throw new HttpError(409, `${repo.fullName} already has files; pick an empty project (or one with only a README, LICENSE or .gitignore).`, "NOT_EMPTY");
+      claimable(repo.fullName, "gitlab");
       await new Promise((r) => setTimeout(r, opts.initDelay ?? 1200));
-      state.gitlab = false;
-      state.vault = gitlabVault(repo.fullName);
-      seedCurator();
-      const result: HostedInitResult = { vault: state.vault, mode: repo.adoptable ? "adopted" : "initialized" };
+      const vault = addVault(gitlabVault(repo.fullName));
+      if (state.vaults.length === 1) seedCurator();
+      const result: HostedInitResult = { vault, mode: repo.adoptable ? "adopted" : "initialized" };
       return result;
     }
     if (sub === "init" && method === "POST") {
-      if (ready()) throw new HttpError(409, `You already have a vault: ${state.vault!.fullName}.`, "HAS_VAULT");
       if (!state.installation) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
       const b = (body ?? {}) as { repoId?: unknown; name?: unknown; campaign?: unknown };
       const name = b.name ?? b.campaign;
@@ -268,25 +303,39 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       if (typeof name !== "string" || !name.trim()) throw new HttpError(400, "name: a name, up to 120 characters", "INVALID");
       if (!repo.private) throw new HttpError(400, `${repo.fullName} is public: anyone could read this memory. Make it private on GitHub (Settings → Danger Zone → Change visibility), then try again.`, "PUBLIC_REPO");
       if (repo.empty === false && !repo.adoptable) throw new HttpError(409, `${repo.fullName} already has files; pick an empty repo (or one with only a README, LICENSE or .gitignore).`, "NOT_EMPTY");
+      claimable(repo.fullName, "github");
       await new Promise((r) => setTimeout(r, opts.initDelay ?? 1200));
       state.installation = undefined;
-      state.vault = { id: "vault-demo", fullName: repo.fullName, branch: "main", status: "ready" };
-      seedCurator();
-      const result: HostedInitResult = { vault: state.vault, mode: repo.adoptable ? "adopted" : "initialized" };
+      const vault = addVault({ fullName: repo.fullName, branch: "main", status: "ready", provider: "github" });
+      if (state.vaults.length === 1) seedCurator();
+      const result: HostedInitResult = { vault, mode: repo.adoptable ? "adopted" : "initialized" };
       return result;
     }
-    if (sub === "keys" && method === "GET") return { keys: state.keys };
+    if (sub === "vaults/remove" && method === "POST") {
+      const b = (body ?? {}) as { id?: unknown; confirm?: unknown };
+      const vault = state.vaults.find((v) => v.id === b.id);
+      if (!vault) throw new HttpError(404, "That vault isn't one of yours, or it was removed already.", "NOT_FOUND");
+      if (typeof b.confirm !== "string" || b.confirm.trim().toLowerCase() !== vault.fullName.toLowerCase()) throw new HttpError(400, `confirm: type ${vault.fullName} to remove it`, "CONFIRM");
+      state.vaults = state.vaults.filter((v) => v !== vault);
+      delete state.keys[vault.id];
+      state.apps = state.apps.filter((a) => a.vault !== vault.id);
+      if (state.last === vault.id) state.last = undefined;
+      return { ok: true };
+    }
+    const vault = pick(request);
+    if (sub === "keys" && method === "GET") return { keys: vault ? (state.keys[vault.id] ?? []) : [] };
     if (sub === "keys" && method === "POST") return mint(request, body);
     if (sub === "keys/revoke" && method === "POST") {
       const id = (body as { id?: unknown } | undefined)?.id;
-      state.keys = state.keys.filter((k) => k.id !== id);
+      if (vault) state.keys[vault.id] = (state.keys[vault.id] ?? []).filter((k) => k.id !== id);
       return { ok: true };
     }
     if (sub === "curator-actions" && method === "POST") {
-      if (!ready()) throw new HttpError(409, "No vault yet: set one up first.", "NO_VAULT");
-      if (state.vault?.provider === "gitlab") throw new HttpError(409, "Nightly sleep on a schedule runs on GitHub Actions; for a GitLab vault, run sleep with your own curator agent.", "GITHUB_ONLY");
-      state.curatorActions = !!(body as { enable?: unknown } | undefined)?.enable;
-      const result: HostedCuratorActionsResult = { enabled: state.curatorActions, path: ".github/workflows/sleep.yml" };
+      if (vault?.status !== "ready") throw new HttpError(409, "No vault yet: set one up first.", "NO_VAULT");
+      if (vault.provider === "gitlab") throw new HttpError(409, "Nightly sleep on a schedule runs on GitHub Actions; for a GitLab vault, run sleep with your own curator agent.", "GITHUB_ONLY");
+      const enabled = !!(body as { enable?: unknown } | undefined)?.enable;
+      state.curatorActions[vault.id] = enabled;
+      const result: HostedCuratorActionsResult = { enabled, path: ".github/workflows/sleep.yml" };
       return result;
     }
     throw new HttpError(404, `No such setup route: ${method} ${sub}`, "NOT_FOUND");
@@ -311,7 +360,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     }
     if (sub === "vaults" && method === "GET") {
       const vaults = [
-        ...(state.vault ? [{ id: state.vault.id, fullName: state.vault.fullName, status: state.vault.status, login: LOGIN, created: ago(HOUR) }] : []),
+        ...state.vaults.map((v) => ({ id: v.id, fullName: v.fullName, status: v.status, login: LOGIN, created: ago(HOUR) })),
         { id: "vault-2003", fullName: "player-two/harbor-notes", status: "ready", login: "player-two", created: ago(19 * DAY) },
         { id: "vault-2005", fullName: "campus-visitor/vault", status: "disconnected", reason: "uninstalled", login: "campus-visitor", created: ago(11 * DAY) },
       ];
@@ -321,7 +370,8 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
   }
 
   function accountRoute(method: string, sub: string, body: unknown): unknown {
-    if (sub === "" && method === "GET") return { id: USER_ID, login: LOGIN, status: state.status, admin: state.admin, ...(state.vault ? { vault: { id: state.vault.id, fullName: state.vault.fullName, status: state.vault.status } } : {}) };
+    if (sub === "" && method === "GET")
+      return { id: USER_ID, login: LOGIN, status: state.status, admin: state.admin, vaults: state.vaults.map((v) => ({ id: v.id, fullName: v.fullName, status: v.status })) };
     if (sub === "delete" && method === "POST") {
       const typed = (body as { confirm?: unknown } | undefined)?.confirm;
       if (typeof typed !== "string" || typed.trim().replace(/^@/, "").toLowerCase() !== LOGIN) throw new HttpError(400, `To delete your account, type your GitHub login (${LOGIN}) as confirm.`, "CONFIRM");
@@ -394,13 +444,18 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       if (!state.signedIn) throw new HttpError(401, "Sign in with GitHub to continue.", "SIGN_IN", { login: `${base}/auth/login` });
       const [section = ""] = rest.split("/");
       const sub = rest.slice(section.length).replace(/^\//, "");
-      if (rest === "session") return json(200, await session());
+      if (rest === "session") return json(200, await session(request));
       if (method !== "GET" && method !== "POST") throw new HttpError(405, "Method not allowed", "METHOD");
       const body = method === "POST" ? await readJson(request) : undefined;
       if (section === "setup") return json(200, await setupRoute(request, method, sub, body, url));
       if (section === "admin") return json(200, adminRoute(method, sub, body, url));
       if (section === "account") return json(200, accountRoute(method, sub, body));
-      if (!ready()) throw new HttpError(409, "No vault yet: finish setting one up first.", "NO_VAULT");
+      if (section === "vaults" && method === "GET") {
+        const current = state.vaults.length ? pick(request) : undefined;
+        const found: HostedVaults = { vaults: state.vaults, ...(current ? { current: current.id } : {}), limit: VAULT_LIMIT };
+        return json(200, found);
+      }
+      if (!ready(request)) throw new HttpError(409, "No vault yet: finish setting one up first.", "NO_VAULT");
       if (rest === "curator" && method === "GET") return json(200, curatorStatus());
       if (rest === "actions/curator" && method === "POST") {
         const run = (body as { abort?: unknown } | undefined)?.abort;
@@ -431,10 +486,11 @@ function page(title: string, body: string): Response {
 }
 
 /** The same connect snippets the Worker sends with a new key (apps/worker/src/hosted/onboarding.ts). */
-function keySnippets(publicUrl: string, token: string, kind: HostedKeyInfo["kind"]): Snippet[] {
-  const mcp = `${publicUrl}/mcp`;
+function keySnippets(publicUrl: string, token: string, kind: HostedKeyInfo["kind"], vault: HostedVault): Snippet[] {
+  const mcp = `${publicUrl}/mcp/${vault.id}`;
   const auth = `Bearer ${token}`;
-  const name = kind === "curator" ? "hippocampus-curator" : "hippocampus";
+  const slug = (vault.fullName.split("/").pop() ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "vault";
+  const name = `hippo-${slug}${kind === "curator" ? "-curator" : ""}`;
   const snippets: Snippet[] = [
     { label: "Claude Code", lang: "bash", code: `claude mcp add --transport http ${name} ${mcp} --header "Authorization: ${auth}"` },
     { label: "Any MCP client over HTTP (.mcp.json)", lang: "json", code: JSON.stringify({ mcpServers: { [name]: { type: "http", url: mcp, headers: { Authorization: auth } } } }, null, 2) },

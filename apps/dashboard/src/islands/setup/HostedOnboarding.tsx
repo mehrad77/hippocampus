@@ -5,6 +5,7 @@ import { toast } from "../../lib/events.ts";
 import { plural } from "../../lib/format.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
+import { switchVault } from "../../lib/vault.ts";
 import type { HostedInitResult, HostedMintedKey, HostedRepoView, HostedStatus, SessionInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { SkeletonPanel } from "../../ui/Parts.tsx";
@@ -15,6 +16,7 @@ import {
   agentPluginSnippets,
   draftProblems,
   draftReady,
+  forNewVault,
   hasKey,
   HOSTED_STEPS,
   hostedDefaultStep,
@@ -32,6 +34,7 @@ import {
   parseHostedStep,
   repoVerdict,
   STEP_ITEM,
+  statusKey,
   stepsFor,
   type CampaignDraft,
   type HostedContext,
@@ -120,7 +123,7 @@ function useDraft(login: string) {
 }
 
 /** Hosted Session Zero: from the waitlist to a vault in the person's own private repo, then agents and a curator. */
-export function HostedOnboarding({ session, status: initial, footer }: { session: SessionInfo; status: HostedStatus; footer?: React.ReactNode }) {
+export function HostedOnboarding({ session, status: initial, footer, adding }: { session: SessionInfo; status: HostedStatus; footer?: React.ReactNode; adding?: boolean }) {
   const { t, v } = useTerms();
   const hash = useHash();
   const login = initial.account.login;
@@ -128,8 +131,10 @@ export function HostedOnboarding({ session, status: initial, footer }: { session
   const [identity, setIdentity] = useState<string>();
   // Waiting on someone else (an admin, a bootstrap): look again every few seconds.
   const waiting = (initial.account.status === "waitlisted" && initial.account.requested) || initial.vault?.status === "bootstrapping";
-  const live = useResource<HostedStatus>("/setup/status", { poll: waiting ? 15_000 : undefined });
-  const status = live.data?.kind === "hosted" ? live.data : initial;
+  const live = useResource<HostedStatus>(statusKey(!!adding), { poll: waiting ? 15_000 : undefined });
+  const fresh = live.data?.kind === "hosted" ? live.data : initial;
+  // Adding a vault starts from nothing, whatever vault this tab shows.
+  const status = adding ? forNewVault(fresh) : fresh;
   const ctx: HostedContext = { status, picked, draftReady: draftReady(draft), provider };
   const host = hostedProvider(ctx);
   const steps = stepsFor(host);
@@ -171,9 +176,9 @@ export function HostedOnboarding({ session, status: initial, footer }: { session
         <div>
           <div className="page-head__kicker">
             {t("sessionZero")}
-            {session.campaign ? ` · ${session.campaign}` : ""}
+            {session.campaign && !adding ? ` · ${session.campaign}` : ""}
           </div>
-          <h1>{ready ? v("Finish setting up", "Finish setting the table") : v("Get started", "Set the table")}</h1>
+          <h1>{adding ? v("Add a vault", "Open another campaign") : ready ? v("Finish setting up", "Finish setting the table") : v("Get started", "Set the table")}</h1>
           <p className="page-head__lede">
             {v(
               `Your memory lives in a private ${noun} that you own. A few steps connect it here, then your agents. Nothing happens until you press a button, and every button says what it will do.`,
@@ -851,8 +856,9 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
     setIdentity(undefined);
     clearDraft();
     // The session turns into a vault session; its new scope drops what was cached for the setup-only one.
-    await invalidate((k) => k === "/session" || k === "/setup/status");
-    location.hash = "agents";
+    await invalidate((k) => k === "/session" || k.startsWith("/setup/status") || k === "/vaults");
+    // This tab shows the new vault from now on (with `?add`, that's a page load out of the add flow).
+    switchVault(res.vault.id, href.page("setup", "#agents"));
   };
 
   return (
@@ -888,14 +894,14 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
               one commit into <code>{repo?.fullName ?? "the repo"}</code>: the vault template (folders for notes, <code>_hippo/config.yaml</code> with your choices, Obsidian templates, rules for agents and a validation workflow){draft.seed ? ", plus the example notes" : ""}{draft.presets.length && !repo?.adoptable ? `, plus the ${draft.presets.join(", ")} ${draft.presets.length === 1 ? "preset" : "presets"}` : ""}. An existing vault gets only the rule files it's missing.
             </>,
           ],
-          ["contacts", "GitHub, through the app installed on that repository."],
+          ["contacts", host === "gitlab" ? "GitLab, through your GitLab connection." : "GitHub, through the app installed on that repository."],
           ["never", "touches your other repositories, or sees the private secrets key."],
         ]}
       />
       {action.error !== undefined && <ErrorCallout error={action.error} />}
       <div className="row">
         <button type="button" className="btn btn--primary" onClick={() => void go()} disabled={action.busy || !repo}>
-          <Icon name={action.busy ? "hourglass" : "sparkle"} className={action.busy ? "sz-spin" : undefined} /> {action.busy ? "Setting up… one commit to GitHub" : v("Set up the vault", "Open the vault")}
+          <Icon name={action.busy ? "hourglass" : "sparkle"} className={action.busy ? "sz-spin" : undefined} /> {action.busy ? `Setting up… one commit to ${host === "gitlab" ? "GitLab" : "GitHub"}` : v("Set up the vault", "Open the vault")}
         </button>
       </div>
     </div>

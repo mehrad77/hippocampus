@@ -1,5 +1,5 @@
 // Type-only re-exports: the browser bundle never includes core's code, only its shapes.
-import type { HostedConnectedApp, HostedRepo, HostedSetupStatus } from "@hippocampus/dashboard";
+import type { HostedConnectedApp, HostedRepo, HostedSetupStatus, HostedVaults } from "@hippocampus/dashboard";
 
 export type {
   Authority,
@@ -86,9 +86,10 @@ export type {
 
 /** `GET setup/status` on the hosted app. */
 export type HostedStatus = HostedSetupStatus;
+export type { HostedVaults };
 
-/** A repo in `GET setup/repos`; `adoptable` says it already holds a Hippocampus vault. */
-export type HostedRepoView = HostedRepo & { adoptable?: boolean };
+/** A repo in `GET setup/repos`; `adoptable` says it already holds a Hippocampus vault, `yours` that it's one of the person's vaults here already. */
+export type HostedRepoView = HostedRepo & { adoptable?: boolean; yours?: boolean };
 
 /** `GET account`. */
 export interface AccountInfo {
