@@ -58,7 +58,7 @@ export function nextSteps(report: SleepReport): NextStep[] {
       code: "failed-episodes",
       count: report.failed.length,
       say: `${plural(report.failed.length, "memory", "memories")} could not be consolidated and stay in the inbox. Most often a secret value would have ended up in a note's name or the daily log, which Hippocampus refuses.`,
-      fix: "Ask the agent that sent them to resend without secret values in names or titles. The reason for each is in the morning review (`_hippo/review.md`) and on the Inbox page.",
+      fix: "Ask the agent that sent them to resend without secret values in names or titles. The reason for each is on the Inbox page and in the morning review (`_hippo/review.md`). One that fails three nights in a row is tried last, so it never holds up newer memories.",
     });
 
   const disputes = report.consolidated.flatMap((c) => c.facts).filter((f) => f.decision === "dispute").length;

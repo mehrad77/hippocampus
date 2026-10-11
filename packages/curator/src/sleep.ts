@@ -62,6 +62,8 @@ import {
   type SearcherFactory,
   type VaultStore,
   NO_RECIPIENT,
+  readFailures,
+  type Failures,
 } from "@hippocampus/core";
 import type { LLM } from "./llm.ts";
 import { GOAL_STATUS_NOTE, nextSteps, renderNextSteps, suggestedDomains } from "./next-steps.ts";
@@ -157,7 +159,8 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
 
   const evidence = new Map<string, string[]>();
   const secrets: string[] = [];
-  for (const ep of pickBatch(vault, opts.limit)) {
+  const failures = await readFailures(opts.store);
+  for (const ep of pickBatch(vault, opts.limit, failures)) {
     log(`… ${ep.id} (${ep.agent}): ${ep.secret ? "(secret)" : ep.confidential ? "(confidential)" : ep.text.slice(0, 70).replace(/\s+/g, " ")}`);
     const before = vault.snapshot();
     // The vault as it stood before this episode, so its audit sees only what this episode changed.
@@ -193,7 +196,7 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
 
   // A suggestion that happens to spell one of the run's secrets would fail the whole run below.
   for (const r of report.consolidated) if (r.domains) r.domains = r.domains.filter((d) => !secrets.some((s) => s.trim().length >= 3 && d.includes(s.toLowerCase())));
-  finishRun(vault, report);
+  finishRun(vault, report, failures);
   // The backstop: each episode passed its own audit, so this one catches only what the run as a whole adds.
   const violations = await auditChanges({ before: opts.store, changes: vault.changes(), actor: { kind: "curator" }, forbidden: secrets });
   if (violations.length) throw new AuditError(violations);
@@ -206,9 +209,30 @@ export function beginRun(vault: Vault): string[] {
   return applyRulings(vault);
 }
 
-/** The episodes this run consolidates, oldest first. */
-export function pickBatch(vault: Vault, limit?: number): Episode[] {
-  return vault.episodes.slice(0, limit ?? vault.config.curator.batch_size);
+/** Nights an episode may fail in a row before it is tried last, so it can't keep newer memories out of the batch. */
+export const SET_ASIDE_AFTER = 3;
+
+/** The episodes this run consolidates, oldest first. One that keeps failing (`failures`) goes behind the rest, never dropped. */
+export function pickBatch(vault: Vault, limit?: number, failures: Failures = {}): Episode[] {
+  const stuck = (e: Episode) => (failures[e.id]?.attempts ?? 0) >= SET_ASIDE_AFTER;
+  const ordered = [...vault.episodes.filter((e) => !stuck(e)), ...vault.episodes.filter(stuck)];
+  return ordered.slice(0, limit ?? vault.config.curator.batch_size);
+}
+
+/** A failure's reason as the review keeps it: the rules an audit refused, never the paths (a path can hold a secret). */
+function reasonOf(error: string): string {
+  if (!error.startsWith("refused to commit:")) return error.slice(0, 200);
+  const rules = [...error.matchAll(/\(([^()]+)\)(?:;|$)/g)].map((m) => m[1]!);
+  return [...new Set(rules)].join("; ") || "refused by the audit";
+}
+
+/** What the review remembers about failing episodes after this run: still waiting in the inbox, with their nights failed in a row. */
+function nextFailures(vault: Vault, report: SleepReport, prior: Failures): Failures {
+  const waiting = new Set(vault.episodes.map((e) => e.id));
+  const out: Failures = {};
+  for (const [id, f] of Object.entries(prior)) if (waiting.has(id)) out[id] = f;
+  for (const f of report.failed) out[f.id] = { attempts: (prior[f.id]?.attempts ?? 0) + 1, reason: reasonOf(f.error) };
+  return out;
 }
 
 /** Entities whose summary this run rewrites, with the evidence gathered for each (never party notes). */
@@ -265,10 +289,10 @@ export async function redactRun(vault: Vault, store: VaultStore, evidence: Map<s
 }
 
 /** End a run: write the morning review and the handbook, and fill in what's left and what went wrong. */
-export function finishRun(vault: Vault, report: SleepReport): void {
+export function finishRun(vault: Vault, report: SleepReport, failures: Failures = {}): void {
   // Counted first: the review reports it.
   report.remaining = vault.episodes.length;
-  vault.writeFile(REVIEW_PATH, renderReview(vault, report));
+  vault.writeFile(REVIEW_PATH, renderReview(vault, report, nextFailures(vault, report, failures)));
   vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
   report.warnings.push(...vault.warnings);
 }
@@ -788,7 +812,7 @@ function looksLikeIdentifier(v: string): boolean {
 /** Most shape findings the review lists; the rest are counted. */
 const SHAPE_NOTES_MAX = 30;
 
-function renderReview(vault: Vault, report: SleepReport): string {
+function renderReview(vault: Vault, report: SleepReport, failures: Failures): string {
   const now = vault.nowIso();
   const ctx = viewContext(vault);
   const found = findings(ctx);
@@ -822,11 +846,14 @@ function renderReview(vault: Vault, report: SleepReport): string {
   const usage = fieldUsage(vault).map((u) => `- ${u.type}: ${u.fields.map((f) => `${f.field} ×${f.count}`).join(", ")}`);
   const domains = suggestedDomains(report);
   const steps = renderNextSteps(nextSteps(report));
-  const failed = report.failed.map((f) => `- \`${f.path}\` — ${f.error.slice(0, 160)}`);
+  const failed = report.failed.map((f) => {
+    const n = failures[f.id]?.attempts ?? 1;
+    return `- \`${f.path}\` — ${f.error.slice(0, 160)} (failed ${n} night${n === 1 ? "" : "s"} in a row${n >= SET_ASIDE_AFTER ? `; tried last from now on, so newer memories aren't held up` : ""})`;
+  });
   const orphans = found.orphans.map((r) => `- ${link(r.slug)} (${r.type}: ${r.title})`);
   const section = (title: string, items: string[]) => `## ${title}\n\n${items.length ? items.join("\n") : "- (none)"}\n`;
   return renderDoc(
-    { type: "review", generated: now, suggested_domains: domains.length ? domains.map((d) => d.id) : undefined },
+    { type: "review", generated: now, suggested_domains: domains.length ? domains.map((d) => d.id) : undefined, failures: Object.keys(failures).length ? failures : undefined },
     `# 🌙 Morning review
 
 Generated by the last sleep (${now.slice(0, 16).replace("T", " ")} UTC, model \`${report.model}\`): ${report.consolidated.length} episodes consolidated, ${report.failed.length} failed, ${report.remaining} still in the inbox.

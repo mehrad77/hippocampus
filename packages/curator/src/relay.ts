@@ -8,6 +8,7 @@ import {
   auditChanges,
   hash,
   miniSearcher,
+  readFailures,
   ulid,
   withTrailers,
   type SearcherFactory,
@@ -281,8 +282,8 @@ export class SleepRelay {
       if (!AGENT_ID.test(curator)) throw new VaultError(`curator "${i.curator}" must be an agent id: lowercase letters, digits and dashes`);
       const model = i.model.replace(/\s+/g, " ").trim().slice(0, 120);
       if (!model) throw new VaultError("model is required: the name of the model answering the questions");
-      const { vault } = await this.d.open(now);
-      const batch = pickBatch(vault, i.limit ?? Math.min(this.batch, vault.config.curator.batch_size)).map((e) => e.id);
+      const { vault, store } = await this.d.open(now);
+      const batch = pickBatch(vault, i.limit ?? Math.min(this.batch, vault.config.curator.batch_size), await readFailures(store)).map((e) => e.id);
       const state: RunState = {
         id: `run-${ulid(now.getTime()).toLowerCase()}`,
         curator,
@@ -474,7 +475,7 @@ export class SleepRelay {
       }
     }
     if (!summaries) report.warnings.push("the run's lease passed: finished without summaries");
-    finishRun(vault, report);
+    finishRun(vault, report, await readFailures(store));
     const violations = await audit();
     if (violations.length) throw new AuditError(violations);
     return {

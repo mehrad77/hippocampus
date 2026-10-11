@@ -1,10 +1,10 @@
-import { CURRENT_VAULT_VERSION, MemoryStore, Vault, decryptSecret, generateKeyPair, hash, normalizeName, parseDoc, searchDocs, type Change, type CommitMeta } from "@hippocampus/core";
+import { CURRENT_VAULT_VERSION, MemoryStore, Vault, decryptSecret, generateKeyPair, hash, normalizeName, parseDoc, readFailures, searchDocs, type Change, type CommitMeta } from "@hippocampus/core";
 import { describe, expect, it } from "vitest";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
 import { episode, now, script, setup } from "./__fixtures__/night.ts";
 import { ScriptedLLM } from "./llm.ts";
 import { claimsSchema } from "./prompts.ts";
-import { CURATOR_AUTHOR, describeEpisode, loadHouseRules, sleep } from "./sleep.ts";
+import { CURATOR_AUTHOR, SET_ASIDE_AFTER, describeEpisode, loadHouseRules, pickBatch, sleep } from "./sleep.ts";
 
 describe("sleep", () => {
   it("consolidates the inbox into canon, chronicle and review", async () => {
@@ -136,6 +136,32 @@ describe("sleep keeps secrets and half-done work out of the vault", () => {
     expect(report.failed).toEqual([expect.objectContaining({ error: "a new note would be named after a secret value" })]);
     expect(await store.list("items")).toEqual([]);
     expect(await store.list("secrets")).toEqual([]);
+  });
+
+  it("keeps no secret in the review's failure record, only the rule", async () => {
+    const store = await passportEpisode(true);
+    const llm = new ScriptedLLM()
+      .push("mentions", { entities: [{ name: "U12345678", type: "item", aliases: [], domains: [] }] })
+      .push("claims", { facts: [{ entity: "u12345678", field: "number", value: "U12345678", secret: true }], relations: [], quests: [] });
+    await sleep({ store, llm, now });
+    const failures = await readFailures(store);
+    expect(Object.values(failures)).toEqual([{ attempts: 1, reason: "a new note would be named after a secret value" }]);
+    expect((await store.read("_hippo/review.md"))!).not.toContain("U12345678");
+  });
+
+  it("counts the nights an episode fails in a row, and tries a stuck one after newer memories", async () => {
+    const { store } = await setup();
+    for (let night = 1; night <= SET_ASIDE_AFTER; night++) {
+      await sleep({ store, llm: new ScriptedLLM(), now });
+      expect(Object.values(await readFailures(store)).map((f) => f.attempts)).toEqual([night, night, night]);
+    }
+    expect(await store.read("_hippo/review.md")).toContain(`failed ${SET_ASIDE_AFTER} nights in a row; tried last`);
+    await store.write("inbox/home-finder/2026-09-28T100000-new.md", memory("home-finder", "2026-09-28T10:00:00Z", "fact", "Landlord confirmed the lease."));
+    const vault = await Vault.load(store, { now });
+    // Oldest first would pick a stuck one; a stuck one waits behind the new one, but is never dropped.
+    expect(pickBatch(vault, 1, await readFailures(store))[0]!.path).toContain("new");
+    expect(pickBatch(vault, 4, await readFailures(store))).toHaveLength(4);
+    expect(pickBatch(vault, 1)[0]!.path).not.toContain("new");
   });
 
   it("doesn't log the text of secret-bearing episodes", async () => {

@@ -114,7 +114,7 @@ Optionally, use the [obsidian-git](https://github.com/Vinzent03/obsidian-git) pl
 npx @mehrad77/hippocampus -v ~/vaults/my-vault secrets keygen
 ```
 
-This writes the public key into `_hippo/config.yaml` and the private identity to `~/.config/hippocampus/age-identity.txt`. **Back the identity up** (e.g. in a password manager). Without it, secret facts can't be decrypted. To read secrets:
+This writes the public key into `_hippo/config.yaml` and the private identity to `~/.config/hippocampus/age-identity.txt`. **Back the identity up** (e.g. in a password manager). Without it, secret facts can't be decrypted. Already have an age public key? `secrets set age1…` writes it instead of making an identity. On the hosted app, the dashboard's Setup page has a **Secrets key** panel that does the same in the browser. Until a vault has a key, secret facts are held back, and the sleep report says so. To read secrets:
 
 ```bash
 npx @mehrad77/hippocampus -v ~/vaults/my-vault secrets show passport

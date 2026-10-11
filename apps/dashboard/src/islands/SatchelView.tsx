@@ -291,7 +291,13 @@ function Letter({ e, party, resolve, kinds }: { e: EpisodeView; party: PartyMemb
         <RelTime at={e.at} className="muted small letter__time" />
       </header>
 
-      {e.waitedThroughSleep && (
+      {e.failure && (
+        <p className="letter__warn small">
+          <Icon name="hourglass" size={16} /> Failed to consolidate {e.failure.attempts === 1 ? "last night" : `${e.failure.attempts} nights in a row`}
+          {e.failure.reason ? `: ${e.failure.reason}` : ""}. It stays here, and nothing is lost. Ask the agent that sent it to send it again without secret values in names or titles.
+        </p>
+      )}
+      {e.waitedThroughSleep && !e.failure && (
         <p className="letter__warn small">
           <Icon name="hourglass" size={16} /> {v("Not processed by the last nightly update: it may have failed. Check the review note.", "Sat through a sleep: it may have failed. Check the morning review.")}
         </p>
