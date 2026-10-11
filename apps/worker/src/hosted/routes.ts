@@ -9,6 +9,7 @@ import { gitlabConnect } from "./gitlab-connect.ts";
 import { checkGitLabVaults } from "./gitlab-health.ts";
 import { logEvent, rateLimit, type RateLimiter } from "./limits.ts";
 import { hostedSetup, hostedVault } from "./onboarding.ts";
+import type { AgentClaim } from "./agent-claims.ts";
 import { MAX_VAULTS_PER_USER, Registry, type Account, type MemberVault } from "./registry.ts";
 import { sharing } from "./sharing.ts";
 import { LOGIN_PATH, LOGOUT_PATH, createSessions, type SessionKV, type Sessions } from "./session.ts";
@@ -31,6 +32,8 @@ export interface HostedHooks extends AccountHooks {
   seatAgent?: (vault: MemberVault, agent: { id: string; title: string }, via: string) => Promise<void>;
   /** Connections to a vault were revoked (`key:<hash>`, `oauth:<grant>`): free the agent names they held. */
   releaseCredentials?: (vaultId: string, credentials: string[]) => Promise<void>;
+  /** Which connection holds which agent name in a vault. */
+  claims?: (vault: MemberVault) => Promise<AgentClaim[]>;
 }
 
 export interface HostedDeps {
@@ -98,7 +101,7 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
   const hooks = deps.hooks ?? {};
   const admin = adminRoutes({ registry, admins: settings.admins, onVaultChanged: hooks.onVaultChanged });
 
-  const device = deviceRoutes({ db: new DeviceRequests(deps.registry, now), registry, settings, seatAgent: hooks.seatAgent });
+  const device = deviceRoutes({ db: new DeviceRequests(deps.registry, now), registry, settings });
 
   const memo = new WeakMap<Request, Promise<Caller | undefined>>();
   const who = (request: Request): Promise<Caller | undefined> => {
@@ -201,7 +204,7 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
       let result: unknown;
       if (section === "admin") result = await admin(method, sub, body, url, caller.account);
       else {
-        const port = hostedSetup({ caller, settings, registry, app, gitlab, kv, now, onVaultChanged: hooks.onVaultChanged, destroyVault: hooks.destroyVault, revokeVaultGrants: hooks.revokeVaultGrants, releaseCredentials: hooks.releaseCredentials, seatAgent: hooks.seatAgent });
+        const port = hostedSetup({ caller, settings, registry, app, gitlab, kv, now, onVaultChanged: hooks.onVaultChanged, destroyVault: hooks.destroyVault, revokeVaultGrants: hooks.revokeVaultGrants, releaseCredentials: hooks.releaseCredentials, seatAgent: hooks.seatAgent, claims: hooks.claims });
         result = (sub === "" || sub === "status") && method === "GET" ? await port.status(url) : await port.handle(method, sub, body, url);
       }
       return done(json(200, result ?? { ok: true }));

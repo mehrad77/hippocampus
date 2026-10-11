@@ -16,7 +16,7 @@ function memoryStorage(): Storage {
   };
 }
 
-const caps = { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, introductions: true, setup: "hosted", curator: true, upgrade: true } as const;
+const caps = { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, authority: true, names: true, handOver: true, introductions: true, setup: "hosted", curator: true, upgrade: true } as const;
 const session = (login: string, repo: string): SessionInfo => ({ mode: "worker", user: { login }, vault: { kind: "github", repo }, capabilities: caps });
 
 let responses: Record<string, unknown>;

@@ -113,8 +113,10 @@ An agent that writes to the inbox without a sheet in `party/` is **unknown**:
 
 - Its episodes are accepted and consolidated. Nothing is thrown away.
 - It has no authority anywhere, so everything it reports starts as a rumor.
-- `onboard` tells it so, and asks it to **introduce** itself: a title, its lane, where it runs, its model and a few lines about what it does. The introduction waits in `inbox/<id>/` for you.
-- On the Agents page (Party, in the codex look), **Approve** seats it with the authority domains you choose (you can change its name and lane first), and **Dismiss** tears the introduction up. A dismissed agent can still write, as a rumor, and may introduce itself again.
+- `onboard` tells it so, and asks it to **introduce** itself: a title, its lane, the app it runs in, its model and a few lines about what it does. That writes its own sheet in `party/` at once, with no authority: it joins the Agents page, and its word stays a rumor.
+- On its card, **Responsible for → Change…** gives it authority domains. That's yours alone: an agent can fill in blanks on its own sheet (lane, host, model) but never its authority, facts or your notes.
+- Agents in one app share its key, so another agent in the same app could act under the same name. A name that's responsible for something stays with the app that holds it; if you disconnect that app, no other app can take the name by itself, and the card offers to let the next one take it.
+- Introductions filed before agents could join by themselves still show, with **Approve** and **Dismiss**.
 - The Home page lists unknown agents under what needs your attention, and Setup offers to add them.
 
 An agent's id comes from the episode's `agent:` property, or else from its folder in `inbox/`. Over MCP it comes from the connection: `--agent`, `?agent=`, a single-agent key or connector on the hosted app, or the `agent` argument the agent passes with an agent key. Ids are compared in lowercase.

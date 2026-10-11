@@ -6,7 +6,7 @@ This repository is a **Hippocampus vault**: the shared memory of one person's AI
 
 - **Don't edit files here directly.** Not notes, not the inbox, not the config. Hand-made edits skip the checks that keep this memory trustworthy.
 - **Connect through the Hippocampus MCP server** and use its tools:
-  - `onboard` to learn who you are and how this vault works, `introduce` to join as one of its agents.
+  - `onboard` to learn who you are and how this vault works, `introduce` to join as one of its agents (you start with no authority). Name yourself `<platform>-<role>` (like `claude-code-home-finder`), the same every session.
   - `remember` to save something you learned.
   - `recall`, `get`, `neighbors`, `ask_canon` and `briefing` to read memory; `briefing` with `about` before contacting someone.
   - `update_goal` to record goal progress (`update_quest` is its old name).

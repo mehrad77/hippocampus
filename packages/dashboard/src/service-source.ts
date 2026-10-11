@@ -63,6 +63,7 @@ export function serviceSource(service: HippoService, info: { mode: Mode; vault: 
     },
     addParty: (input, via) => service.addPartyMember(input, { via }),
     addDomains: async (ids, via) => ({ added: (await service.addDomains(ids, { via })).added }),
+    setAuthority: (agent, domains, via) => service.setAuthority(agent, domains, { via }),
     async introduction({ agent, decision, ...choice }, via) {
       if (decision === "dismiss") return { decision, agent: (await service.dismissIntroduction(agent, { via })).agent };
       return { decision, agent, path: (await service.approveIntroduction(agent, choice, { via })).path };

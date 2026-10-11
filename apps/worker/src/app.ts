@@ -8,7 +8,7 @@ import { isLive, type AccountStatus, type Role, type VaultRecord } from "./hoste
 import { createHostedRoutes, type Caller, type HostedRoutes } from "./hosted/routes.ts";
 import { hostedMissing, hostedSettings, type HostedSettings, type HostedVars } from "./hosted/settings.ts";
 import { vaultMeta, type DashboardUser, type VaultHosts, type VaultMeta, type VaultStub } from "./hosted/vault-port.ts";
-import { AUTHORIZE_PATH, REGISTER_PATH, addressedVault, authorizePage, connectedApps, grantOf, invalidToken, keyProps, providerOptions, type OAuthContext } from "./oauth.ts";
+import { AUTHORIZE_PATH, MCP_PATH, PROTECTED_RESOURCE_PATH, REGISTER_PATH, addressedVault, authorizePage, canonicalResource, connectedApps, grantOf, invalidToken, keyProps, protectedResource, providerOptions, type OAuthContext } from "./oauth.ts";
 import { page, plain } from "./pages.ts";
 import { AI_CATALOG_PATH, DISCOVERY_HEADERS, LLMS_PATH, SERVER_CARD_PATH, aiCatalog, llmsTxt, serverCard } from "./discovery.ts";
 
@@ -166,6 +166,7 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
       revokeOAuthGrants: (accountId) => apps.revokeAll(accountId),
       revokeVaultGrants: (accountId, vaultId) => apps.revokeVault(accountId, vaultId),
       releaseCredentials: (vaultId, credentials) => releaseClaims(vaultId, credentials),
+      claims: async (vault) => (await stubFor(vaultMeta(vault))).claims(),
       seatAgent: async (vault, agent, via) => {
         const stub = await stubFor(vaultMeta(vault));
         if (!(await stub.party()).some((p) => p.id === agent.id)) await stub.addParty(agent, via);
@@ -249,6 +250,27 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
     return plain(404, "Not found");
   }
 
+  /** Protected-resource metadata for the root and for a vault's address, which the library doesn't serve. Undefined for any other path. */
+  function resourceMetadata(request: Request, pathname: string): Response | undefined {
+    const rest = pathname.startsWith(`${PROTECTED_RESOURCE_PATH}/`) ? pathname.slice(PROTECTED_RESOURCE_PATH.length) : undefined;
+    const vault = rest?.startsWith(`${MCP_PATH}/`) ? addressedVault(rest) : undefined;
+    if (pathname !== PROTECTED_RESOURCE_PATH && !vault) return undefined;
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: DISCOVERY_HEADERS });
+    if (request.method !== "GET" && request.method !== "HEAD") return plain(405, "Method not allowed", { allow: "GET, HEAD, OPTIONS" });
+    const body = JSON.stringify(protectedResource(publicUrl, vault ?? undefined));
+    return new Response(request.method === "HEAD" ? null : body, { headers: { "content-type": "application/json", ...DISCOVERY_HEADERS } });
+  }
+
+  /** The library's 401 for `/mcp/<vault id>` names the `/mcp` metadata; point it at the address the client called. */
+  function pointAtAddress(res: Response, pathname: string): Response {
+    const vault = res.status === 401 && pathname.startsWith(`${MCP_PATH}/`) ? addressedVault(pathname) : undefined;
+    const challenge = res.headers.get("www-authenticate");
+    if (!vault || !challenge) return res;
+    const headers = new Headers(res.headers);
+    headers.set("www-authenticate", challenge.replace(`${PROTECTED_RESOURCE_PATH}${MCP_PATH}"`, `${PROTECTED_RESOURCE_PATH}${MCP_PATH}/${vault}"`));
+    return new Response(res.body, { status: res.status, headers });
+  }
+
   /** The public discovery documents (discovery.ts): the same for everyone, so cacheable and open to any origin. */
   function discovery(request: Request, pathname: string): Response {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: DISCOVERY_HEADERS });
@@ -323,8 +345,13 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
           }
         }
         // The server card sits under /mcp, which the OAuth library guards; it's public, so it's answered first.
-        if (new URL(request.url).pathname === SERVER_CARD_PATH) return discovery(request, SERVER_CARD_PATH);
-        return await provider.fetch(request, env, ctx as Parameters<typeof provider.fetch>[2]);
+        const { pathname } = new URL(request.url);
+        if (pathname === SERVER_CARD_PATH) return discovery(request, SERVER_CARD_PATH);
+        // A connector given `/mcp/<vault id>` looks for its metadata there (or at the root) and sends that as `resource`.
+        const meta = resourceMetadata(request, pathname);
+        if (meta) return meta;
+        const answered = await provider.fetch(await canonicalResource(request, publicUrl), env, ctx as Parameters<typeof provider.fetch>[2]);
+        return pointAtAddress(answered, pathname);
       } catch {
         // Messages can name vaults or carry their content, so only the fact of it is logged.
         await log("error", started, 500, undefined, "INTERNAL");

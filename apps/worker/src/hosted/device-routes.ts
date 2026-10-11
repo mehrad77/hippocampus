@@ -1,6 +1,6 @@
 import { HttpError, json, type HostedDeviceRequest, type HostedVault } from "@hippocampus/dashboard";
 import { mcpServerName } from "@hippocampus/dashboard/connect";
-import { DEVICE_ACCESS, DEVICE_GRANT, DEVICE_INTERVAL_S, DEVICE_TTL_MS, DEVICE_VERIFY_PAGE, DeviceRequests, USER_CODE, deviceStart, type DeviceAccess } from "./device.ts";
+import { DEVICE_GRANT, DEVICE_INTERVAL_S, DEVICE_TTL_MS, DEVICE_VERIFY_PAGE, DeviceRequests, USER_CODE, deviceStart, type DeviceAccess } from "./device.ts";
 import { hostedVault } from "./onboarding.ts";
 import { agentId, keyRequest, type MemberVault, type Registry } from "./registry.ts";
 import type { Caller } from "./routes.ts";
@@ -13,8 +13,6 @@ export interface DeviceRouteDeps {
   db: DeviceRequests;
   registry: Registry;
   settings: HostedSettings;
-  /** Seat a new agent in a vault's party (the person ticked "add it to your agents"). */
-  seatAgent?: (vault: MemberVault, agent: { id: string; title: string }, via: string) => Promise<void>;
 }
 
 /** A form (RFC 8628's encoding) or a JSON body, as a flat record. */
@@ -80,10 +78,13 @@ export function deviceRoutes(deps: DeviceRouteDeps) {
       const access = r.access ?? "remember";
       if (!approver || approver.status !== "approved" || !vault || !mayApprove(vault, access)) return oauthError("access_denied", "Whoever approved this can no longer connect apps to that vault.");
       const label = r.client.slice(0, 80);
+      // One key for the app, its agents naming themselves. Only a read-only request needs an agent of its own: a shared key can't be read-only.
       const req =
         access === "curate"
           ? keyRequest({ kind: "curator", label })
-          : keyRequest({ kind: "bound", label, agent: r.agent, scopes: access === "read" ? ["read"] : ["read", "remember", "goal"] });
+          : access === "read"
+            ? keyRequest({ kind: "bound", label, agent: r.agent, scopes: ["read"] })
+            : keyRequest({ kind: "agent", label });
       const { token, key } = await registry.mintKey(vault.id, req, approver.user);
       const mcpUrl = `${publicUrl}/mcp/${vault.id}`;
       const server = mcpServerName(vault.fullName, access === "curate");
@@ -129,14 +130,14 @@ export function deviceRoutes(deps: DeviceRouteDeps) {
       }
       if (sub !== "approve") throw new HttpError(404, `No such route: ${method} connect/${sub}`, "NOT_FOUND");
       if (caller.account.status !== "approved") throw new HttpError(403, "Your account is waiting for an admin's approval.", "NOT_APPROVED");
-      const b = (body ?? {}) as { vault?: unknown; agent?: unknown; access?: unknown; seat?: unknown };
-      const access = (DEVICE_ACCESS as readonly unknown[]).includes(b.access) ? (b.access as DeviceAccess) : (r.access ?? "remember");
+      // What the app asked for is what it gets: the person decides the vault, and whether to say yes.
+      const b = (body ?? {}) as { vault?: unknown };
+      const access: DeviceAccess = r.access ?? "remember";
       const vault = vaults.find((v) => v.id === b.vault);
       if (!vault) throw new HttpError(400, "vault: one of your vaults that's ready", "INVALID");
       if (!mayApprove(vault, access)) throw new HttpError(403, access === "curate" ? "Only the vault's owner can approve a curator." : "You can only read this vault.", "OWNER_ONLY");
-      const agent = access === "curate" ? undefined : agentId(b.agent ?? r.agent);
+      const agent = access === "read" ? agentId(r.agent ?? r.client.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)) : undefined;
       await db.decide(code, { approve: true, vaultId: vault.id, ...(agent ? { agent } : {}), access, by: caller.account.user });
-      if (agent && b.seat === true) await deps.seatAgent?.(vault, { id: agent, title: r.client.slice(0, 80) }, `@${caller.account.login}`).catch(() => undefined);
       return { ok: true, vault: vault.fullName, ...(agent ? { agent } : {}) };
     },
   };

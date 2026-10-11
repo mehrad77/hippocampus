@@ -87,7 +87,7 @@ describe("MCP source parity", () => {
 
   it("offers only what the agent's scopes allow, and never the human's actions", async () => {
     const caps = async (opts: { agent?: string; scopes?: Scope[] }) => capabilities((await linked(opts)).remote, "none");
-    const none = { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, confidential: false, data: false, party: false, domains: false, introductions: false, curator: false, upgrade: false, setup: "none" };
+    const none = { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, confidential: false, data: false, party: false, domains: false, authority: false, names: false, handOver: false, introductions: false, curator: false, upgrade: false, setup: "none" };
     expect(await caps({ agent: "residency-agent" })).toEqual({ ...none, goal: true, quest: true, remember: true, confidential: true, data: true });
     expect(await caps({ agent: "residency-agent", scopes: ["read"] })).toEqual(none);
     expect(await caps({ agent: "residency-agent", scopes: ["read", "remember"] })).toEqual({ ...none, remember: true, confidential: true, data: true });
@@ -96,7 +96,7 @@ describe("MCP source parity", () => {
     expect(await caps({ agent: "residency-agent", scopes: ["read", "quest"] })).toEqual({ ...none, goal: true, quest: true });
     // Unbound, every write would need an agent id the dashboard can't choose.
     expect(await caps({})).toEqual(none);
-    expect(capabilities((await linked()).local, "none")).toEqual({ rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, introductions: true, curator: false, upgrade: false, setup: "none" });
+    expect(capabilities((await linked()).local, "none")).toEqual({ rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, authority: true, names: false, handOver: false, introductions: true, curator: false, upgrade: false, setup: "none" });
   });
 
   it("files writes under the agent", async () => {

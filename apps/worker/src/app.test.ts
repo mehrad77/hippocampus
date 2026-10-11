@@ -426,16 +426,37 @@ describe("connecting an app", () => {
   });
 });
 
+describe("one key per app", () => {
+  it("remembers the app a key was made for, and lists who has spoken through each connection", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const res = await h.post(player.visit, "setup/keys", { kind: "agent", label: "Cursor", app: "cursor" });
+    const minted = (await res.json()) as { id: string; kind: string; app?: string };
+    expect(minted).toMatchObject({ kind: "agent", app: "cursor" });
+    const bad = await h.post(player.visit, "setup/keys", { kind: "agent", app: "Not An App!" });
+    expect(((await bad.json()) as { app?: string }).app).toBeUndefined();
+    expect((await h.registry.keys(player.vault)).find((k) => k.id === minted.id)?.app).toBe("cursor");
+
+    h.vaults.claimed.set(player.vault, [
+      { agent: "cursor-home-finder", credential: `key:${minted.id}`, since: "2026-10-11T10:00:00.000Z" },
+      { agent: "cursor-job-scout", credential: `key:${minted.id}`, since: "2026-10-11T11:00:00.000Z" },
+    ]);
+    const listed = (await (await h.api(player.visit, "setup/keys")).json()) as { keys: { id: string; app?: string }[]; agents: { agent: string; credential: string }[] };
+    expect(listed.keys.find((k) => k.id === minted.id)?.app).toBe("cursor");
+    expect(listed.agents.map((a) => a.agent)).toEqual(["cursor-home-finder", "cursor-job-scout"]);
+  });
+});
+
 describe("an agent connecting on a person's behalf (device sign-in)", () => {
   const start = (h: Awaited<ReturnType<typeof hostedApp>>, body: Record<string, string>) =>
     h.send(new Request(`${ORIGIN}/connect/device`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(body) }));
   const poll = (h: Awaited<ReturnType<typeof hostedApp>>, device_code: string) =>
     h.send(new Request(`${ORIGIN}/connect/token`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code }) }));
 
-  it("gives the agent a key for the vault and agent the person approves, once", async () => {
+  it("gives the app one shared key for the vault the person approves, once", async () => {
     const h = await hostedApp();
     const player = await h.readyAccount(PLAYER);
-    const res = await start(h, { client_name: "Claude Code on the laptop", agent: "claude-code" });
+    const res = await start(h, { client_name: "Claude Code on the laptop" });
     const started = (await res.json()) as { device_code: string; user_code: string; verification_uri: string; verification_uri_complete: string; expires_in: number; interval: number };
     expect(started).toMatchObject({ verification_uri: `${ORIGIN}/dashboard/connect/`, expires_in: 600, interval: 5 });
     expect(started.user_code).toMatch(/^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/);
@@ -445,20 +466,35 @@ describe("an agent connecting on a person's behalf (device sign-in)", () => {
     expect(await (await poll(h, started.device_code)).json()).toMatchObject({ error: "slow_down" });
 
     const seen = (await (await h.api(player.visit, `connect?code=${started.user_code.toLowerCase()}`)).json()) as HostedDeviceRequest;
-    expect(seen).toMatchObject({ client: "Claude Code on the laptop", agent: "claude-code", vaults: [expect.objectContaining({ id: player.vault })] });
+    expect(seen).toMatchObject({ client: "Claude Code on the laptop", vaults: [expect.objectContaining({ id: player.vault })] });
     // Approving is a write: our own origin only.
-    expect((await h.post(player.visit, "connect/approve", { code: started.user_code, vault: player.vault, access: "remember", seat: true }, {})).status).toBe(403);
-    expect((await h.post(player.visit, "connect/approve", { code: started.user_code, vault: player.vault, access: "remember", seat: true })).status).toBe(200);
-    expect(h.vaults.to(player.vault, "addParty")).toEqual([expect.objectContaining({ input: expect.objectContaining({ id: "claude-code" }) })]);
+    expect((await h.post(player.visit, "connect/approve", { code: started.user_code, vault: player.vault }, {})).status).toBe(403);
+    expect((await h.post(player.visit, "connect/approve", { code: started.user_code, vault: player.vault })).status).toBe(200);
+    // Its agents name and introduce themselves: nothing is seated, and no agent is fixed.
+    expect(h.vaults.to(player.vault, "addParty")).toEqual([]);
 
-    const got = (await (await poll(h, started.device_code)).json()) as { access_token: string; token_type: string; mcp_url: string; agent: string; server_name: string; claude_code: string };
-    expect(got).toMatchObject({ token_type: "Bearer", mcp_url: `${ORIGIN}/mcp/${player.vault}`, agent: "claude-code", server_name: "hippo-vault" });
+    const got = (await (await poll(h, started.device_code)).json()) as { access_token: string; token_type: string; mcp_url: string; agent?: string; server_name: string; claude_code: string };
+    expect(got).toMatchObject({ token_type: "Bearer", mcp_url: `${ORIGIN}/mcp/${player.vault}`, server_name: "hippo-vault" });
+    expect(got.agent).toBeUndefined();
     expect(got.claude_code).toContain(got.access_token);
     const key = (await h.registry.keyForToken(got.access_token))!;
-    expect(key).toMatchObject({ kind: "bound", agent: "claude-code", scopes: ["read", "remember", "goal"], vaultId: player.vault });
+    expect(key).toMatchObject({ kind: "agent", label: "Claude Code on the laptop", scopes: ["read", "remember", "goal"], vaultId: player.vault });
+    expect(key.agent).toBeUndefined();
     expect((await h.callMcp(got.access_token, undefined, {}, `/mcp/${player.vault}`)).status).toBe(200);
     // Collected once: the device code is spent.
     expect(await (await poll(h, started.device_code)).json()).toMatchObject({ error: "expired_token" });
+  });
+
+  it("keeps to what the app asked for: read-only gets an agent of its own, since a shared key can't be read-only", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const asked = (await (await start(h, { client_name: "Dashboard Widget", access: "read" })).json()) as { device_code: string; user_code: string };
+    // Whatever else the approval page posts is ignored: access is the app's own request.
+    expect((await h.post(player.visit, "connect/approve", { code: asked.user_code, vault: player.vault, access: "curate", agent: "player", seat: true })).status).toBe(200);
+    const got = (await (await poll(h, asked.device_code)).json()) as { access_token: string; agent: string };
+    expect(got.agent).toBe("dashboard-widget");
+    expect(await h.registry.keyForToken(got.access_token)).toMatchObject({ kind: "bound", agent: "dashboard-widget", scopes: ["read"] });
+    expect(h.vaults.to(player.vault, "addParty")).toEqual([]);
   });
 
   it("lets the person refuse, keeps curators for owners, and refuses unknown grants and codes", async () => {
