@@ -1,5 +1,6 @@
 import { HttpError, type HostedConnectedApp } from "@hippocampus/dashboard";
 import type { GitHubApp } from "./github-app.ts";
+import type { GitLabAccess } from "./gitlab.ts";
 import type { Account, Registry } from "./registry.ts";
 import { clearPendingInstallation, pendingInstallation, type SessionKV } from "./session.ts";
 
@@ -28,6 +29,8 @@ export interface AccountHooks {
 export interface DeleteAccountDeps {
   registry: Registry;
   app: GitHubApp;
+  /** Set when the instance has GitLab: the account's connection is revoked there. */
+  gitlab?: GitLabAccess;
   kv: SessionKV;
   hooks?: AccountHooks;
 }
@@ -37,7 +40,7 @@ export interface DeleteAccountDeps {
  * session epoch: if GitHub fails midway, the person is still signed in and can simply retry.
  */
 export async function deleteAccount(accountId: number, deps: DeleteAccountDeps): Promise<{ vault?: string }> {
-  const { registry, app, kv, hooks } = deps;
+  const { registry, app, gitlab, kv, hooks } = deps;
   const vault = await registry.vaultOf(accountId);
   const pending = await pendingInstallation(kv, accountId);
   if (vault) await registry.revokeAllKeys(vault.id);
@@ -45,6 +48,8 @@ export async function deleteAccount(accountId: number, deps: DeleteAccountDeps):
   if (vault) await hooks?.destroyVault?.(vault.id);
   for (const id of new Set([vault?.installationId, pending?.installationId])) if (id !== undefined) await app.deleteInstallation(id);
   await clearPendingInstallation(kv, accountId);
+  // Before the rows go: revoking needs the stored tokens.
+  await gitlab?.disconnect(accountId);
   await registry.removeAccount(accountId);
   return vault ? { vault: vault.id } : {};
 }

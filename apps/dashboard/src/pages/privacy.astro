@@ -30,6 +30,13 @@ import { href } from "../lib/routes.ts";
         <strong>Your GitHub identity.</strong> When you sign in with GitHub, the service keeps your GitHub user id and login. It doesn't keep your
         password or a lasting GitHub token: the sign-in token is used once to learn who you are, then dropped.
       </li>
+      <li>
+        <strong>Your GitLab connection (only if your vault is on GitLab).</strong> Instead of the GitHub App, you authorize Hippocampus on GitLab. The
+        service then keeps the access and refresh tokens GitLab gives it, sealed with a key the operator holds, and your GitLab username. Unlike the
+        GitHub App, a GitLab token isn't limited to one repository: GitLab has no narrower permission that can write files, so the connection can reach
+        every project you can. The service uses it only to read and write the one project you pick as your vault, and to check that project is still
+        private. You can revoke it any time in GitLab (Preferences → Applications); the vault then disconnects.
+      </li>
       <li><strong>Your access request.</strong> The note you write when asking for access, for the admins who approve accounts.</li>
       <li>
         <strong>Your vault repository.</strong> Through the GitHub App you install on the repository you select, the service reads and writes that
@@ -64,7 +71,7 @@ import { href } from "../lib/routes.ts";
 
     <h2 id="where">Where it lives</h2>
     <p>
-      The service runs on Cloudflare (Workers, D1, Durable Objects, KV); your vault lives on GitHub. Each provider decides where it stores data.
+      The service runs on Cloudflare (Workers, D1, Durable Objects, KV); your vault lives on GitHub or GitLab, as you chose. Each provider decides where it stores data.
       <em>[Operator: add the regions and any other processors your setup uses.]</em>
     </p>
 
@@ -72,13 +79,13 @@ import { href } from "../lib/routes.ts";
     <p>Everything above is kept while your account exists. To delete your account, open <a href={href.page("setup", "#account")}>Setup → Account</a> and confirm with your GitHub login. Right away:</p>
     <ul>
       <li>every key stops working and connected apps are signed out;</li>
-      <li>the GitHub App is uninstalled from your repository;</li>
+      <li>the GitHub App is uninstalled from your repository, or your GitLab connection is revoked and erased;</li>
       <li>your account, keys, and your vault's search index and cache are erased from this service.</li>
     </ul>
     <p>
       A minimal record (your GitHub id and login, marked deleted) stays so the deletion holds; you can sign up again later. Your repository stays
-      on GitHub, untouched: <Term plain="your memory is yours" codex="the campaign is yours" />, so delete the repository on GitHub if you want it
-      gone too. Uninstalling the app on GitHub disconnects your vault without deleting your account. Operational logs expire on their own.
+      on GitHub or GitLab, untouched: <Term plain="your memory is yours" codex="the campaign is yours" />, so delete the repository there if you want it
+      gone too. Uninstalling the app on GitHub, or revoking Hippocampus on GitLab, disconnects your vault without deleting your account. Operational logs expire on their own.
       <em>[Operator: state the log retention.]</em>
     </p>
 

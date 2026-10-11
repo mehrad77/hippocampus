@@ -267,6 +267,14 @@ The tool refuses to write to a vault whose format version differs from its own. 
 5. **Set up the vault.** One commit puts the template into the repo.
 6. **Connect agents** (below) and **set up a curator** (§5).
 
+**Using GitLab instead.** If the instance offers it, step 2 lets you choose GitLab. Create an empty private project in your **personal namespace** (not a group), then **Connect GitLab**: you authorize the Hippocampus application on GitLab (scope `api`), pick the project, and go on from step 4. Differences from GitHub:
+
+- The connection isn't limited to one project (GitLab has no narrower permission that can write files), so it reaches every project you can. Hippocampus uses it only for your vault. [SECURITY.md](../SECURITY.md) has the details.
+- You need Developer access or better, and Maintainer if the default branch is protected against Developers pushing.
+- `internal` projects are refused like public ones.
+- The nightly curator workflow is GitHub Actions only. On GitLab, run sleep with your own curator agent (§5).
+- Reconnecting: GitLab sends no webhooks, so the app checks every six hours. If you revoke the app on GitLab, delete the project or make it non-private, the vault disconnects within hours; fix it on GitLab and press **Connect GitLab** again if needed.
+
 **Keys.** The setup page mints keys, shows each one once, and stores only its hash. Revoking one stops it at once.
 
 | Kind | Scopes | For |
@@ -283,11 +291,11 @@ The setup page also gives snippets for `.mcp.json`, Cursor and VS Code, and the 
 
 **Connectors (Claude.ai, ChatGPT).** Add a custom connector with the URL `https://<your-instance>/mcp`. The app signs you in with GitHub and shows a consent page for your vault: pick the agent id the app acts as (a party member, or a new one you can seat right away) and what it may do. Allowing curating makes the app a curator, with a curator key's view of secrets. Your account menu lists connected apps and disconnects them.
 
-**Reconnecting.** If the app is uninstalled or suspended, the repo is removed from the installation or deleted, or the repo is made public, the vault is disconnected and stops answering. The setup page says why. Undo it on GitHub (install again, make the repo private) and it reconnects.
+**Reconnecting.** If the app is uninstalled or suspended, the repo is removed from the installation or deleted, or the repo is made public, the vault is disconnected and stops answering. The setup page says why. Undo it on GitHub (install again, make the repo private) and it reconnects. On GitLab, make the project private again, or connect GitLab again if you revoked the app.
 
 **Limits.** Per vault: 2,000 episodes waiting in the inbox, 20 waiting introductions, 20,000 files, 50 MB of text, 24 sleep runs a day, and 50 keys. Requests are rate-limited per key, account and IP. An admin can raise these for one vault (`POST /dashboard/api/admin/vaults/quotas` with `{"id", "quotas": {"sleepRunsPerDay": 96}}`); `null` restores the defaults.
 
-**Deleting your account.** Your account menu deletes everything the app holds for you, after you type your GitHub login: keys stop working, connected apps are signed out, the GitHub App is uninstalled, and your account and your vault's index and cache are erased. Your vault repo stays on GitHub, untouched.
+**Deleting your account.** Your account menu deletes everything the app holds for you, after you type your GitHub login: keys stop working, connected apps are signed out, the GitHub App is uninstalled (or your GitLab connection is revoked), and your account and your vault's index and cache are erased. Your vault repo stays where it is, untouched.
 
 ### Running your own instance
 
@@ -331,6 +339,16 @@ The rate limiters' `namespace_id`s only need to be unique within your account.
 | `GITHUB_APP_PRIVATE_KEY` | The PKCS#8 key: `pnpm exec wrangler secret put GITHUB_APP_PRIVATE_KEY < app.pkcs8.pem` |
 
 Until they're all set, the Worker answers with a page naming the missing ones (names only, never values).
+
+**3b. GitLab (optional).** To let people keep their vault in a GitLab project, create an OAuth application on gitlab.com (User Settings → Applications, or Admin → Applications on a self-managed instance) with the redirect URI `https://<your-host>/oauth/gitlab/callback`, the `api` scope, and **Confidential** ticked. Then set all three, plus `GITLAB_URL` for a self-managed instance:
+
+| Secret | Value |
+| --- | --- |
+| `GITLAB_CLIENT_ID`, `GITLAB_CLIENT_SECRET` | From the application's page |
+| `HIPPO_TOKEN_KEY` | Seals the stored GitLab tokens: `openssl rand -base64 32 \| pnpm exec wrangler secret put HIPPO_TOKEN_KEY`. Losing it means everyone reconnects GitLab; changing it does too |
+| `GITLAB_URL` | Optional: the instance's https origin. Default `https://gitlab.com` |
+
+All three must be set together or the Worker says what's missing. One GitLab host per instance. A Cron Trigger (`wrangler.jsonc`) checks GitLab vaults every six hours.
 
 **4. Deploy.** From the repository root. This builds the dashboard, applies the registry's migrations (`apps/worker/migrations/`), then deploys:
 

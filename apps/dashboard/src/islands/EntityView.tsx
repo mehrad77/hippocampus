@@ -9,6 +9,7 @@ import { href, param } from "../lib/routes.ts";
 import { postJson } from "../lib/api.ts";
 import { toast } from "../lib/events.ts";
 import { repeatLabel } from "../lib/progress.ts";
+import { repoLinks } from "../lib/vaultLinks.ts";
 import type { DisputeView, EntityDetail, EpisodeView, FactDetail, GoalCard, GuidelineView, PartyMember, Ref, SessionInfo } from "../lib/types.ts";
 import { ProgressBar } from "../ui/ProgressBar.tsx";
 import { errorMessage, settle } from "../ui/play/actions.ts";
@@ -175,7 +176,7 @@ function SheetHead({ d, session, refs, voice: { v } }: { d: EntityDetail; sessio
   const c = d.card;
   const vault = session.vault;
   const obsidian = vault?.kind === "dir" && vault.dir ? `obsidian://open?path=${encodeURIComponent(`${vault.dir.replace(/\/+$/, "")}/${d.path}`)}` : undefined;
-  const github = vault?.kind === "github" && vault.repo ? `https://github.com/${vault.repo}/blob/${encodeURIComponent(vault.branch ?? "main")}/${d.path.split("/").map(encodeURIComponent).join("/")}` : undefined;
+  const links = repoLinks(vault);
   return (
     <header className={`panel sheet-head typed typed--${c.type}`}>
       <div className="sigil" aria-hidden>
@@ -226,9 +227,9 @@ function SheetHead({ d, session, refs, voice: { v } }: { d: EntityDetail; sessio
             <Icon name="external" /> Open in Obsidian
           </a>
         )}
-        {github && (
-          <a className="btn" href={github} target="_blank" rel="noreferrer noopener">
-            <Icon name="github" /> View on GitHub
+        {links && (
+          <a className="btn" href={links.blob(d.path)} target="_blank" rel="noreferrer noopener">
+            <Icon name={links.host === "GitHub" ? "github" : "external"} /> View on {links.host}
           </a>
         )}
       </div>

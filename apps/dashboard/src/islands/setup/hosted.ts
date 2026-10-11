@@ -6,6 +6,8 @@ import type { IconName } from "../../lib/icons.ts";
 import type { HostedRepoView, HostedStatus } from "../../lib/types.ts";
 import { agentIdProblem, isTimeZone, type BadgeState, type Wording } from "./model.ts";
 
+export type HostedProvider = "github" | "gitlab";
+
 export type HostedStepId = "access" | "create" | "install" | "repo" | "campaign" | "init" | "agents" | "curator" | "done";
 
 export interface HostedStepDef {
@@ -81,13 +83,36 @@ export const HOSTED_STEPS: readonly HostedStepDef[] = [
   },
 ];
 
+/** The steps' words for GitLab: the same steps, a different host. */
+const GITLAB_WORDS: Partial<Record<HostedStepId, Pick<HostedStepDef, "title" | "icon" | "lede">>> = {
+  create: {
+    title: ["Create a project", "Make a vault project"],
+    icon: "link",
+    lede: ["Your memory lives in a GitLab project that you own: private, and empty to start with.", "The campaign lives in a GitLab project that you own: private, and empty to start with."],
+  },
+  install: {
+    title: ["Connect GitLab", "Connect GitLab"],
+    icon: "link",
+    lede: ["Hippocampus signs in to GitLab as you, to read and write that one project for you, and nothing else.", "Hippocampus signs in to GitLab as you, to read and write that one project for you, and nothing else."],
+  },
+  repo: {
+    title: ["Pick the project", "Pick the project"],
+    icon: "codex",
+    lede: ["Choose which of your GitLab projects becomes your vault.", "Choose which of your GitLab projects becomes the campaign's vault."],
+  },
+};
+
+/** The step definitions as worded for the host the vault will live on. */
+export const stepsFor = (provider: HostedProvider): readonly HostedStepDef[] => (provider === "gitlab" ? HOSTED_STEPS.map((s) => ({ ...s, ...GITLAB_WORDS[s.id] })) : HOSTED_STEPS);
+
 export function parseHostedStep(hash: string): HostedStepId | undefined {
   const id = hash.replace(/^#/, "");
   return HOSTED_STEPS.some((s) => s.id === id) ? (id as HostedStepId) : undefined;
 }
 
-export function hostedStepDef(id: HostedStepId): HostedStepDef {
-  return HOSTED_STEPS.find((s) => s.id === id) ?? HOSTED_STEPS[0]!;
+export function hostedStepDef(id: HostedStepId, provider: HostedProvider = "github"): HostedStepDef {
+  const steps = stepsFor(provider);
+  return steps.find((s) => s.id === id) ?? steps[0]!;
 }
 
 export function hostedIndex(id: HostedStepId): number {
@@ -104,13 +129,35 @@ export interface HostedContext {
   status: HostedStatus;
   picked?: number;
   draftReady: boolean;
+  /** The host the person chose in this browser; the vault's own, once there is one, wins. */
+  provider?: HostedProvider;
+}
+
+/** Which host the flow is about: the vault's, else the person's choice, else wherever they already connected. GitHub unless GitLab is offered. */
+export function hostedProvider(ctx: HostedContext): HostedProvider {
+  const s = ctx.status;
+  if (s.vault?.provider) return s.vault.provider;
+  if (!s.providers?.includes("gitlab")) return "github";
+  if (ctx.provider) return ctx.provider;
+  return s.gitlab?.connected && !s.installation ? "gitlab" : "github";
+}
+
+/** The repos the person can pick from, on the chosen host. */
+export function hostedRepos(ctx: HostedContext): HostedRepoView[] {
+  return hostedProvider(ctx) === "gitlab" ? (ctx.status.gitlab?.repos ?? []) : (ctx.status.installation?.repos ?? []);
+}
+
+/** Whether the host is connected, so repos can be listed: the GitHub App installed, or GitLab signed in. */
+export function hostedConnected(ctx: HostedContext): boolean {
+  const s = ctx.status;
+  return hostedProvider(ctx) === "gitlab" ? !!s.gitlab?.connected : !!s.installation;
 }
 
 export const hasKey = (keys: readonly HostedKeyInfo[] | undefined, kinds: readonly HostedKeyInfo["kind"][]) => (keys ?? []).some((k) => kinds.includes(k.kind));
 
 /** The picked repo is one the installation can still see. */
 export function pickedRepo(ctx: HostedContext): boolean {
-  return ctx.picked !== undefined && !!ctx.status.installation?.repos.some((r) => r.id === ctx.picked);
+  return ctx.picked !== undefined && hostedRepos(ctx).some((r) => r.id === ctx.picked);
 }
 
 /** Why a step can't be used yet, in both voices; undefined when it can. */
@@ -123,7 +170,11 @@ export function hostedLock(id: HostedStepId, ctx: HostedContext): Wording | unde
   if (id === "create" || id === "install" || id === "campaign") return undefined;
   if (id === "repo" || id === "init") {
     if (ready || v?.status === "bootstrapping") return undefined;
-    if (!s.installation) return v ? ["Install the app on your repo again first.", "Install the app on your repo again first."] : ["Install the app on your repo first.", "Install the app on your repo first."];
+    if (!hostedConnected(ctx)) {
+      const gitlab = hostedProvider(ctx) === "gitlab";
+      if (gitlab) return v ? ["Connect GitLab again first.", "Connect GitLab again first."] : ["Connect GitLab first.", "Connect GitLab first."];
+      return v ? ["Install the app on your repo again first.", "Install the app on your repo again first."] : ["Install the app on your repo first.", "Install the app on your repo first."];
+    }
     if (id === "init" && !pickedRepo(ctx)) return ["Pick the repo first.", "Pick the repo first."];
     if (id === "init" && !ctx.draftReady) return ["Fill in the campaign step first.", "Settle the campaign first."];
     return undefined;
@@ -141,11 +192,13 @@ export function hostedStepState(id: HostedStepId, ctx: HostedContext): BadgeStat
     case "access":
       return s.account.status === "approved" ? "done" : s.account.status === "denied" ? "error" : s.account.requested ? "wait" : "todo";
     case "create":
-      return s.installation || v ? "done" : "todo";
-    case "install":
-      if (ready || (s.installation && !s.installation.error)) return "done";
-      if (s.installation?.error) return "warn";
+      return hostedConnected(ctx) || v ? "done" : "todo";
+    case "install": {
+      const link = hostedProvider(ctx) === "gitlab" ? s.gitlab : s.installation;
+      if (ready || (hostedConnected(ctx) && !link?.error)) return "done";
+      if (link?.error && hostedConnected(ctx)) return "warn";
       return v?.status === "disconnected" ? "error" : "todo";
+    }
     case "repo":
       return ready || pickedRepo(ctx) ? "done" : "todo";
     case "campaign":
@@ -168,7 +221,7 @@ export function hostedDefaultStep(ctx: HostedContext): HostedStepId {
   if (s.account.status !== "approved") return "access";
   if (v?.status === "ready") return !hasKey(s.keys, ["agent", "bound"]) ? "agents" : !hasKey(s.keys, ["curator"]) && !s.curatorActions ? "curator" : "done";
   if (v?.status === "bootstrapping") return "init";
-  if (s.installation) return !pickedRepo(ctx) ? "repo" : ctx.draftReady ? "init" : "campaign";
+  if (hostedConnected(ctx)) return !pickedRepo(ctx) ? "repo" : ctx.draftReady ? "init" : "campaign";
   if (v?.status === "disconnected") return "install";
   return "create";
 }
@@ -186,7 +239,9 @@ export interface RepoVerdict {
 }
 
 /** Whether a repo can become the vault, and why not. Public repos never can: anyone could read the memory. */
-export function repoVerdict(r: HostedRepoView): RepoVerdict {
+export function repoVerdict(r: HostedRepoView, provider: HostedProvider = "github"): RepoVerdict {
+  if (!r.private && provider === "gitlab")
+    return { usable: false, tone: "error", tag: "Not private", detail: "Anyone could read your memory there (internal projects are open to every signed-in user of the instance). Set it to Private in the project's visibility settings on GitLab, or pick another." };
   if (!r.private) return { usable: false, tone: "error", tag: "Public", detail: "Anyone could read your memory there. Make it private on GitHub (Settings → Danger Zone → Change visibility), or pick another." };
   if (r.adoptable) return { usable: true, tone: "done", tag: "Existing vault", detail: "Already a Hippocampus vault: it's adopted as it is, and only missing rule files are added." };
   if (r.empty === true) return { usable: true, tone: "done", tag: "Empty", detail: "Private and empty: ready to become your vault." };
@@ -239,8 +294,10 @@ export function draftProblems(d: CampaignDraft): { campaign?: string; human?: st
 export const draftReady = (d: CampaignDraft) => Object.values(draftProblems(d)).every((p) => !p);
 
 /** The init request for the picked repo. A repo that already holds a vault (`adopt`) is adopted as it is: presets only shape new vaults. */
-export function initRequest(d: CampaignDraft, repoId: number, opts: { adopt?: boolean } = {}): HostedInitRequest {
+export function initRequest(d: CampaignDraft, repoId: number, opts: { adopt?: boolean; provider?: HostedProvider } = {}): HostedInitRequest {
+  const provider = opts.provider ?? "github";
   return {
+    ...(provider === "gitlab" ? { provider } : {}),
     repoId,
     campaign: d.campaign.trim(),
     human: d.human.trim().toLowerCase(),

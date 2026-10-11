@@ -56,7 +56,8 @@ interface Layout {
   typeOf(path: string): string | undefined;
 }
 
-const PROTECTED = new Set([CONFIG_PATH, CURATOR_RULES_PATH, "AGENTS.md", "CLAUDE.md"]);
+// CI definitions run with the host's credentials, so nothing but the human edits them (GitHub Actions and GitLab CI).
+const PROTECTED = new Set([CONFIG_PATH, CURATOR_RULES_PATH, "AGENTS.md", "CLAUDE.md", ".gitlab-ci.yml"]);
 /** The tool's scaffolding a migration may add or rewrite, besides schema notes. */
 const SCAFFOLD = ["_hippo/templates", "_hippo/dashboards"];
 /** What an agent with the goal scope may change in a goal note's frontmatter. */
@@ -145,7 +146,7 @@ async function loadLayout(store: VaultStore, config: HippoConfig): Promise<Layou
 }
 
 function curatorPath(path: string, op: Op, l: Layout): string | undefined {
-  if (PROTECTED.has(path) || under(path, ".github") || under(path, l.schemaDir)) return "protected file";
+  if (PROTECTED.has(path) || under(path, ".github") || under(path, ".gitlab") || under(path, l.schemaDir)) return "protected file";
   const type = l.typeOf(path);
   if (op === "remove" && isIntroductionPath(path)) return "introductions are the human's to settle";
   if (op === "remove") return under(path, l.inbox) ? undefined : type ? "entity note removed" : "curator may only remove inbox files";

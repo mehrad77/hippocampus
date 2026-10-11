@@ -11,7 +11,8 @@ import { capabilities, type CuratorStatus, type DashboardSource, type SessionInf
 //   signed out → waitlisted → (asks; approved a few seconds later) → installed → vault ready → keys
 //
 // `GET <base>/api/__demo/stage?to=<stage>` jumps straight to a stage: signed-out, waitlisted,
-// requested, approved, installed, ready.
+// requested, approved, installed, ready. Add `&provider=gitlab` for the GitLab path: `installed`
+// then means GitLab is connected, and `ready` is a vault on GitLab.
 
 export type HostedDemoStage = "signed-out" | "waitlisted" | "requested" | "approved" | "installed" | "ready";
 
@@ -50,6 +51,13 @@ const REPOS: DemoRepo[] = [
   { id: 504, fullName: `${LOGIN}/harbor-notes`, private: false },
 ];
 
+const GITLAB_URL = "https://gitlab.example";
+const GITLAB_REPOS: DemoRepo[] = [
+  { id: 701, fullName: `${LOGIN}/lisbon-vault`, private: true, empty: true },
+  { id: 702, fullName: `${LOGIN}/dotfiles`, private: true, empty: false, adoptable: false },
+  { id: 703, fullName: `${LOGIN}/harbor-notes`, private: false },
+];
+
 /** A handler for the hosted routes; undefined means "not mine" (the regular demo API answers). */
 export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promise<Response | undefined> {
   const { base, source } = opts;
@@ -66,6 +74,8 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     note: undefined as string | undefined,
     admin: false,
     installation: undefined as { id: number } | undefined,
+    /** GitLab connected (the demo's stand-in for the consent page). */
+    gitlab: false,
     vault: undefined as HostedVault | undefined,
     keys: [] as HostedKeyInfo[],
     curatorActions: false,
@@ -101,20 +111,26 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     state.apps = [{ id: "grant-1", client: "Claude", scopes: ["read", "remember"], agent: "home-finder", created: ago(DAY / 2) }];
   };
 
-  const toStage = (stage: HostedDemoStage) => {
+  const toStage = (stage: HostedDemoStage, provider?: string) => {
     clearTimeout(approval);
     state = fresh();
     const at = STAGES.indexOf(stage);
     if (at >= 1) state.signedIn = true;
     if (at >= 2) state.note = "Moving to Lisbon; I'd like my agents to share one memory.";
     if (at >= 3) approve();
-    if (at >= 4) state.installation = { id: 9001 };
+    const gitlab = provider === "gitlab";
+    if (at >= 4) {
+      if (gitlab) state.gitlab = true;
+      else state.installation = { id: 9001 };
+    }
     if (at >= 5) {
       state.installation = undefined;
-      state.vault = { id: "vault-demo", fullName: `${LOGIN}/vault`, branch: "main", status: "ready" };
+      state.vault = gitlab ? gitlabVault(`${LOGIN}/lisbon-vault`) : { id: "vault-demo", fullName: `${LOGIN}/vault`, branch: "main", status: "ready" };
       seedCurator();
     }
   };
+
+  const gitlabVault = (fullName: string): HostedVault => ({ id: "vault-demo", fullName, branch: "main", status: "ready", provider: "gitlab", url: `${GITLAB_URL}/${fullName}` });
 
   const me = (): DemoAccount => ({ id: USER_ID, login: LOGIN, status: state.status, note: state.note, created: ago(DAY), updated: ago(HOUR), admin: state.admin });
 
@@ -127,12 +143,15 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     ];
     if (a.status !== "approved") return out;
     const v = s.vault;
+    const onGitLab = v?.provider === "gitlab" || (!v && s.gitlab?.connected && !s.installation);
     out.push(
-      v?.status === "ready" || s.installation
-        ? { id: "install", title: "Install the GitHub App", state: "done", detail: v ? `Installed on ${v.fullName}` : "Installed; pick the repo next", how: "guided" }
-        : { id: "install", title: "Install the GitHub App", state: "todo", detail: "Create an empty private repo, then install the app on it (only that repo)", how: "guided" },
+      onGitLab
+        ? { id: "install", title: "Connect GitLab", state: "done", detail: v ? `Connected; ${v.fullName} is the vault` : `Connected as @${s.gitlab?.login}; pick the project next`, how: "guided" }
+        : v?.status === "ready" || s.installation
+          ? { id: "install", title: "Install the GitHub App", state: "done", detail: v ? `Installed on ${v.fullName}` : "Installed; pick the repo next", how: "guided" }
+          : { id: "install", title: "Install the GitHub App", state: "todo", detail: "Create an empty private repo, then install the app on it (only that repo), or connect GitLab instead", how: "guided" },
     );
-    out.push(v ? { id: "vault", title: "Vault", state: "done", detail: `${v.fullName}@${v.branch}`, how: "performed" } : { id: "vault", title: "Vault", state: "todo", detail: s.installation ? "Pick the repo and name the campaign" : "Install the app first", how: "performed" });
+    out.push(v ? { id: "vault", title: "Vault", state: "done", detail: `${v.fullName}@${v.branch}`, how: "performed" } : { id: "vault", title: "Vault", state: "todo", detail: s.installation || s.gitlab?.connected ? "Pick the repo and name the campaign" : "Install the app first", how: "performed" });
     if (v) {
       const n = s.keys?.length ?? 0;
       out.push({ id: "keys", title: "Agent keys", state: n ? "done" : "todo", detail: n ? `${n} ${n === 1 ? "key" : "keys"} issued` : "Mint a key for your agents (or connect Claude.ai or ChatGPT with the connector URL)", how: "performed" });
@@ -147,6 +166,17 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       account: { login: LOGIN, status: state.status === "approved" ? "approved" : state.status === "denied" ? "denied" : "waitlisted", requested: state.note !== undefined, admin: state.admin },
       installUrl: `${api}/__demo/install`,
       newRepoUrl: `${api}/__demo/new-repo`,
+      providers: ["github", "gitlab"],
+      ...(state.status === "approved" && !ready()
+        ? {
+            gitlab: {
+              connected: state.gitlab,
+              ...(state.gitlab ? { login: LOGIN, repos: GITLAB_REPOS.map(({ id, fullName, private: p, empty }) => ({ id, fullName, private: p, ...(empty === undefined ? {} : { empty }) })) } : {}),
+              connectUrl: `${api}/__demo/gitlab-connect`,
+              newRepoUrl: `${api}/__demo/new-project`,
+            },
+          }
+        : {}),
       ...(state.installation && state.status === "approved" ? { installation: { id: state.installation.id, repos: REPOS.map(({ id, fullName, private: p }) => ({ id, fullName, private: p })) } } : {}),
       ...(state.vault ? { vault: state.vault, keys: state.keys, curatorActions: state.curatorActions } : {}),
       publicUrl,
@@ -163,7 +193,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     if (!ready()) return { mode: "setup", user: { login: LOGIN }, account, capabilities: { ...capabilities(undefined, "hosted"), setup: "hosted" } };
     const info = await source.info();
     const v = state.vault!;
-    return { ...info, mode: "worker", vault: { kind: "github", repo: v.fullName, branch: v.branch }, user: { login: LOGIN }, account, capabilities: { ...capabilities(source, "hosted"), curator: true } };
+    return { ...info, mode: "worker", vault: { kind: v.provider === "gitlab" ? "gitlab" : "github", repo: v.fullName, branch: v.branch, ...(v.url ? { url: v.url } : {}) }, user: { login: LOGIN }, account, capabilities: { ...capabilities(source, "hosted"), curator: true } };
   }
 
   async function mint(request: Request, body: unknown): Promise<HostedMintedKey> {
@@ -187,7 +217,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     return { ...key, token, snippets: keySnippets(origin(request), token, kind) };
   }
 
-  async function setupRoute(request: Request, method: string, sub: string, body: unknown): Promise<unknown> {
+  async function setupRoute(request: Request, method: string, sub: string, body: unknown, url: URL): Promise<unknown> {
     if ((sub === "" || sub === "status") && method === "GET") return status(request);
     if (sub === "access" && method === "POST") {
       const note = (body as { note?: unknown } | undefined)?.note ?? "";
@@ -199,9 +229,34 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       return { ok: true };
     }
     if (state.status !== "approved") throw new HttpError(403, "Your account is waiting for an admin's approval.", "NOT_APPROVED");
+    if (sub === "repos" && method === "GET" && url.searchParams.get("provider") === "gitlab") {
+      if (!state.gitlab) throw new HttpError(409, "Connect your GitLab account first.", "NO_GITLAB_CONNECTION");
+      return { gitlab: { login: LOGIN }, repos: GITLAB_REPOS };
+    }
+    if (sub === "gitlab/disconnect" && method === "POST") {
+      if (state.vault?.provider === "gitlab") throw new HttpError(409, "Your vault is on GitLab: disconnecting would cut it off. Delete your account instead.", "HAS_VAULT");
+      state.gitlab = false;
+      return { ok: true };
+    }
     if (sub === "repos" && method === "GET") {
       if (!state.installation) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
       return { installation: state.installation, repos: REPOS };
+    }
+    if (sub === "init" && method === "POST" && (body as { provider?: unknown } | undefined)?.provider === "gitlab") {
+      if (ready()) throw new HttpError(409, `You already have a vault: ${state.vault!.fullName}.`, "HAS_VAULT");
+      if (!state.gitlab) throw new HttpError(409, "Connect your GitLab account first.", "NO_GITLAB_CONNECTION");
+      const b = (body ?? {}) as { repoId?: unknown; campaign?: unknown };
+      const repo = GITLAB_REPOS.find((r) => r.id === b.repoId);
+      if (!repo) throw new HttpError(404, "That isn't one of your GitLab projects with write access (Developer or better), in your personal namespace. Pick another.", "NOT_FOUND");
+      if (typeof b.campaign !== "string" || !b.campaign.trim()) throw new HttpError(400, "campaign: a name, up to 120 characters", "INVALID");
+      if (!repo.private) throw new HttpError(400, `${repo.fullName} is not private: anyone could read this memory. Make it private on GitLab (Settings → General → Visibility), then try again.`, "PUBLIC_REPO");
+      if (repo.empty === false && !repo.adoptable) throw new HttpError(409, `${repo.fullName} already has files; pick an empty project (or one with only a README, LICENSE or .gitignore).`, "NOT_EMPTY");
+      await new Promise((r) => setTimeout(r, opts.initDelay ?? 1200));
+      state.gitlab = false;
+      state.vault = gitlabVault(repo.fullName);
+      seedCurator();
+      const result: HostedInitResult = { vault: state.vault, mode: repo.adoptable ? "adopted" : "initialized" };
+      return result;
     }
     if (sub === "init" && method === "POST") {
       if (ready()) throw new HttpError(409, `You already have a vault: ${state.vault!.fullName}.`, "HAS_VAULT");
@@ -229,6 +284,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     }
     if (sub === "curator-actions" && method === "POST") {
       if (!ready()) throw new HttpError(409, "No vault yet: set one up first.", "NO_VAULT");
+      if (state.vault?.provider === "gitlab") throw new HttpError(409, "Nightly sleep on a schedule runs on GitHub Actions; for a GitLab vault, run sleep with your own curator agent.", "GITHUB_ONLY");
       state.curatorActions = !!(body as { enable?: unknown } | undefined)?.enable;
       const result: HostedCuratorActionsResult = { enabled: state.curatorActions, path: ".github/workflows/sleep.yml" };
       return result;
@@ -289,7 +345,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     if (sub === "stage") {
       const to = url.searchParams.get("to") as HostedDemoStage;
       if (!STAGES.includes(to)) throw new HttpError(400, `to: one of ${STAGES.join(", ")}`, "INVALID");
-      toStage(to);
+      toStage(to, url.searchParams.get("provider") ?? undefined);
       return redirect(to === "signed-out" ? `${base}/welcome/` : `${base}/setup/`);
     }
     if (sub === "install") {
@@ -297,6 +353,16 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       if (state.status === "approved") state.installation = { id: 9001 };
       return redirect(`${base}/setup/#repo`);
     }
+    if (sub === "gitlab-connect") {
+      if (!state.signedIn) return redirect(`${base}/auth/login?return=${encodeURIComponent(`${base}/setup/#repo`)}`);
+      if (state.status === "approved") state.gitlab = true;
+      return redirect(`${base}/setup/#repo`);
+    }
+    if (sub === "new-project")
+      return page(
+        "Create a project (demo)",
+        `<p>In the real app this is GitLab's new-project form: Create blank project, Visibility Private.</p><p>The demo pretends you made it. Close this tab and go on with <strong>Connect GitLab</strong>.</p><p><a href="${base}/setup/#install">Back to setup</a></p>`,
+      );
     if (sub === "new-repo")
       return page(
         "Create a repository (demo)",
@@ -331,7 +397,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       if (rest === "session") return json(200, await session());
       if (method !== "GET" && method !== "POST") throw new HttpError(405, "Method not allowed", "METHOD");
       const body = method === "POST" ? await readJson(request) : undefined;
-      if (section === "setup") return json(200, await setupRoute(request, method, sub, body));
+      if (section === "setup") return json(200, await setupRoute(request, method, sub, body, url));
       if (section === "admin") return json(200, adminRoute(method, sub, body, url));
       if (section === "account") return json(200, accountRoute(method, sub, body));
       if (!ready()) throw new HttpError(409, "No vault yet: finish setting one up first.", "NO_VAULT");

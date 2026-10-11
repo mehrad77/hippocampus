@@ -133,7 +133,7 @@ describe("auditChanges", () => {
     });
 
     it("stays out of config, house rules, CI, agent instructions, party notes and anywhere else", async () => {
-      const paths = ["_hippo/config.yaml", "_hippo/curator.md", ".github/workflows/validate.yml", "AGENTS.md", "CLAUDE.md", "_hippo/schema/types/lore.md", "_hippo/schema/kinds/beat.md"];
+      const paths = ["_hippo/config.yaml", "_hippo/curator.md", ".github/workflows/validate.yml", ".gitlab-ci.yml", ".gitlab/ci/validate.yml", "AGENTS.md", "CLAUDE.md", "_hippo/schema/types/lore.md", "_hippo/schema/kinds/beat.md"];
       for (const path of paths) expect(await audit([{ path, content: "x" }], curator)).toEqual([{ path, rule: "protected file" }]);
       expect(await audit([{ path: "party/residency-agent.md", content: note("type: party\ntitle: Residency Agent") }], curator)).toContainEqual({ path: "party/residency-agent.md", rule: "party note" });
       expect(await audit([{ path: "notes/todo.md", content: "x" }], curator)).toEqual([{ path: "notes/todo.md", rule: "outside the curator's folders" }]);

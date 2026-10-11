@@ -1,7 +1,8 @@
 import { signWebhook } from "@hippocampus/store-github/testing";
+import { FakeGitLab } from "@hippocampus/store-gitlab/testing";
 import { createHostedApp, type HostedAppDeps } from "../app.ts";
 import { keyRequest } from "../hosted/registry.ts";
-import { APP, ORIGIN, appKeyPair, hostedGitHub, registryDb, testSettings } from "../hosted/testing.ts";
+import { APP, GITLAB, ORIGIN, appKeyPair, hostedGitHub, registryDb, testSettings } from "../hosted/testing.ts";
 import type { DashboardUser, PartyMember, VaultGrant, VaultHosts, VaultMeta, VaultStub } from "../hosted/vault-port.ts";
 import { browser } from "./browser.ts";
 import { MemoryKV } from "./memory-kv.ts";
@@ -88,18 +89,31 @@ export function fakeAssets(files: Record<string, string>) {
 
 let keyPair: ReturnType<typeof appKeyPair> | undefined;
 
-export async function hostedApp(opts: { limits?: HostedAppDeps["limits"] } = {}) {
+export async function hostedApp(opts: { limits?: HostedAppDeps["limits"]; gitlab?: boolean; now?: () => Date } = {}) {
   const keys = await (keyPair ??= appKeyPair());
   const github = await hostedGitHub(keys);
   const { gh } = github;
   for (const u of [PLAYER, GM, SCOUT]) gh.addUser({ login: u.login, id: u.id });
   await gh.addRepo({ fullName: "game-master/vault", id: GM.repo, empty: true });
   await gh.addRepo({ fullName: "job-scout/vault", id: SCOUT.repo, empty: true });
+  // GitLab, when asked for: its own fake, reached by host name.
+  const gl = opts.gitlab ? new FakeGitLab() : undefined;
+  if (gl) {
+    gl.oauth = { clientId: GITLAB.clientId, clientSecret: GITLAB.clientSecret };
+    gl.strict = true;
+    if (opts.now) gl.now = opts.now;
+    gl.addUser("player", 31);
+    gl.addUser("game-master", 32);
+  }
+  const fetchAny = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    return gl && url.host === "gitlab.test" ? gl.fetch(input, init) : github.fetch(input, init);
+  };
   const kv = new MemoryKV();
   const vaults = new FakeVaults();
   const logs: string[] = [];
   const app = createHostedApp({
-    settings: testSettings(keys.privateKeyPem, [GM.id]),
+    settings: testSettings(keys.privateKeyPem, [GM.id], gl ? GITLAB : undefined),
     kv,
     registry: await registryDb(),
     vaults,
@@ -108,7 +122,8 @@ export async function hostedApp(opts: { limits?: HostedAppDeps["limits"] } = {})
       "/dashboard/welcome/index.html": "<!doctype html><title>Welcome</title>",
       "/dashboard/404.html": "<!doctype html><title>Lost</title>",
     }),
-    fetch: github.fetch,
+    fetch: fetchAny,
+    now: opts.now,
     limits: opts.limits,
     log: (line) => logs.push(line),
   });
@@ -158,7 +173,14 @@ export async function hostedApp(opts: { limits?: HostedAppDeps["limits"] } = {})
     return res;
   };
 
-  return { app, gh, github, kv, vaults, logs, waits, send, registry, signIn, api, post, readyAccount, mintKey, callMcp, deliver, browser: () => browser(send) };
+  /** Signed in as `login`, then GitLab connected as `gitlabUser` through the consent page. */
+  const connectGitLab = async (using: Visit, gitlabUser: string) => {
+    const toGitLab = await using(`${ORIGIN}/dashboard/setup/gitlab/connect`);
+    if (toGitLab.status !== 302) throw new Error(`gitlab connect: ${toGitLab.status} ${await toGitLab.text()}`);
+    return using(gl!.approve(toGitLab.headers.get("location")!, gitlabUser));
+  };
+
+  return { app, gh, gl, connectGitLab, github, kv, vaults, logs, waits, send, registry, signIn, api, post, readyAccount, mintKey, callMcp, deliver, browser: () => browser(send) };
 }
 
 export type HostedHarness = Awaited<ReturnType<typeof hostedApp>>;

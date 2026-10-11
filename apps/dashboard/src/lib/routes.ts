@@ -33,10 +33,10 @@ export const href = {
   map: (focus?: string) => `${BASE}/map/${focus ? `?focus=${encodeURIComponent(focus)}` : ""}`,
   /** GitHub sign-in on the Worker, coming back to `back` (a dashboard path). */
   login: (back = `${BASE}/setup/`) => `${AUTH}/login?return=${encodeURIComponent(back)}`,
+  /** A vault's repo page on its host (GitHub unless the vault says otherwise). */
+  repo: (vault: { fullName: string; url?: string }) => vault.url ?? `https://github.com/${vault.fullName.split("/").map(encodeURIComponent).join("/")}`,
   /** A repo on GitHub. */
   github: (repo: string) => `https://github.com/${repo.split("/").map(encodeURIComponent).join("/")}`,
-  /** A repo's commit history on GitHub (a branch's, when given). */
-  githubCommits: (repo: string, branch?: string) => `https://github.com/${repo.split("/").map(encodeURIComponent).join("/")}/commits${branch ? `/${encodeURIComponent(branch)}` : ""}`,
 };
 
 export function param(name: string): string | null {

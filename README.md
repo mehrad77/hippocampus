@@ -26,7 +26,7 @@ A hosted Hippocampus runs the MCP server, the dashboard and the vault's single w
 
 1. **Sign in** with GitHub on the instance's welcome page, and ask for access. An admin approves accounts by hand.
 2. **Create an empty private repo** on GitHub. The setup page opens GitHub's form for you, already filled in.
-3. **Install the Hippocampus GitHub App** on that one repo, then name your campaign. A key for secret facts is made in your browser (only its public half goes to the vault), and the app sets the vault up in one commit.
+3. **Install the Hippocampus GitHub App** on that one repo (or, where the instance offers it, connect GitLab and pick a project), then name your campaign. A key for secret facts is made in your browser (only its public half goes to the vault), and the app sets the vault up in one commit.
 4. **Connect your agents.** Mint an agent key and paste the snippet into Claude Code, Cursor or any MCP client, or add the MCP URL to Claude.ai or ChatGPT as a custom connector.
 5. **Set up a curator.** Mint a curator key for your best agent and run sleep with it (the Claude Code plugin's `/hippocampus:sleep`, on a schedule you pick), or turn on the GitHub Actions curator.
 

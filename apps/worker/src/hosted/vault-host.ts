@@ -2,9 +2,16 @@ import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validatio
 import { DurableObject } from "cloudflare:workers";
 import { hostedEmbedding } from "./embed-cap.ts";
 import type { HostedEnv } from "./env.ts";
+import { d1 } from "@hippocampus/index";
 import { GitHubApp } from "./github-app.ts";
+import { GitLabAccess } from "./gitlab.ts";
+import { Registry } from "./registry.ts";
 import { hostedSettings } from "./settings.ts";
-import { HostedVault, type DashboardUser, type HostDeps, type VaultGrant, type VaultMeta } from "./vault-runtime.ts";
+import { HostedVault, type DashboardUser, type GitLabDeps, type HostDeps, type VaultGrant, type VaultMeta } from "./vault-runtime.ts";
+
+const gitlabDeps = (gl: { url: string }, access: GitLabAccess): { gitlab: GitLabDeps } => ({
+  gitlab: { apiUrl: access.client.apiUrl, webUrl: gl.url, tokenFor: (accountId) => access.tokenFor(accountId) },
+});
 
 export type { DashboardUser, VaultGrant, VaultMeta } from "./vault-runtime.ts";
 
@@ -27,6 +34,8 @@ export class VaultHost extends DurableObject<HostedEnv> {
         app: new GitHubApp({ appId: s.appId, privateKey: s.privateKey, apiUrl: s.apiUrl }),
         apiUrl: s.apiUrl,
         webUrl: s.oauthUrl,
+        // The object reads the account's sealed GitLab tokens from the registry, and refreshes them there.
+        ...(s.gitlab ? gitlabDeps(s.gitlab, new GitLabAccess(s.gitlab, new Registry(d1(env.REGISTRY)))) : {}),
         embedding: hostedEmbedding(env, { ai: env.AI }),
         jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
       };

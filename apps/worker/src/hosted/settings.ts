@@ -1,5 +1,8 @@
-// The hosted app's configuration: one GitHub App (sign-in, installs, webhooks) and the admins who
-// approve accounts. Everything but the URLs is a Worker secret.
+// The hosted app's configuration: one GitHub App (sign-in, installs, webhooks), the admins who
+// approve accounts, and optionally a GitLab OAuth application for vaults on GitLab. Everything
+// but the URLs is a Worker secret.
+
+import { checkTokenKey } from "./token-box.ts";
 
 export interface HostedSettings {
   /** Public origin of the Worker, e.g. `https://hippocampus.example.workers.dev`. */
@@ -17,6 +20,17 @@ export interface HostedSettings {
   admins: Set<number>;
   apiUrl?: string;
   oauthUrl?: string;
+  /** Present when the operator set up a GitLab OAuth application: vaults can then live on GitLab. */
+  gitlab?: GitLabSettings;
+}
+
+export interface GitLabSettings {
+  /** Web origin of the GitLab instance, no trailing slash (default `https://gitlab.com`). */
+  url: string;
+  clientId: string;
+  clientSecret: string;
+  /** Seals stored GitLab tokens (`openssl rand -base64 32`). */
+  tokenKey: string;
 }
 
 export interface HostedVars {
@@ -31,6 +45,11 @@ export interface HostedVars {
   /** Only for local development against a fake GitHub. */
   GITHUB_API_URL?: string;
   GITHUB_OAUTH_URL?: string;
+  /** GitLab is optional: all of the client id, secret and token key turn it on. */
+  GITLAB_URL?: string;
+  GITLAB_CLIENT_ID?: string;
+  GITLAB_CLIENT_SECRET?: string;
+  HIPPO_TOKEN_KEY?: string;
 }
 
 const REQUIRED = [
@@ -75,7 +94,22 @@ export function hostedSettings(env: HostedVars): HostedSettings {
     admins: new Set(ids.map(Number)),
     apiUrl: trimSlash(env.GITHUB_API_URL),
     oauthUrl: trimSlash(env.GITHUB_OAUTH_URL),
+    gitlab: gitlabSettings(env),
   };
+}
+
+/** The GitLab settings when all of them are set; none when none are; an error for a half-configured set, so a typo doesn't quietly turn GitLab off. */
+export function gitlabSettings(env: HostedVars): GitLabSettings | undefined {
+  const id = env.GITLAB_CLIENT_ID?.trim();
+  const secret = env.GITLAB_CLIENT_SECRET?.trim();
+  const key = env.HIPPO_TOKEN_KEY?.trim();
+  if (!id && !secret && !key) return undefined;
+  const missing = [!id && "GITLAB_CLIENT_ID", !secret && "GITLAB_CLIENT_SECRET", !key && "HIPPO_TOKEN_KEY"].filter(Boolean);
+  if (missing.length) throw new Error(`GitLab needs GITLAB_CLIENT_ID, GITLAB_CLIENT_SECRET and HIPPO_TOKEN_KEY together; missing ${missing.join(", ")}`);
+  checkTokenKey(key!);
+  const url = new URL(env.GITLAB_URL?.trim() || "https://gitlab.com");
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback(url))) throw new Error("GITLAB_URL must be an https URL");
+  return { url: url.origin, clientId: id!, clientSecret: secret!, tokenKey: key! };
 }
 
 const trimSlash = (url: string | undefined) => url?.trim().replace(/\/$/, "") || undefined;

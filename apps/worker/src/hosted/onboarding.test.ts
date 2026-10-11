@@ -7,6 +7,7 @@ describe("initRequest", () => {
   it("takes the older campaign and human, and links the signed-in login to that human", () => {
     expect(initRequest({ ...BASE, campaign: " Lisbon relocation ", human: "Player" }, "player")).toEqual({
       repoId: 9001,
+      provider: "github",
       campaign: "Lisbon relocation",
       humans: [{ id: "player", github: "player" }],
       timezone: "Europe/Lisbon",

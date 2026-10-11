@@ -4,7 +4,7 @@ import type { Catalog, ChroniclePage, EntityDetail, EpisodeData, EpisodeKind, Go
 export type Mode = "local" | "github" | "mcp" | "worker" | "demo" | "setup";
 
 export interface VaultInfo {
-  kind: "dir" | "github" | "mcp" | "memory";
+  kind: "dir" | "github" | "gitlab" | "mcp" | "memory";
   dir?: string;
   repo?: string;
   branch?: string;
