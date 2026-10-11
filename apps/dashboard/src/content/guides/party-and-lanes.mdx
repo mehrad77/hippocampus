@@ -47,7 +47,7 @@ Domains are the tags that define lanes. They're listed in `_hippo/config.yaml`:
 domains: [residency, insurance, university, language, housing, career, finance, health, story]
 ```
 
-Add more whenever life grows a new area: on the Agents page under Areas (Domains), or with `hippo domain add <id…>`. Either one updates the config and the Handbook in one commit.
+Add more whenever life grows a new area: on the Agents page under Areas (Domains), or with `hippo domain add <id…>`. Either one updates the config and the Handbook in one commit. The curator never adds a domain itself; when it wanted one the vault doesn't have, the morning review lists it and the Agents page offers it to add.
 
 The rule is simple. **An agent has authority over a note when one of its `authority` domains matches one of the note's tags, or the note's type.** Matching ignores case. Authority is computed fresh for every decision. Retag a note or edit an agent's sheet, and the next report is judged by the new rules.
 

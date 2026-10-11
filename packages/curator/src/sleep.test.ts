@@ -51,6 +51,8 @@ describe("sleep", () => {
     expect(summaryPrompts).not.toContain("U12345678");
 
     expect(await store.read("_hippo/review.md")).toContain("3 episodes consolidated");
+    // A domain the model wanted is suggested; one from the secret-bearing episode isn't.
+    expect(parseDoc((await store.read("_hippo/review.md"))!).data.suggested_domains).toEqual(["rentals"]);
     expect(await store.read("HANDBOOK.md")).toContain("1/2 objectives");
   });
 
@@ -348,6 +350,32 @@ describe("sleep with kinds, qualifiers and managed memory", () => {
     expect(chronicle).toContain("· call/phone\n> phone with [[joao-silva]]");
     expect(section((await store.read("_hippo/review.md"))!, "📐 Shape notes")).toContain("data.with links to no note");
     expect(await store.list("inbox")).toEqual([]);
+  });
+
+  it("suggests domains the model wanted but the config lacks, never from a confidential or secret episode, and never writes the config", async () => {
+    const store = people({
+      "home-finder/2026-09-27T100000-a.md": memory("home-finder", "2026-09-27T10:00:00Z", "fact", "João Silva walks his dog in Alfama every morning."),
+      "home-finder/2026-09-27T110000-b.md": memory("home-finder", "2026-09-27T11:00:00Z", "fact", "João Silva takes the dog to the vet on Fridays, then runs errands."),
+      "home-finder/2026-09-27T120000-c.md": memory("home-finder", "2026-09-27T12:00:00Z", "fact", "João Silva has a hospital appointment.", "confidential: true\n"),
+      "home-finder/2026-09-27T130000-d.md": memory("home-finder", "2026-09-27T13:00:00Z", "fact", "João Silva's gym card is GYM-0042.", "secret: true\n"),
+    });
+    const wants = (domains: string[]) => ({ entities: [{ name: "João Silva", type: "character", aliases: [], domains }] });
+    const llm = summaries(
+      new ScriptedLLM()
+        .push("mentions", wants(["Pets", "housing", "Side Project!"]), wants(["pets", "errands", "fitness-2024"]), wants(["health"]), wants(["gym"]))
+        .push("claims", noClaims, noClaims, noClaims, noClaims),
+    );
+    const report = await sleep({ store, llm, now });
+
+    expect(report.failed).toEqual([]);
+    expect(report.consolidated.map((c) => c.domains)).toEqual([["pets"], ["pets", "errands"], undefined, undefined]);
+    // Tags still come from the config's list only.
+    expect((await fm(store, "characters/joao-silva.md")).tags).toEqual(["housing"]);
+    const review = (await store.read("_hippo/review.md"))!;
+    expect(parseDoc(review).data.suggested_domains).toEqual(["pets", "errands"]);
+    expect(review).toContain("Domains the curator wanted that the vault doesn't have (add them on the Agents page or with `hippo domain add`):\n\n- `pets` (2 episodes)\n- `errands` (1 episode)\n");
+    expect(review).not.toMatch(/health|gym|side project|fitness/i);
+    expect(await store.read("_hippo/config.yaml")).toBe(PEOPLE_CONFIG);
   });
 
   it("logs a decision on the note it's about", async () => {
