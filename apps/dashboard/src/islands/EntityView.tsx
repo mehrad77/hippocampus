@@ -6,6 +6,7 @@ import { daysLeftLabel, fieldLabel, plural, shortDate, urgency } from "../lib/fo
 import { groupRelations } from "../lib/graph.ts";
 import { useTerms, type Voice } from "../lib/prefs.ts";
 import { href, param } from "../lib/routes.ts";
+import { repoLinks } from "../lib/vaultLinks.ts";
 import type { DisputeView, EntityDetail, EpisodeView, FactDetail, PartyMember, QuestCard, Ref, SessionInfo } from "../lib/types.ts";
 import { ClockDial } from "../ui/ClockDial.tsx";
 import { EntityLink } from "../ui/EntityLink.tsx";
@@ -165,7 +166,7 @@ function SheetHead({ d, session, refs, voice: { v } }: { d: EntityDetail; sessio
   const c = d.card;
   const vault = session.vault;
   const obsidian = vault?.kind === "dir" && vault.dir ? `obsidian://open?path=${encodeURIComponent(`${vault.dir.replace(/\/+$/, "")}/${d.path}`)}` : undefined;
-  const github = vault?.kind === "github" && vault.repo ? `https://github.com/${vault.repo}/blob/${encodeURIComponent(vault.branch ?? "main")}/${d.path.split("/").map(encodeURIComponent).join("/")}` : undefined;
+  const links = repoLinks(vault);
   return (
     <header className={`panel sheet-head typed typed--${c.type}`}>
       <div className="sigil" aria-hidden>
@@ -216,9 +217,9 @@ function SheetHead({ d, session, refs, voice: { v } }: { d: EntityDetail; sessio
             <Icon name="external" /> Open in Obsidian
           </a>
         )}
-        {github && (
-          <a className="btn" href={github} target="_blank" rel="noreferrer noopener">
-            <Icon name="github" /> View on GitHub
+        {links && (
+          <a className="btn" href={links.blob(d.path)} target="_blank" rel="noreferrer noopener">
+            <Icon name={links.host === "GitHub" ? "github" : "external"} /> View on {links.host}
           </a>
         )}
       </div>

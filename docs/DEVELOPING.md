@@ -37,7 +37,7 @@ Run the CLI from source (tsx, no build):
 Use these for UI work, screenshots and bug reports. Everything in them is fictional.
 
 - `pnpm dev:dashboard` runs the dashboard UI with hot reload against the demo campaign. `HIPPO_VAULT=<dir> pnpm dev:dashboard` uses a local vault instead, which is private data: never commit or share what it shows.
-- `HIPPO_DEMO_HOSTED=1 pnpm dev:dashboard` puts a pretend hosted app in front of the demo: sign-in, waitlist, GitHub App install, vault setup, keys, curator, admin and account pages, with nothing touching GitHub. `GET /dashboard/api/__demo/stage?to=<stage>` jumps to a stage (`signed-out`, `waitlisted`, `requested`, `approved`, `installed`, `ready`).
+- `HIPPO_DEMO_HOSTED=1 pnpm dev:dashboard` puts a pretend hosted app in front of the demo: sign-in, waitlist, GitHub App install, vault setup, keys, curator, admin and account pages, with nothing touching GitHub. `GET /dashboard/api/__demo/stage?to=<stage>` jumps to a stage (`signed-out`, `waitlisted`, `requested`, `approved`, `installed`, `ready`); add `&provider=gitlab` to walk the GitLab path.
 - `./apps/cli/bin/hippo dashboard --demo` serves the built dashboard with the demo campaign, as users see it.
 
 ## The hosted app

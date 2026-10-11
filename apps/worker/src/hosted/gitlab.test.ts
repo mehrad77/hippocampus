@@ -132,7 +132,7 @@ describe("a vault on GitLab", () => {
 
   it("is initialized from the template in one commit, without GitHub's workflow", async () => {
     const { gl, result } = await ready();
-    expect(result).toMatchObject({ mode: "initialized", vault: { provider: "gitlab", fullName: "player/vault" } });
+    expect(result).toMatchObject({ mode: "initialized", vault: { provider: "gitlab", fullName: "player/vault", url: "https://gitlab.test/player/vault" } });
     const files = gl.files("main", gl.projects.get(555)!);
     expect(files["_hippo/config.yaml"]).toBeDefined();
     expect(Object.keys(files).filter((p) => p.startsWith(".github/"))).toEqual([]);

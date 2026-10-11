@@ -201,6 +201,8 @@ export interface HostedVault {
   reason?: string;
   /** Where the repo lives; absent means GitHub. */
   provider?: "github" | "gitlab";
+  /** The repo's page on its host, for links. */
+  url?: string;
 }
 
 /** The account's GitLab connection, when the instance offers GitLab. */

@@ -10,7 +10,7 @@ import { GitLabAuthError, type GitLabAccess, type GitLabProject } from "./gitlab
 import { keyRequest, type Account, type DisconnectReason, type Provider, type KeyKind, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
 import { clearPendingInstallation, pendingInstallation, type SessionKV } from "./session.ts";
 import { GITLAB_CONNECT_PATH } from "./gitlab.ts";
-import { installUrl, newRepoUrl, type HostedSettings } from "./settings.ts";
+import { installUrl, newRepoUrl, oauthUrlOf, type HostedSettings } from "./settings.ts";
 
 // Session Zero on the hosted app, for one signed-in account: from the waitlist, through installing
 // the GitHub App on a private repo, to a vault in that repo and keys for its agents.
@@ -132,7 +132,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       providers: gitlab ? ["github", "gitlab"] : ["github"],
       ...(gitlabInfo ? { gitlab: gitlabInfo } : {}),
       ...(installation ? { installation } : {}),
-      ...(vault ? { vault: vaultInfo(vault) } : {}),
+      ...(vault ? { vault: vaultInfo(vault, settings) } : {}),
       ...(keys ? { keys: keys.map(keyInfo) } : {}),
       ...(curatorActions === undefined ? {} : { curatorActions }),
       publicUrl,
@@ -165,7 +165,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       });
       await changed(result.replaced);
       await changed(result.vault.id);
-      return { vault: vaultInfo(result.vault), mode: result.mode };
+      return { vault: vaultInfo(result.vault, settings), mode: result.mode };
     }
     // A retry on the same repo can go on with the vault's own installation once the pending one has expired.
     const installationId = (await pendingInstallation(kv, account.id))?.installationId ?? (existing?.repoId === req.repoId && existing.provider === "github" ? existing.installationId : undefined);
@@ -184,7 +184,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
     await clearPendingInstallation(kv, account.id);
     await changed(result.replaced);
     await changed(result.vault.id);
-    return { vault: vaultInfo(result.vault), mode: result.mode };
+    return { vault: vaultInfo(result.vault, settings), mode: result.mode };
   }
 
   async function ownVault(): Promise<VaultRecord> {
@@ -281,7 +281,15 @@ export function initRequest(body: unknown): VaultSettings & { repoId: number; pr
   };
 }
 
-const vaultInfo = (v: VaultRecord): HostedVault => ({ id: v.id, fullName: v.fullName, branch: v.branch, status: v.status, provider: v.provider, ...(v.reason ? { reason: v.reason } : {}) });
+const vaultInfo = (v: VaultRecord, s: HostedSettings): HostedVault => ({
+  id: v.id,
+  fullName: v.fullName,
+  branch: v.branch,
+  status: v.status,
+  provider: v.provider,
+  url: `${v.provider === "gitlab" ? s.gitlab?.url : oauthUrlOf(s)}/${v.fullName}`,
+  ...(v.reason ? { reason: v.reason } : {}),
+});
 
 const keyInfo = (k: KeyRecord): HostedKeyInfo => ({
   id: k.id,

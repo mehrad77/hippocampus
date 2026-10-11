@@ -7,6 +7,7 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 **Breaking for self-hosted Workers:** `apps/worker` is now a hosted multi-user app. A single-vault deployment needs a GitHub App, a new D1 registry and new secrets before it starts again, and its agents need new keys. Follow [docs/MIGRATING-WORKER.md](docs/MIGRATING-WORKER.md). The CLI and vaults are not affected: there's no vault format change.
 
 ### Added
+- **Vaults on GitLab** (hosted app): connect a GitLab account (OAuth, scope `api`), pick an empty private project in your personal namespace, and it becomes the vault. Optional: an instance turns it on by setting `GITLAB_CLIENT_ID`, `GITLAB_CLIENT_SECRET` and `HIPPO_TOKEN_KEY` (see docs/USAGE.md). New `GitLabStore` (`packages/store-gitlab`); stored GitLab tokens are sealed in the registry (migration `0003_gitlab.sql`); a Cron Trigger checks GitLab vaults every six hours in place of webhooks; the audit protects `.gitlab-ci.yml` and `.gitlab/`. The nightly curator workflow stays GitHub-only. A GitLab token isn't limited to one project: see SECURITY.md.
 - **The hosted app** (`apps/worker`): one Cloudflare Worker for many people, each with a vault in their own private GitHub repo.
   - A GitHub App (Contents and Workflows read and write, Metadata read) for sign-in and repo access; its settings are in `apps/worker/github-app.manifest.json`.
   - Accounts with a waitlist and an admin page (`HIPPO_ADMINS`, by GitHub user id). A D1 registry (`apps/worker/migrations/`) holds accounts, vaults and hashed keys, never vault content.

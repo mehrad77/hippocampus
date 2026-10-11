@@ -270,7 +270,11 @@ export function CuratorRecipes({ status }: { status: HostedStatus }) {
       <h3 className="sz-subhead">On a schedule</h3>
       <p className="small">Once a day is enough for most vaults; every hour suits agents that write a lot. A run only takes what's in the inbox.</p>
       <Snippets snippets={r.schedule} />
-      <ActionsCurator status={status} />
+      {status.vault?.provider === "gitlab" ? (
+        <p className="small muted">Scheduled curation on GitLab runs through your own curator agent, as above. The built-in nightly job is a GitHub Actions workflow.</p>
+      ) : (
+        <ActionsCurator status={status} />
+      )}
     </div>
   );
 }

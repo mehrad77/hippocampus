@@ -12,9 +12,9 @@ We aim to acknowledge reports within a few days, and to credit reporters who wan
 
 | Place | What | Who controls it |
 | --- | --- | --- |
-| Your vault repo on GitHub | Every note, the inbox, the chronicle, disputes, age-encrypted secrets | You. It's your private repo |
+| Your vault repo on GitHub or GitLab | Every note, the inbox, the chronicle, disputes, age-encrypted secrets | You. It's your private repo |
 | Your age identity (key file) | The only thing that can decrypt secrets | You. It never reaches the app |
-| The hosted app's registry (D1) | Your GitHub id and login, your access note, your vault's repo name and status, a SHA-256 hash of each key with its label and scopes | The operator |
+| The hosted app's registry (D1) | Your GitHub id and login, your access note, your vault's repo name and status, a SHA-256 hash of each key with its label and scopes; for a GitLab vault, your GitLab username and your GitLab OAuth tokens, sealed (AES-256-GCM under `HIPPO_TOKEN_KEY`, bound to your account id) | The operator |
 | Your vault's Durable Object | A search index (note text, and embeddings if on), a cache of the repo's files, sleep runs in progress, the current installation token | The operator |
 | KV (`OAUTH_KV`) | Sign-in sessions, OAuth clients and grants (a grant's details are stored encrypted) | The operator |
 | Logs | Route name, status, timing and a hashed vault id per request | The operator |
@@ -24,6 +24,7 @@ We aim to acknowledge reports within a few days, and to credit reporters who wan
 Whoever runs a hosted instance acts as a **data processor** for the vaults on it. Be clear about what that means:
 
 - **The vault repo.** The GitHub App has Contents and Workflows read and write, and Metadata read, on the repos people install it on. The app's private key can mint tokens for any of those repos. Someone with that key, or with control of the Worker, can read and change any installed vault.
+- **A GitLab vault is weaker than a GitHub one in one way.** GitHub's installation tokens are minted per repo with only Contents (and, for setup, Workflows) permissions. GitLab has no such thing: the OAuth scope is `api`, so the stored token can reach every project its owner can, and edit the vault's CI file. Anyone with `HIPPO_TOKEN_KEY` and read access to the registry (the operator) can use those tokens. The app only ever uses one to read and write the vault project and to check it is still private. Curators and agents can't touch `.gitlab-ci.yml` or `.gitlab/` (the audit protects them like `.github/`), but the human, and anyone holding the token, can. Prefer GitHub when this matters. Revoking Hippocampus under GitLab → Preferences → Applications ends the access at once.
 - **The index and cache.** Note text sits in each vault's Durable Object storage on Cloudflare. Inbox files are the exception: they can hold secrets in plain text until sleep encrypts them, so their contents are cached in memory only, never stored at rest. They still pass through the Worker while it serves a request.
 - **The registry.** Who has an account, which repo is whose vault, and when keys were last used. Admins see names and states on the admin page, never vault content, but an operator with database access sees the same rows.
 - **Embeddings.** With semantic recall on, note text goes to the configured embeddings provider (Workers AI or another API).
@@ -60,7 +61,7 @@ Limits:
 
 Every commit Hippocampus makes names its actor in a `Hippo-Actor` trailer (`agent:<id>`, `curator`, `human` or `bootstrap`), with `Hippo-Model`, `Hippo-Curator` and `Hippo-Run` where they apply.
 
-- **Before a hosted commit**, the app checks the trailer against the caller's actual credentials (a key can't commit as the curator or the human), then audits the change set against what that actor may do (`packages/core/src/audit.ts`). Agents may only add files to their own inbox folder, or edit quests with the `quest` scope. The curator may not touch human prose, facts the human set, the config, the party or `.github/`, and may not write a secret value in plain text anywhere. A refused change is never committed.
+- **Before a hosted commit**, the app checks the trailer against the caller's actual credentials (a key can't commit as the curator or the human), then audits the change set against what that actor may do (`packages/core/src/audit.ts`). Agents may only add files to their own inbox folder, or edit quests with the `quest` scope. The curator may not touch human prose, facts the human set, the config, the party, `.github/` or `.gitlab-ci.yml` and `.gitlab/`, and may not write a secret value in plain text anywhere. A refused change is never committed.
 - **Before `hippo sleep` writes**, it runs the same audit on its own changes.
 - **Afterwards**, the vault's CI runs `hippo audit` daily over the last day's commits. It prints commit, path and rule, never content.
 
@@ -73,7 +74,7 @@ Each vault also has a house-rules file (`_hippo/curator.md`) and guardrail files
 - Each vault is served by its own Durable Object, named by the vault's id. It holds that vault's storage, caches, index and sleep runs, and nothing else.
 - The Worker authenticates every request (key, OAuth grant or session) before forwarding it to the one object the credentials belong to. Credentials are stripped before the object sees the request.
 - Each object's installation token is narrowed to its own repo and to Contents and Metadata. Only vault setup and the curator-workflow switch get Workflows.
-- The app refuses public repos. If a vault's repo is made public, the app is uninstalled or suspended, or the repo leaves the installation, a signed GitHub webhook disconnects the vault and it stops answering.
+- The app refuses public repos. If a vault's repo is made public, the app is uninstalled or suspended, or the repo leaves the installation, a signed GitHub webhook disconnects the vault and it stops answering. GitLab sends no such webhooks, so a Cron Trigger checks every GitLab vault every six hours: a project that is no longer private (`internal` counts as not private), was deleted, or whose connection was revoked is disconnected. That makes the window up to six hours, not seconds.
 - Per-vault quotas and per-key, per-account and per-IP rate limits keep one busy vault from starving others.
 
 ## The web side
@@ -92,10 +93,10 @@ Invocation logs are off, since they'd record every URL. The Worker writes one li
 From the account menu, after typing your GitHub login:
 1. all your keys are revoked, and connected apps are signed out;
 2. your vault's Durable Object is wiped (index, cache, tokens, runs);
-3. the GitHub App is uninstalled from your account;
+3. the GitHub App is uninstalled from your account, or your GitLab connection is revoked at GitLab and erased;
 4. your account and vault rows are removed. A tombstone of the account id remains, so old sessions can't come back to life.
 
-Your vault repo is yours and stays on GitHub, untouched.
+Your vault repo is yours and stays on GitHub or GitLab, untouched.
 
 ## The local CLI
 
