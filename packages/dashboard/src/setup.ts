@@ -184,7 +184,7 @@ export interface SetupPort {
 // ── Hosted (multi-user Worker) ────────────────────────────────────────────────
 
 export interface HostedRepo {
-  /** GitHub's repo id: what `init` takes. */
+  /** The provider's repo (GitLab: project) id: what `init` takes. */
   id: number;
   fullName: string;
   private: boolean;
@@ -197,8 +197,27 @@ export interface HostedVault {
   fullName: string;
   branch: string;
   status: "bootstrapping" | "ready" | "disconnected";
-  /** Why it's disconnected: uninstalled, suspended, repo_removed, repo_deleted, public, bootstrap_failed. */
+  /** Why it's disconnected: uninstalled, suspended, repo_removed, repo_deleted, public, bootstrap_failed, token_revoked. */
   reason?: string;
+  /** Where the repo lives; absent means GitHub. */
+  provider?: "github" | "gitlab";
+  /** The repo's page on its host, for links. */
+  url?: string;
+}
+
+/** The account's GitLab connection, when the instance offers GitLab. */
+export interface HostedGitLab {
+  connected: boolean;
+  /** The GitLab username, once connected. */
+  login?: string;
+  /** Their projects a vault could use (private or not; `private` and `empty` say which are fit). */
+  repos?: HostedRepo[];
+  /** Why the projects couldn't be listed, or that the connection must be redone. */
+  error?: string;
+  /** Where to send the person to connect (GitLab's consent page, via the Worker). */
+  connectUrl: string;
+  /** GitLab's new-project form. */
+  newRepoUrl: string;
 }
 
 /** A vault key, without the key: only its SHA-256 is stored. */
@@ -226,11 +245,15 @@ export interface HostedSetupStatus {
   installUrl: string;
   /** GitHub's new-repo form, prefilled with a private repo. */
   newRepoUrl: string;
+  /** The hosts a vault can live on. GitHub always; GitLab when the instance has it set up. Absent means GitHub only. */
+  providers?: ("github" | "gitlab")[];
+  /** The GitLab connection, until a vault is set up. Present when `providers` has `gitlab`. */
+  gitlab?: HostedGitLab;
   /** The installation just made, until a vault is set up on it. */
   installation?: { id: number; repos: HostedRepo[]; error?: string };
   vault?: HostedVault;
   keys?: HostedKeyInfo[];
-  /** Whether the vault runs sleep nightly on GitHub Actions (its `.github/workflows/sleep.yml`). Absent when it couldn't be checked. */
+  /** Whether the vault runs sleep nightly on GitHub Actions (its `.github/workflows/sleep.yml`). Absent when it couldn't be checked, and for GitLab vaults. */
   curatorActions?: boolean;
   publicUrl: string;
   mcpUrl: string;
@@ -238,6 +261,9 @@ export interface HostedSetupStatus {
 }
 
 export interface HostedInitRequest {
+  /** Where the repo lives; default `github`. */
+  provider?: "github" | "gitlab";
+  /** The repo's id at that provider. */
   repoId: number;
   campaign: string;
   human: string;

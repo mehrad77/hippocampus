@@ -3,7 +3,7 @@ import type { SqlDriver } from "@hippocampus/index";
 import { nodeSqlite } from "@hippocampus/index/node";
 import { FakeGitHub } from "@hippocampus/store-github/testing";
 import { base64url } from "../github-login.ts";
-import type { HostedSettings } from "./settings.ts";
+import type { GitLabSettings, HostedSettings } from "./settings.ts";
 
 // Test helpers for the hosted app: the registry on node:sqlite, a GitHub App key pair, and
 // GitHub's sign-in endpoints in front of a FakeGitHub.
@@ -102,7 +102,10 @@ export async function hostedGitHub(keys: { publicKey: Parameters<typeof crypto.s
   return { gh, fetch, signIn, installed };
 }
 
-export function testSettings(privateKey: string, admins: number[] = []): HostedSettings {
+/** A GitLab OAuth application at https://gitlab.test, with a fixed token key. */
+export const GITLAB: GitLabSettings = { url: "https://gitlab.test", clientId: "gl-client", clientSecret: "gl-secret", tokenKey: btoa(String.fromCharCode(...new Uint8Array(32).fill(7))) };
+
+export function testSettings(privateKey: string, admins: number[] = [], gitlab?: GitLabSettings): HostedSettings {
   return {
     publicUrl: ORIGIN,
     appId: APP.id,
@@ -114,5 +117,6 @@ export function testSettings(privateKey: string, admins: number[] = []): HostedS
     admins: new Set(admins),
     apiUrl: "https://api.github.test",
     oauthUrl: "https://github.test",
+    ...(gitlab ? { gitlab } : {}),
   };
 }

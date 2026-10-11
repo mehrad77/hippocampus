@@ -21,6 +21,8 @@ import {
   hostedIndex,
   hostedLock,
   hostedNeighbors,
+  hostedProvider,
+  hostedRepos,
   hostedStepDef,
   hostedStepState,
   identityFileName,
@@ -30,8 +32,10 @@ import {
   parseHostedStep,
   repoVerdict,
   STEP_ITEM,
+  stepsFor,
   type CampaignDraft,
   type HostedContext,
+  type HostedProvider,
   type HostedStepId,
 } from "./hosted.ts";
 import { domainProblem, truncateKey } from "./model.ts";
@@ -47,6 +51,9 @@ interface HostedStepProps {
   setDraft: (fn: (d: CampaignDraft) => CampaignDraft) => void;
   picked?: number;
   setPicked: (id: number) => void;
+  /** The host the vault will live on, and the person's choice of it. */
+  host: HostedProvider;
+  setProvider: (p: HostedProvider) => void;
   identity?: string;
   setIdentity: (id: string | undefined) => void;
   clearDraft: () => void;
@@ -73,15 +80,15 @@ function localTimeZone(): string {
 }
 
 /**
- * The draft (campaign settings, the picked repo, the key's *public* half) survives a reload or
- * GitHub's install round trip in sessionStorage. The private key is never stored anywhere.
+ * The draft (campaign settings, the picked repo and host, the key's *public* half) survives a reload or
+ * GitHub's install and GitLab's consent round trips in sessionStorage. The private key is never stored anywhere.
  */
 function useDraft(login: string) {
   const key = `hippo:hosted-draft:${login}`;
-  const [state, setState] = useState<{ draft: CampaignDraft; picked?: number }>(() => {
+  const [state, setState] = useState<{ draft: CampaignDraft; picked?: number; provider?: HostedProvider }>(() => {
     try {
-      const saved = JSON.parse(sessionStorage.getItem(key) ?? "null") as { draft: CampaignDraft; picked?: number } | null;
-      if (saved?.draft) return { draft: { ...newDraft(localTimeZone()), ...saved.draft }, picked: saved.picked };
+      const saved = JSON.parse(sessionStorage.getItem(key) ?? "null") as { draft: CampaignDraft; picked?: number; provider?: HostedProvider } | null;
+      if (saved?.draft) return { draft: { ...newDraft(localTimeZone()), ...saved.draft }, picked: saved.picked, provider: saved.provider };
     } catch {
       // Storage off or unreadable: start fresh.
     }
@@ -97,6 +104,8 @@ function useDraft(login: string) {
   return {
     draft: state.draft,
     picked: state.picked,
+    provider: state.provider,
+    setProvider: (provider: HostedProvider) => setState((s) => ({ ...s, provider, picked: s.provider === provider ? s.picked : undefined })),
     setDraft: (fn: (d: CampaignDraft) => CampaignDraft) => setState((s) => ({ ...s, draft: fn(s.draft) })),
     setPicked: (picked: number) => setState((s) => ({ ...s, picked })),
     clear: () => {
@@ -115,19 +124,22 @@ export function HostedOnboarding({ session, status: initial, footer }: { session
   const { t, v } = useTerms();
   const hash = useHash();
   const login = initial.account.login;
-  const { draft, setDraft, picked, setPicked, clear } = useDraft(login);
+  const { draft, setDraft, picked, setPicked, provider, setProvider, clear } = useDraft(login);
   const [identity, setIdentity] = useState<string>();
   // Waiting on someone else (an admin, a bootstrap): look again every few seconds.
   const waiting = (initial.account.status === "waitlisted" && initial.account.requested) || initial.vault?.status === "bootstrapping";
   const live = useResource<HostedStatus>("/setup/status", { poll: waiting ? 15_000 : undefined });
   const status = live.data?.kind === "hosted" ? live.data : initial;
-  const ctx: HostedContext = { status, picked, draftReady: draftReady(draft) };
+  const ctx: HostedContext = { status, picked, draftReady: draftReady(draft), provider };
+  const host = hostedProvider(ctx);
+  const steps = stepsFor(host);
+  const noun = host === "gitlab" ? "GitLab project" : "GitHub repository";
 
   const parsed = parseHostedStep(hash);
   const lastStep = useRef<HostedStepId | undefined>(undefined);
   if (parsed) lastStep.current = parsed;
   const current = parsed ?? lastStep.current ?? hostedDefaultStep(ctx);
-  const step = hostedStepDef(current);
+  const step = hostedStepDef(current, host);
   const lock = hostedLock(current, ctx);
   const state = hostedStepState(current, ctx);
   const itemId = STEP_ITEM[current];
@@ -150,7 +162,7 @@ export function HostedOnboarding({ session, status: initial, footer }: { session
   }, [current]);
 
   const Body = BODIES[current];
-  const props: HostedStepProps = { session, status, ctx, draft, setDraft, picked, setPicked, identity, setIdentity, clearDraft: clear };
+  const props: HostedStepProps = { session, status, ctx, draft, setDraft, picked, setPicked, host, setProvider, identity, setIdentity, clearDraft: clear };
   const ready = status.vault?.status === "ready";
 
   return (
@@ -164,8 +176,8 @@ export function HostedOnboarding({ session, status: initial, footer }: { session
           <h1>{ready ? v("Finish setting up", "Finish setting the table") : v("Get started", "Set the table")}</h1>
           <p className="page-head__lede">
             {v(
-              "Your memory lives in a private GitHub repository that you own. A few steps connect it here, then your agents. Nothing happens until you press a button, and every button says what it will do.",
-              "The campaign lives in a private GitHub repository that you own. A few steps open it here, then seat your party. Nothing happens until you press a button, and every button says what it will do.",
+              `Your memory lives in a private ${noun} that you own. A few steps connect it here, then your agents. Nothing happens until you press a button, and every button says what it will do.`,
+              `The campaign lives in a private ${noun} that you own. A few steps open it here, then seat your party. Nothing happens until you press a button, and every button says what it will do.`,
             )}
           </p>
         </div>
@@ -175,11 +187,11 @@ export function HostedOnboarding({ session, status: initial, footer }: { session
       </header>
 
       <div className="sz-layout">
-        <StepRailView steps={HOSTED_STEPS} current={current} stateOf={(id) => hostedStepState(id as HostedStepId, ctx)} />
+        <StepRailView steps={steps} current={current} stateOf={(id) => hostedStepState(id as HostedStepId, ctx)} />
         <section className="panel sz-step" aria-labelledby="sz-step-title">
           <header className="sz-step__head">
             <div className="sz-step__kicker">
-              <Icon name={step.icon} size={16} /> Step {hostedIndex(current) + 1} of {HOSTED_STEPS.length}
+              <Icon name={step.icon} size={16} /> Step {hostedIndex(current) + 1} of {steps.length}
             </div>
             <div className="sz-step__titlerow">
               <h2 id="sz-step-title" ref={headingRef} tabIndex={-1}>
@@ -332,40 +344,73 @@ function AccessStep({ status }: HostedStepProps) {
 
 // ── 2. Create a repo ───────────────────────────────────────────────────────
 
-function CreateStep({ status }: HostedStepProps) {
+/** GitHub or GitLab, when the instance offers both. */
+function HostChoice({ status, host, setProvider }: Pick<HostedStepProps, "status" | "host" | "setProvider">) {
+  if (!status.providers?.includes("gitlab")) return null;
+  const locked = !!status.vault;
+  return (
+    <div className="field">
+      <span className="label">Where will the vault live?</span>
+      <div className="segmented" role="radiogroup" aria-label="Where the vault lives">
+        {(["github", "gitlab"] as const).map((p) => (
+          <label key={p} data-checked={host === p ? "" : undefined}>
+            <input type="radio" name="hz-host" checked={host === p} disabled={locked} onChange={() => setProvider(p)} />
+            <Icon name={p === "github" ? "github" : "link"} size={16} /> {p === "github" ? "GitHub" : "GitLab"}
+          </label>
+        ))}
+      </div>
+      <span className="hint">{locked ? "Your vault is already set up there." : "Either way it's a private repository that you own, and Hippocampus only reads and writes that one."}</span>
+    </div>
+  );
+}
+
+function CreateStep({ status, host, setProvider }: HostedStepProps) {
   const { v } = useTerms();
-  const done = !!status.installation || !!status.vault;
+  const gitlab = host === "gitlab";
+  const done = gitlab ? !!status.gitlab?.connected || !!status.vault : !!status.installation || !!status.vault;
   return (
     <div className="stack">
+      <HostChoice status={status} host={host} setProvider={setProvider} />
       <p>
-        {v(
-          "Your memory is a folder of Markdown notes in a GitHub repository that belongs to you. You can open it, clone it, back it up or delete it any time; Hippocampus only reads and writes it through its app.",
-          "The campaign is a folder of Markdown notes in a GitHub repository that belongs to you. You can open it, clone it, back it up or delete it any time; Hippocampus only reads and writes it through its app.",
-        )}
+        {gitlab
+          ? v(
+              "Your memory is a folder of Markdown notes in a GitLab project that belongs to you. You can open it, clone it, back it up or delete it any time; Hippocampus only reads and writes it through your GitLab connection.",
+              "The campaign is a folder of Markdown notes in a GitLab project that belongs to you. You can open it, clone it, back it up or delete it any time; Hippocampus only reads and writes it through your GitLab connection.",
+            )
+          : v(
+              "Your memory is a folder of Markdown notes in a GitHub repository that belongs to you. You can open it, clone it, back it up or delete it any time; Hippocampus only reads and writes it through its app.",
+              "The campaign is a folder of Markdown notes in a GitHub repository that belongs to you. You can open it, clone it, back it up or delete it any time; Hippocampus only reads and writes it through its app.",
+            )}
       </p>
       <ul className="sz-howto">
         <li>
-          <strong>Private:</strong> only you (and the app) can see it. Public repositories are refused.
+          <strong>Private:</strong> only you {gitlab ? "" : "(and the app) "}can see it. {gitlab ? "Public and internal projects are refused: internal ones are open to every signed-in user of the instance." : "Public repositories are refused."}
         </li>
         <li>
-          <strong>Empty:</strong> no README, license or .gitignore needed; the app fills it with the vault template.
+          <strong>Empty:</strong> no README, license or .gitignore needed; Hippocampus fills it with the vault template.
         </li>
         <li>
-          <strong>On your personal account,</strong> not an organization.
+          <strong>On your personal {gitlab ? "namespace" : "account"},</strong> not {gitlab ? "a group" : "an organization"}.
         </li>
       </ul>
       <div className="row">
-        <a className="btn btn--primary" href={status.newRepoUrl} target="_blank" rel="noopener noreferrer">
-          <Icon name="github" /> Create a private repo on GitHub <Icon name="external" size={16} />
+        <a className="btn btn--primary" href={gitlab ? status.gitlab?.newRepoUrl : status.newRepoUrl} target="_blank" rel="noopener noreferrer">
+          <Icon name={gitlab ? "link" : "github"} /> {gitlab ? "Create a private project on GitLab" : "Create a private repo on GitHub"} <Icon name="external" size={16} />
         </a>
-        {done && <ToneTag tone="done" word="Done" title="The app is installed on a repo already" />}
+        {done && <ToneTag tone="done" word="Done" title={gitlab ? "GitLab is connected already" : "The app is installed on a repo already"} />}
       </div>
-      <p className="hint">Opens GitHub in a new tab with the form filled in: named vault, private. Rename it if you like, then come back here.</p>
-      <p className="small muted">Already have an empty private repo, or one with an existing Hippocampus vault? Skip ahead and install the app on it.</p>
+      <p className="hint">
+        {gitlab
+          ? "Opens GitLab's new-project form in a new tab. Choose Create blank project, set Visibility to Private, and untick the README if you like. Then come back here."
+          : "Opens GitHub in a new tab with the form filled in: named vault, private. Rename it if you like, then come back here."}
+      </p>
+      <p className="small muted">
+        Already have an empty private {gitlab ? "project" : "repo"}, or one with an existing Hippocampus vault? Skip ahead and {gitlab ? "connect GitLab" : "install the app on it"}.
+      </p>
       <Effects
         items={[
-          ["shows", "GitHub's new-repository form. You create the repository yourself; this page can't."],
-          ["never", "sees your other repositories."],
+          ["shows", gitlab ? "GitLab's new-project form. You create the project yourself; this page can't." : "GitHub's new-repository form. You create the repository yourself; this page can't."],
+          ["never", gitlab ? "sees your other projects' files." : "sees your other repositories."],
         ]}
       />
     </div>
@@ -374,7 +419,65 @@ function CreateStep({ status }: HostedStepProps) {
 
 // ── 3. Install the app ─────────────────────────────────────────────────────
 
-function InstallStep({ status }: HostedStepProps) {
+function InstallStep(p: HostedStepProps) {
+  return p.host === "gitlab" ? <ConnectGitLab {...p} /> : <InstallGitHub {...p} />;
+}
+
+function ConnectGitLab({ status }: HostedStepProps) {
+  const v = status.vault;
+  const gl = status.gitlab;
+  const vaultItem = status.items.find((i) => i.id === "vault");
+  return (
+    <div className="stack">
+      {v?.status === "disconnected" && (
+        <div className="callout callout--danger" role="alert">
+          <Icon name="warn" />
+          <div className="stack sz-tight">
+            <strong>Your vault {v.fullName} is disconnected.</strong>
+            <span>{vaultItem?.detail ?? "Connect GitLab again to reconnect it."}</span>
+          </div>
+        </div>
+      )}
+      {gl?.connected && !gl.error && (
+        <div className="callout callout--ok" role="status">
+          <Icon name="check" />
+          <div>
+            <strong>Connected as @{gl.login}.</strong> {plural(gl.repos?.length ?? 0, "project")} could become your vault. <a href="#repo">Pick the project →</a>
+          </div>
+        </div>
+      )}
+      {gl?.error && (
+        <div className="callout callout--warn" role="alert">
+          <Icon name="warn" />
+          <div>
+            <strong>{gl.connected ? "Connected, but your projects couldn't be listed." : "GitLab needs to be connected again."}</strong> {gl.error}
+          </div>
+        </div>
+      )}
+      <ol className="sz-howto">
+        <li>Press the button. GitLab asks whether Hippocampus may use your account.</li>
+        <li>
+          Approve it. GitLab calls the permission <strong>api</strong>, its smallest one that can write files, so it covers every project you can reach.
+        </li>
+        <li>GitLab sends you back here, to pick the project.</li>
+      </ol>
+      <div className="row">
+        <a className="btn btn--primary" href={gl?.connectUrl ?? "/dashboard/setup/gitlab/connect"}>
+          <Icon name="link" /> {gl?.connected || gl?.login ? "Connect GitLab again" : "Connect GitLab"}
+        </a>
+      </div>
+      <Effects
+        items={[
+          ["contacts", "GitLab. Hippocampus signs in as you, and keeps the connection sealed on its server."],
+          ["reads", "and writes only the project you pick as your vault. It has no other use for the connection."],
+          ["never", "needs a password: you approve it on GitLab. Revoke it any time under GitLab → Preferences → Applications; the vault disconnects within hours."],
+        ]}
+      />
+    </div>
+  );
+}
+
+function InstallGitHub({ status }: HostedStepProps) {
   const v = status.vault;
   const inst = status.installation;
   const vaultItem = status.items.find((i) => i.id === "vault");
@@ -431,35 +534,46 @@ function InstallStep({ status }: HostedStepProps) {
 
 // ── 4. Pick the repo ───────────────────────────────────────────────────────
 
-function RepoStep({ status, picked, setPicked }: HostedStepProps) {
-  const repos = useResource<{ installation: { id: number }; repos: HostedRepoView[] }>(status.installation ? "/setup/repos" : null);
+function RepoStep({ status, ctx, host, picked, setPicked }: HostedStepProps) {
+  const gitlab = host === "gitlab";
+  // GitHub's repos come with the picker's own request (it checks emptiness); GitLab's are already in the status.
+  const repos = useResource<{ installation: { id: number }; repos: HostedRepoView[] }>(!gitlab && status.installation ? "/setup/repos" : null);
   if (status.vault?.status === "ready")
     return (
       <div className="callout callout--ok" role="status">
         <Icon name="check" />
         <div>
-          Your vault is <a href={href.github(status.vault.fullName)}>{status.vault.fullName}</a>.
+          Your vault is <a href={href.repo(status.vault)}>{status.vault.fullName}</a>.
         </div>
       </div>
     );
-  if (repos.error && !repos.data) return <ErrorCallout error={repos.error} onRetry={() => void repos.reload()} />;
-  if (!repos.data) return <SkeletonPanel lines={4} />;
-  const list = repos.data.repos;
+  if (!gitlab && repos.error && !repos.data) return <ErrorCallout error={repos.error} onRetry={() => void repos.reload()} />;
+  if (!gitlab && !repos.data) return <SkeletonPanel lines={4} />;
+  const list = gitlab ? hostedRepos(ctx) : repos.data!.repos;
+  const noun = gitlab ? "project" : "repository";
   return (
     <div className="stack">
       {list.length === 0 ? (
         <div className="callout callout--warn">
           <Icon name="warn" />
           <div>
-            <strong>The app can't see any repositories.</strong> Add your vault repo to the installation on GitHub, then come back.
+            {gitlab ? (
+              <>
+                <strong>No project is fit to become a vault.</strong> It has to be in your personal namespace, and you need Developer access or better. <a href={status.gitlab?.newRepoUrl} target="_blank" rel="noopener noreferrer">Create one on GitLab</a>, then come back.
+              </>
+            ) : (
+              <>
+                <strong>The app can't see any repositories.</strong> Add your vault repo to the installation on GitHub, then come back.
+              </>
+            )}
           </div>
         </div>
       ) : (
         <fieldset className="sz-fieldset">
-          <legend className="label">Which repository becomes your vault?</legend>
+          <legend className="label">Which {noun} becomes your vault?</legend>
           <div className="hz-repos">
             {list.map((r) => {
-              const verdict = repoVerdict(r);
+              const verdict = repoVerdict(r, host);
               return (
                 <label key={r.id} className="hz-repo" data-disabled={verdict.usable ? undefined : ""} data-checked={picked === r.id ? "" : undefined}>
                   <input type="radio" name="hz-repo" value={r.id} checked={picked === r.id} disabled={!verdict.usable} onChange={() => setPicked(r.id)} />
@@ -475,7 +589,15 @@ function RepoStep({ status, picked, setPicked }: HostedStepProps) {
         </fieldset>
       )}
       <p className="small muted">
-        Missing one? <a href={status.installUrl}>Add it to the app's installation on GitHub</a>.
+        {gitlab ? (
+          <>
+            Missing one? Create it on GitLab, then <a href="">reload this list</a>. Projects in groups aren't offered: a vault belongs in your personal namespace.
+          </>
+        ) : (
+          <>
+            Missing one? <a href={status.installUrl}>Add it to the app's installation on GitHub</a>.
+          </>
+        )}
       </p>
       {picked !== undefined && list.some((r) => r.id === picked) && (
         <div className="row">
@@ -499,7 +621,7 @@ function CampaignStep({ status, draft, setDraft, identity, setIdentity, session 
       <div className="callout callout--ok" role="status">
         <Icon name="check" />
         <div>
-          {v("Set up", "Settled")}: {session.campaign ?? "your vault"} lives in <a href={href.github(status.vault.fullName)}>{status.vault.fullName}</a>. Its settings are in <code>_hippo/config.yaml</code> there; edit them in Obsidian or on GitHub.
+          {v("Set up", "Settled")}: {session.campaign ?? "your vault"} lives in <a href={href.repo(status.vault)}>{status.vault.fullName}</a>. Its settings are in <code>_hippo/config.yaml</code> there; edit them in Obsidian or on {status.vault.provider === "gitlab" ? "GitLab" : "GitHub"}.
         </div>
       </div>
     );
@@ -696,17 +818,17 @@ function SecretsKey({ draft, set, identity, setIdentity, problem }: { draft: Cam
 
 // ── 6. Initialize ──────────────────────────────────────────────────────────
 
-function InitStep({ status, draft, picked, setIdentity, clearDraft }: HostedStepProps) {
+function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }: HostedStepProps) {
   const { v } = useTerms();
   const action = useAction();
   const vault = status.vault;
-  const repo = status.installation?.repos.find((r) => r.id === picked);
+  const repo = hostedRepos(ctx).find((r) => r.id === picked);
   if (vault?.status === "ready")
     return (
       <div className="callout callout--ok" role="status">
         <Icon name="check" />
         <div>
-          <strong>Your vault is ready:</strong> <a href={href.github(vault.fullName)}>{vault.fullName}</a>. <a href="#agents">Connect your agents →</a>
+          <strong>Your vault is ready:</strong> <a href={href.repo(vault)}>{vault.fullName}</a>. <a href="#agents">Connect your agents →</a>
         </div>
       </div>
     );
@@ -722,7 +844,7 @@ function InitStep({ status, draft, picked, setIdentity, clearDraft }: HostedStep
 
   const go = async () => {
     if (picked === undefined) return;
-    const res = await action.run(() => postJson<HostedInitResult>("/setup/init", initRequest(draft, picked)));
+    const res = await action.run(() => postJson<HostedInitResult>("/setup/init", initRequest(draft, picked, host)));
     if (!res) return;
     toast(res.mode === "adopted" ? `Adopted ${res.vault.fullName}: your existing vault is connected.` : v(`${res.vault.fullName} is your vault now.`, `${res.vault.fullName} holds the campaign now.`), "ok");
     setIdentity(undefined);
@@ -744,7 +866,7 @@ function InitStep({ status, draft, picked, setIdentity, clearDraft }: HostedStep
       )}
       <Facts
         rows={[
-          ["Repository", repo ? <span className="mono sz-break">{repo.fullName}</span> : <a href="#repo">Pick one</a>],
+          [host === "gitlab" ? "Project" : "Repository", repo ? <span className="mono sz-break">{repo.fullName}</span> : <a href="#repo">Pick one</a>],
           [v("Name", "Campaign"), draft.campaign.trim() || <a href="#campaign">Not set</a>],
           ["Your id", <span className="mono">{draft.human}</span>],
           ["Time zone", draft.timezone],
@@ -754,7 +876,7 @@ function InitStep({ status, draft, picked, setIdentity, clearDraft }: HostedStep
         ]}
       />
       <p className="small">
-        <a href="#campaign">Change these</a> · <a href="#repo">Pick another repo</a>
+        <a href="#campaign">Change these</a> · <a href="#repo">Pick another {host === "gitlab" ? "project" : "repo"}</a>
       </p>
       <Effects
         items={[

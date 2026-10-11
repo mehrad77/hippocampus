@@ -26,13 +26,18 @@ export interface Account {
 export type VaultStatus = "bootstrapping" | "ready" | "disconnected";
 
 /** Why a vault is disconnected. Only the matching event reconnects it (unsuspending doesn't fix a public repo). */
-export type DisconnectReason = "uninstalled" | "suspended" | "repo_removed" | "repo_deleted" | "public" | "bootstrap_failed";
+export type DisconnectReason = "uninstalled" | "suspended" | "repo_removed" | "repo_deleted" | "public" | "bootstrap_failed" | "token_revoked";
+
+/** Where a vault's repo lives. */
+export type Provider = "github" | "gitlab";
 
 export interface VaultRecord {
   id: string;
   accountId: number;
+  provider: Provider;
+  /** The GitHub App installation; 0 for GitLab vaults, which have none. */
   installationId: number;
-  /** GitHub's repo id: survives renames and transfers. */
+  /** The provider's repo (project) id: survives renames and transfers. */
   repoId: number;
   fullName: string;
   branch: string;
@@ -155,6 +160,7 @@ interface AccountRow {
 interface VaultRow {
   id: string;
   account_id: number;
+  provider: Provider;
   installation_id: number;
   repo_id: number;
   full_name: string;
@@ -181,6 +187,7 @@ interface KeyRow {
 interface GrantRow extends KeyRow {
   v_id: string;
   v_account_id: number;
+  v_provider: Provider;
   v_installation_id: number;
   v_repo_id: number;
   v_full_name: string;
@@ -192,6 +199,9 @@ interface GrantRow extends KeyRow {
   v_updated: string;
   account_status: AccountStatus;
 }
+
+/** See migrations/0003_gitlab.sql: GitLab project ids are stored negated. The map is its own inverse. */
+const storedRepoId = (provider: Provider, id: number) => (provider === "gitlab" ? -id : id);
 
 const toAccount = (r: AccountRow): Account => ({
   id: r.id,
@@ -208,8 +218,9 @@ const toVault = (r: VaultRow): VaultRecord => {
   return {
     id: r.id,
     accountId: r.account_id,
+    provider: r.provider,
     installationId: r.installation_id,
-    repoId: r.repo_id,
+    repoId: storedRepoId(r.provider, r.repo_id),
     fullName: r.full_name,
     branch: r.branch,
     status: r.status,
@@ -240,10 +251,32 @@ function toKey(r: KeyRow): KeyRecord {
   };
 }
 
-const VAULT_COLUMNS = "id, account_id, installation_id, repo_id, full_name, branch, status, reason, quotas, created, updated";
+const VAULT_COLUMNS = "id, account_id, provider, installation_id, repo_id, full_name, branch, status, reason, quotas, created, updated";
+
+export interface GitLabCredentialRow {
+  accountId: number;
+  gitlabUserId: number;
+  gitlabLogin: string;
+  /** Sealed tokens (token-box.ts). */
+  secret: string;
+  version: number;
+  updated: string;
+}
+
+interface GitLabCredentialDbRow {
+  account_id: number;
+  gitlab_user_id: number;
+  gitlab_login: string;
+  secret: string;
+  version: number;
+  updated: string;
+}
 
 export interface NewVault {
   accountId: number;
+  /** Default `github`. */
+  provider?: Provider;
+  /** 0 for GitLab. */
   installationId: number;
   repoId: number;
   fullName: string;
@@ -328,6 +361,7 @@ export class Registry {
     await this.db.batch([
       { sql: "DELETE FROM keys WHERE vault_id IN (SELECT id FROM vaults WHERE account_id = ?)", params: [id] },
       { sql: "DELETE FROM vaults WHERE account_id = ?", params: [id] },
+      { sql: "DELETE FROM gitlab_credentials WHERE account_id = ?", params: [id] },
       { sql: "UPDATE accounts SET status = 'deleted', note = NULL, session_epoch = session_epoch + 1, updated = ? WHERE id = ?", params: [this.stamp(), id] },
     ]);
   }
@@ -345,19 +379,19 @@ export class Registry {
     return row && toVault(row);
   }
 
-  async vaultByRepo(repoId: number): Promise<VaultRecord | undefined> {
-    const row = await this.one<VaultRow>(`SELECT ${VAULT_COLUMNS} FROM vaults WHERE repo_id = ?`, [repoId]);
+  async vaultByRepo(repoId: number, provider: Provider = "github"): Promise<VaultRecord | undefined> {
+    const row = await this.one<VaultRow>(`SELECT ${VAULT_COLUMNS} FROM vaults WHERE repo_id = ?`, [storedRepoId(provider, repoId)]);
     return row && toVault(row);
   }
 
   async vaultsByInstallation(installationId: number): Promise<VaultRecord[]> {
-    return (await this.db.all<VaultRow>(`SELECT ${VAULT_COLUMNS} FROM vaults WHERE installation_id = ? ORDER BY created`, [installationId])).map(toVault);
+    return (await this.db.all<VaultRow>(`SELECT ${VAULT_COLUMNS} FROM vaults WHERE installation_id = ? AND provider = 'github' ORDER BY created`, [installationId])).map(toVault);
   }
 
   /** Every vault with its owner's login, for admins. */
   async vaults(): Promise<(VaultRecord & { login: string })[]> {
     const rows = await this.db.all<VaultRow & { login: string }>(
-      `SELECT v.id, v.account_id, v.installation_id, v.repo_id, v.full_name, v.branch, v.status, v.reason, v.quotas, v.created, v.updated, a.login
+      `SELECT v.id, v.account_id, v.provider, v.installation_id, v.repo_id, v.full_name, v.branch, v.status, v.reason, v.quotas, v.created, v.updated, a.login
        FROM vaults v JOIN accounts a ON a.id = v.account_id ORDER BY v.created`,
     );
     return rows.map((r) => ({ ...toVault(r), login: r.login }));
@@ -370,14 +404,15 @@ export class Registry {
    */
   async claimVault(v: NewVault): Promise<{ vault: VaultRecord; replaced?: string }> {
     const at = this.stamp();
-    const taken = await this.vaultByRepo(v.repoId);
+    const provider = v.provider ?? "github";
+    const taken = await this.vaultByRepo(v.repoId, provider);
     if (taken && taken.accountId !== v.accountId) throw new HttpError(409, `${v.fullName} is already another account's vault.`, "REPO_TAKEN");
     const existing = await this.vaultOf(v.accountId);
     if (existing) {
       const stale = existing.status === "bootstrapping" && existing.updated < this.stamp(-STALE_BOOTSTRAP_MS);
       if (existing.status === "ready") throw new HttpError(409, `You already have a vault: ${existing.fullName}.`, "HAS_VAULT");
       if (existing.status === "bootstrapping" && !stale) throw new HttpError(409, `${existing.fullName} is being set up right now.`, "BUSY");
-      if (existing.repoId === v.repoId) {
+      if (existing.repoId === v.repoId && existing.provider === provider) {
         // Compare-and-set on `updated`, so two tabs can't both take it back.
         const row = await this.one<VaultRow>(
           `UPDATE vaults SET installation_id = ?, full_name = ?, branch = ?, status = 'bootstrapping', reason = NULL, updated = ?
@@ -398,14 +433,15 @@ export class Registry {
   }
 
   private async insertVault(v: NewVault, at: string): Promise<VaultRecord> {
+    const provider = v.provider ?? "github";
     let row: VaultRow | undefined;
     try {
       // NOT EXISTS makes "one vault per account" hold even for two requests racing each other.
       row = await this.one<VaultRow>(
-        `INSERT INTO vaults (id, account_id, installation_id, repo_id, full_name, branch, status, created, updated)
-         SELECT ?, ?, ?, ?, ?, ?, 'bootstrapping', ?, ? WHERE NOT EXISTS (SELECT 1 FROM vaults WHERE account_id = ?)
+        `INSERT INTO vaults (id, account_id, provider, installation_id, repo_id, full_name, branch, status, created, updated)
+         SELECT ?, ?, ?, ?, ?, ?, ?, 'bootstrapping', ?, ? WHERE NOT EXISTS (SELECT 1 FROM vaults WHERE account_id = ?)
          RETURNING ${VAULT_COLUMNS}`,
-        [ulid(this.now()), v.accountId, v.installationId, v.repoId, v.fullName, v.branch, at, at, v.accountId],
+        [ulid(this.now()), v.accountId, provider, v.installationId, storedRepoId(provider, v.repoId), v.fullName, v.branch, at, at, v.accountId],
       );
     } catch (err) {
       if (/UNIQUE constraint failed/i.test(String(err))) throw new HttpError(409, `${v.fullName} is already a vault.`, "REPO_TAKEN");
@@ -437,6 +473,41 @@ export class Registry {
     return row && toVault(row);
   }
 
+  // ── GitLab connections ─────────────────────────────────────────────────────
+
+  async gitlabCredential(accountId: number): Promise<GitLabCredentialRow | undefined> {
+    const row = await this.one<GitLabCredentialDbRow>("SELECT * FROM gitlab_credentials WHERE account_id = ?", [accountId]);
+    return row && { accountId: row.account_id, gitlabUserId: row.gitlab_user_id, gitlabLogin: row.gitlab_login, secret: row.secret, version: row.version, updated: row.updated };
+  }
+
+  /** Connect (or reconnect) the account to GitLab, replacing any earlier connection. */
+  async saveGitLabCredential(c: { accountId: number; gitlabUserId: number; gitlabLogin: string; secret: string }): Promise<void> {
+    await this.db.all(
+      `INSERT INTO gitlab_credentials (account_id, gitlab_user_id, gitlab_login, secret, version, updated) VALUES (?, ?, ?, ?, 0, ?)
+       ON CONFLICT (account_id) DO UPDATE SET gitlab_user_id = excluded.gitlab_user_id, gitlab_login = excluded.gitlab_login,
+         secret = excluded.secret, version = gitlab_credentials.version + 1, updated = excluded.updated`,
+      [c.accountId, c.gitlabUserId, c.gitlabLogin, c.secret, this.stamp()],
+    );
+  }
+
+  /**
+   * Store refreshed tokens, only if nobody else refreshed since `version` was read. GitLab
+   * invalidates a refresh token once used, so the loser of a race must re-read, not overwrite.
+   */
+  async rotateGitLabSecret(accountId: number, version: number, secret: string): Promise<boolean> {
+    const row = await this.one("UPDATE gitlab_credentials SET secret = ?, version = version + 1, updated = ? WHERE account_id = ? AND version = ? RETURNING account_id", [secret, this.stamp(), accountId, version]);
+    return !!row;
+  }
+
+  async deleteGitLabCredential(accountId: number): Promise<void> {
+    await this.db.all("DELETE FROM gitlab_credentials WHERE account_id = ?", [accountId]);
+  }
+
+  /** Every GitLab vault that is serving or being set up, for the health check. */
+  async gitlabVaults(): Promise<VaultRecord[]> {
+    return (await this.db.all<VaultRow>(`SELECT ${VAULT_COLUMNS} FROM vaults WHERE provider = 'gitlab' AND status != 'bootstrapping' ORDER BY created`)).map(toVault);
+  }
+
   // ── Keys ───────────────────────────────────────────────────────────────────
 
   /** A new key for the vault. Returns the key itself (show it once) and its record. */
@@ -460,7 +531,7 @@ export class Registry {
 
   async keyByHash(hash: string): Promise<KeyGrant | undefined> {
     const row = await this.one<GrantRow>(
-      `SELECT k.*, v.id AS v_id, v.account_id AS v_account_id, v.installation_id AS v_installation_id, v.repo_id AS v_repo_id,
+      `SELECT k.*, v.id AS v_id, v.account_id AS v_account_id, v.provider AS v_provider, v.installation_id AS v_installation_id, v.repo_id AS v_repo_id,
          v.full_name AS v_full_name, v.branch AS v_branch, v.status AS v_status, v.reason AS v_reason,
          v.quotas AS v_quotas, v.created AS v_created, v.updated AS v_updated, a.status AS account_status
        FROM keys k JOIN vaults v ON v.id = k.vault_id JOIN accounts a ON a.id = v.account_id
@@ -471,6 +542,7 @@ export class Registry {
     const vault = toVault({
       id: row.v_id,
       account_id: row.v_account_id,
+      provider: row.v_provider,
       installation_id: row.v_installation_id,
       repo_id: row.v_repo_id,
       full_name: row.v_full_name,

@@ -21,6 +21,7 @@
     "@hippocampus/index": "workspace:*",
     "@hippocampus/mcp": "workspace:*",
     "@hippocampus/store-github": "workspace:*",
+    "@hippocampus/store-gitlab": "workspace:*",
     "@hippocampus/template": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.30.1"
   },

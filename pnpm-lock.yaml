@@ -190,6 +190,9 @@ importers:
       '@hippocampus/store-github':
         specifier: workspace:*
         version: link:../../packages/store-github
+      '@hippocampus/store-gitlab':
+        specifier: workspace:*
+        version: link:../../packages/store-gitlab
       '@hippocampus/template':
         specifier: workspace:*
         version: link:../../packages/template
@@ -291,6 +294,15 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
 
+  packages/store-git:
+    dependencies:
+      '@hippocampus/core':
+        specifier: workspace:*
+        version: link:../core
+      '@hippocampus/index':
+        specifier: workspace:*
+        version: link:../index
+
   packages/store-github:
     dependencies:
       '@hippocampus/core':
@@ -299,6 +311,18 @@ importers:
       '@hippocampus/index':
         specifier: workspace:*
         version: link:../index
+      '@hippocampus/store-git':
+        specifier: workspace:*
+        version: link:../store-git
+
+  packages/store-gitlab:
+    dependencies:
+      '@hippocampus/core':
+        specifier: workspace:*
+        version: link:../core
+      '@hippocampus/store-git':
+        specifier: workspace:*
+        version: link:../store-git
 
   packages/template: {}
 

@@ -1,14 +1,16 @@
 import { SLUG, validTimezone, type VaultSettings } from "@hippocampus/core";
-import { HttpError, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSetupPort, type HostedSetupStatus, type HostedVault, type SetupItem, type Snippet } from "@hippocampus/dashboard";
+import { HttpError, type HostedGitLab, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSetupPort, type HostedSetupStatus, type HostedVault, type SetupItem, type Snippet } from "@hippocampus/dashboard";
 import { GitHubStore } from "@hippocampus/store-github";
 import { SEEDS } from "@hippocampus/template";
 import { TOKEN_ID } from "../auth.ts";
 import { bootstrapVault } from "./bootstrap.ts";
 import { curatorActionsEnabled, setCuratorActions } from "./curator-actions.ts";
 import type { GitHubApp, InstallationRepo } from "./github-app.ts";
-import { keyRequest, type Account, type DisconnectReason, type KeyKind, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
+import { GitLabAuthError, type GitLabAccess, type GitLabProject } from "./gitlab.ts";
+import { keyRequest, type Account, type DisconnectReason, type Provider, type KeyKind, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
 import { clearPendingInstallation, pendingInstallation, type SessionKV } from "./session.ts";
-import { installUrl, newRepoUrl, type HostedSettings } from "./settings.ts";
+import { GITLAB_CONNECT_PATH } from "./gitlab.ts";
+import { installUrl, newRepoUrl, oauthUrlOf, type HostedSettings } from "./settings.ts";
 
 // Session Zero on the hosted app, for one signed-in account: from the waitlist, through installing
 // the GitHub App on a private repo, to a vault in that repo and keys for its agents.
@@ -18,6 +20,8 @@ export interface HostedSetupDeps {
   settings: HostedSettings;
   registry: Registry;
   app: GitHubApp;
+  /** Set when the instance has GitLab set up. */
+  gitlab?: GitLabAccess;
   kv: SessionKV;
   now?: () => Date;
   /** Something about a vault changed (created, replaced, a key revoked): drop whatever is cached for it. */
@@ -35,10 +39,11 @@ const REASONS: Record<DisconnectReason, string> = {
   repo_deleted: "the repo was deleted",
   public: "the repo was made public; make it private again",
   bootstrap_failed: "setting it up didn't finish; try again",
+  token_revoked: "GitLab no longer accepts the connection; connect GitLab again",
 };
 
 export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
-  const { account, settings, registry, app, kv } = deps;
+  const { account, settings, registry, app, kv, gitlab } = deps;
   const now = deps.now ?? (() => new Date());
   const publicUrl = settings.publicUrl;
   const mcpUrl = `${publicUrl}/mcp`;
@@ -70,6 +75,39 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
     return repo;
   }
 
+  const needGitLab = (): GitLabAccess => {
+    if (!gitlab) throw new HttpError(404, "This Hippocampus isn't set up for GitLab.", "NO_GITLAB");
+    return gitlab;
+  };
+
+  /** The person's GitLab projects they could use; undefined when GitLab isn't connected. */
+  async function gitlabProjects(): Promise<{ login: string; projects: GitLabProject[] } | undefined> {
+    const g = needGitLab();
+    if (!(await g.login(account.id))) return undefined;
+    try {
+      const token = await g.tokenFor(account.id)();
+      const user = await g.client.user(token);
+      return { login: user.username, projects: await g.client.projects(token, user) };
+    } catch (err) {
+      if (err instanceof GitLabAuthError) return undefined;
+      throw err;
+    }
+  }
+
+  const gitlabRepo = (p: GitLabProject): HostedRepo => ({ id: p.id, fullName: p.fullName, private: p.visibility === "private", ...(p.visibility === "private" ? { empty: p.empty } : {}) });
+
+  async function gitlabStatus(): Promise<HostedGitLab> {
+    const base = { connectUrl: GITLAB_CONNECT_PATH, newRepoUrl: `${settings.gitlab!.url}/projects/new` };
+    const login = await gitlab!.login(account.id);
+    if (!login) return { ...base, connected: false };
+    try {
+      const found = await gitlabProjects();
+      return found ? { ...base, connected: true, login: found.login, repos: found.projects.map(gitlabRepo) } : { ...base, connected: false, login, error: "GitLab no longer accepts the connection; connect it again." };
+    } catch (err) {
+      return { ...base, connected: true, login, repos: [], error: (err as Error).message };
+    }
+  }
+
   async function status(): Promise<HostedSetupStatus> {
     const vault = await registry.vaultOf(account.id);
     const pending = account.status === "approved" && vault?.status !== "ready" ? await pendingInstallation(kv, account.id) : undefined;
@@ -82,15 +120,19 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
         : undefined,
       vault ? registry.keys(vault.id) : undefined,
       // Read from the repo itself, so a workflow removed on GitHub reads as off.
-      vault?.status === "ready" && account.status === "approved" ? curatorActionsEnabled(app, vault).catch(() => undefined) : undefined,
+      // GitHub Actions only: a GitLab vault has no workflow to read.
+      vault?.status === "ready" && vault.provider === "github" && account.status === "approved" ? curatorActionsEnabled(app, vault).catch(() => undefined) : undefined,
     ]);
+    const gitlabInfo = gitlab && account.status === "approved" && vault?.status !== "ready" ? await gitlabStatus() : undefined;
     const s: HostedSetupStatus = {
       kind: "hosted",
       account: { login: account.login, status: account.status === "deleted" ? "denied" : account.status, requested: account.note !== undefined, admin: settings.admins.has(account.id) },
       installUrl: installUrl(settings),
       newRepoUrl: newRepoUrl(settings),
+      providers: gitlab ? ["github", "gitlab"] : ["github"],
+      ...(gitlabInfo ? { gitlab: gitlabInfo } : {}),
       ...(installation ? { installation } : {}),
-      ...(vault ? { vault: vaultInfo(vault) } : {}),
+      ...(vault ? { vault: vaultInfo(vault, settings) } : {}),
       ...(keys ? { keys: keys.map(keyInfo) } : {}),
       ...(curatorActions === undefined ? {} : { curatorActions }),
       publicUrl,
@@ -105,8 +147,28 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
     const req = initRequest(body);
     const existing = await registry.vaultOf(account.id);
     if (existing?.status === "ready") throw new HttpError(409, `You already have a vault: ${existing.fullName}.`, "HAS_VAULT");
+    const settingsOf = { campaign: req.campaign, human: req.human, timezone: req.timezone, domains: req.domains, recipient: req.recipient };
+    if (req.provider === "gitlab") {
+      const g = needGitLab();
+      const found = await gitlabProjects();
+      if (!found) throw new HttpError(409, "Connect your GitLab account first.", "NO_GITLAB_CONNECTION");
+      const project = found.projects.find((p) => p.id === req.repoId);
+      if (!project) throw new HttpError(404, "That isn't one of your GitLab projects with write access (Developer or better), in your personal namespace. Pick another.", "NOT_FOUND");
+      const result = await bootstrapVault({
+        gitlab: g,
+        registry,
+        accountId: account.id,
+        repo: { id: project.id, fullName: project.fullName, branch: project.defaultBranch },
+        settings: settingsOf,
+        seed: req.seed,
+        now: now(),
+      });
+      await changed(result.replaced);
+      await changed(result.vault.id);
+      return { vault: vaultInfo(result.vault, settings), mode: result.mode };
+    }
     // A retry on the same repo can go on with the vault's own installation once the pending one has expired.
-    const installationId = (await pendingInstallation(kv, account.id))?.installationId ?? (existing?.repoId === req.repoId ? existing.installationId : undefined);
+    const installationId = (await pendingInstallation(kv, account.id))?.installationId ?? (existing?.repoId === req.repoId && existing.provider === "github" ? existing.installationId : undefined);
     if (installationId === undefined) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
     const repo = await findRepo(installationId, req.repoId);
     const result = await bootstrapVault({
@@ -115,14 +177,14 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       accountId: account.id,
       installationId,
       repo: { id: repo.id, fullName: repo.fullName, branch: repo.defaultBranch },
-      settings: { campaign: req.campaign, human: req.human, timezone: req.timezone, domains: req.domains, recipient: req.recipient },
+      settings: settingsOf,
       seed: req.seed,
       now: now(),
     });
     await clearPendingInstallation(kv, account.id);
     await changed(result.replaced);
     await changed(result.vault.id);
-    return { vault: vaultInfo(result.vault), mode: result.mode };
+    return { vault: vaultInfo(result.vault, settings), mode: result.mode };
   }
 
   async function ownVault(): Promise<VaultRecord> {
@@ -134,7 +196,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
   return {
     kind: "hosted",
     status,
-    async handle(method, path, body) {
+    async handle(method, path, body, url) {
       if (path === "access" && method === "POST") {
         const note = (body as { note?: unknown } | undefined)?.note ?? "";
         if (typeof note !== "string" || note.length > 500) throw new HttpError(400, "note: up to 500 characters of text", "INVALID");
@@ -142,6 +204,17 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
         return { ok: true };
       }
       if (account.status !== "approved") throw new HttpError(403, "Your account is waiting for an admin's approval.", "NOT_APPROVED");
+      if (path === "repos" && method === "GET" && url?.searchParams.get("provider") === "gitlab") {
+        const found = await gitlabProjects();
+        if (!found) throw new HttpError(409, "Connect your GitLab account first.", "NO_GITLAB_CONNECTION");
+        return { gitlab: { login: found.login }, repos: found.projects.map(gitlabRepo) };
+      }
+      if (path === "gitlab/disconnect" && method === "POST") {
+        const vault = await registry.vaultOf(account.id);
+        if (vault?.provider === "gitlab" && vault.status === "ready") throw new HttpError(409, "Your vault is on GitLab: disconnecting would cut it off. Delete your account instead.", "HAS_VAULT");
+        await needGitLab().disconnect(account.id);
+        return { ok: true };
+      }
       if (path === "repos" && method === "GET") {
         const pending = await pendingInstallation(kv, account.id);
         if (!pending) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
@@ -161,6 +234,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
         if (typeof enable !== "boolean") throw new HttpError(400, "enable: true or false", "INVALID");
         const vault = await ownVault();
         if (vault.status !== "ready") throw new HttpError(409, "Your vault isn't ready.", "NOT_READY");
+        if (vault.provider !== "github") throw new HttpError(409, "Nightly sleep on a schedule runs on GitHub Actions; for a GitLab vault, run sleep with your own curator agent.", "GITHUB_ONLY");
         return setCuratorActions(app, vault, enable);
       }
       if (path === "keys/revoke" && method === "POST") {
@@ -177,11 +251,12 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
 }
 
 /** The campaign settings and the repo for `init`, checked before anything touches GitHub. */
-export function initRequest(body: unknown): VaultSettings & { repoId: number; seed?: string } {
+export function initRequest(body: unknown): VaultSettings & { repoId: number; provider: Provider; seed?: string } {
   const b = (body ?? {}) as Record<string, unknown>;
   const bad = (msg: string): never => {
     throw new HttpError(400, msg, "INVALID");
   };
+  if (b.provider !== undefined && b.provider !== "github" && b.provider !== "gitlab") bad("provider: github or gitlab");
   if (typeof b.repoId !== "number" || !Number.isSafeInteger(b.repoId) || b.repoId <= 0) bad("repoId: pick one of the installation's repos");
   const campaign = typeof b.campaign === "string" ? b.campaign.trim() : "";
   if (!campaign || campaign.length > 120) bad("campaign: a name, up to 120 characters");
@@ -196,6 +271,7 @@ export function initRequest(body: unknown): VaultSettings & { repoId: number; se
   if (b.recipient !== undefined && (typeof b.recipient !== "string" || !/^age1[02-9ac-hj-np-z]{58}$/.test(b.recipient))) bad("recipient: an age public key (age1…)");
   return {
     repoId: b.repoId as number,
+    provider: (b.provider as Provider | undefined) ?? "github",
     campaign,
     human,
     timezone: b.timezone as string,
@@ -205,7 +281,15 @@ export function initRequest(body: unknown): VaultSettings & { repoId: number; se
   };
 }
 
-const vaultInfo = (v: VaultRecord): HostedVault => ({ id: v.id, fullName: v.fullName, branch: v.branch, status: v.status, ...(v.reason ? { reason: v.reason } : {}) });
+const vaultInfo = (v: VaultRecord, s: HostedSettings): HostedVault => ({
+  id: v.id,
+  fullName: v.fullName,
+  branch: v.branch,
+  status: v.status,
+  provider: v.provider,
+  url: `${v.provider === "gitlab" ? s.gitlab?.url : oauthUrlOf(s)}/${v.fullName}`,
+  ...(v.reason ? { reason: v.reason } : {}),
+});
 
 const keyInfo = (k: KeyRecord): HostedKeyInfo => ({
   id: k.id,
@@ -230,12 +314,20 @@ function items(s: HostedSetupStatus): SetupItem[] {
   if (a.status !== "approved") return out;
   const v = s.vault;
   const ready = v?.status === "ready";
-  out.push(
-    ready || s.installation
-      ? { id: "install", title: "Install the GitHub App", state: "done", detail: ready ? `Installed on ${v.fullName}` : "Installed; pick the repo next", how: "guided" }
-      : { id: "install", title: "Install the GitHub App", state: "todo", detail: "Create an empty private repo, then install the app on it (only that repo)", how: "guided" },
-  );
-  if (!v) out.push({ id: "vault", title: "Vault", state: "todo", detail: s.installation ? "Pick the repo and name the campaign" : "Install the app first", how: "performed" });
+  const onGitLab = v?.provider === "gitlab" || (!v && s.gitlab?.connected && !s.installation);
+  if (onGitLab)
+    out.push(
+      ready || s.gitlab?.connected
+        ? { id: "install", title: "Connect GitLab", state: "done", detail: ready ? `Connected; ${v.fullName} is the vault` : `Connected as @${s.gitlab?.login}; pick the project next`, how: "guided" }
+        : { id: "install", title: "Connect GitLab", state: "todo", detail: "Create an empty private project, then connect your GitLab account", how: "guided" },
+    );
+  else
+    out.push(
+      ready || s.installation
+        ? { id: "install", title: "Install the GitHub App", state: "done", detail: ready ? `Installed on ${v.fullName}` : "Installed; pick the repo next", how: "guided" }
+        : { id: "install", title: "Install the GitHub App", state: "todo", detail: s.gitlab ? "Create an empty private repo, then install the app on it (only that repo), or connect GitLab instead" : "Create an empty private repo, then install the app on it (only that repo)", how: "guided" },
+    );
+  if (!v) out.push({ id: "vault", title: "Vault", state: "todo", detail: s.installation || s.gitlab?.connected ? "Pick the repo and name the campaign" : "Install the app first", how: "performed" });
   else if (v.status === "ready") out.push({ id: "vault", title: "Vault", state: "done", detail: `${v.fullName}@${v.branch}`, how: "performed" });
   else if (v.status === "bootstrapping") out.push({ id: "vault", title: "Vault", state: "warn", detail: `Setting up ${v.fullName}…`, how: "performed" });
   else out.push({ id: "vault", title: "Vault", state: "error", detail: `${v.fullName} is disconnected: ${REASONS[v.reason as DisconnectReason] ?? "reconnect it"}`, how: "guided" });

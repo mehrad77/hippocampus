@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HostedStatus } from "../../lib/types.ts";
-import { draftProblems, draftReady, hostedDefaultStep, hostedLock, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, repoVerdict, type HostedContext } from "./hosted.ts";
+import { draftProblems, draftReady, hostedDefaultStep, hostedLock, hostedProvider, hostedRepos, hostedStepDef, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, repoVerdict, type HostedContext } from "./hosted.ts";
 
 const base: HostedStatus = {
   kind: "hosted",
@@ -52,6 +52,64 @@ describe("hosted onboarding steps", () => {
     expect(hostedDefaultStep(ctx(gone))).toBe("install");
     expect(hostedStepState("install", ctx(gone))).toBe("error");
     expect(hostedStepState("init", ctx(gone))).toBe("locked");
+  });
+});
+
+describe("hosted onboarding on GitLab", () => {
+  const offered: HostedStatus = { ...approved, providers: ["github", "gitlab"], gitlab: { connected: false, connectUrl: "/dashboard/setup/gitlab/connect", newRepoUrl: "https://gitlab.example/projects/new" } };
+  const connected: HostedStatus = { ...offered, gitlab: { ...offered.gitlab!, connected: true, login: "player", repos: [{ id: 555, fullName: "player/vault", private: true, empty: true }] } };
+
+  it("is GitHub unless the instance offers GitLab", () => {
+    expect(hostedProvider(ctx(approved, { provider: "gitlab" }))).toBe("github");
+    expect(hostedProvider(ctx(offered))).toBe("github");
+    expect(hostedProvider(ctx(offered, { provider: "gitlab" }))).toBe("gitlab");
+  });
+
+  it("follows the connection, then the vault, over the choice", () => {
+    expect(hostedProvider(ctx(connected))).toBe("gitlab");
+    expect(hostedProvider(ctx({ ...connected, installation: { id: 7, repos: [] } }))).toBe("github");
+    const onGitHub: HostedStatus = { ...connected, vault: { id: "v1", fullName: "player/vault", branch: "main", status: "ready", provider: "github" } };
+    expect(hostedProvider(ctx(onGitHub, { provider: "gitlab" }))).toBe("github");
+  });
+
+  it("unlocks the repo step once GitLab is connected, and picks from its projects", () => {
+    const c = ctx(offered, { provider: "gitlab" });
+    expect(hostedLock("repo", c)).toEqual(["Connect GitLab first.", "Connect GitLab first."]);
+    expect(hostedStepState("install", c)).toBe("todo");
+    const done = ctx(connected, { picked: 555 });
+    expect(hostedRepos(done).map((r) => r.id)).toEqual([555]);
+    expect(hostedStepState("install", done)).toBe("done");
+    expect(hostedStepState("create", done)).toBe("done");
+    expect(hostedDefaultStep(ctx(connected))).toBe("repo");
+    expect(hostedDefaultStep(done)).toBe("campaign");
+    expect(hostedDefaultStep({ ...done, draftReady: true })).toBe("init");
+    // A project GitLab no longer lists doesn't count as picked, and neither does a GitHub repo's id.
+    expect(hostedStepState("repo", ctx(connected, { picked: 1 }))).toBe("todo");
+  });
+
+  it("sends a revoked connection back to connecting", () => {
+    const revoked: HostedStatus = { ...offered, gitlab: { ...offered.gitlab!, connected: false, login: "player", error: "GitLab no longer accepts the connection; connect it again." }, vault: { id: "v1", fullName: "player/vault", branch: "main", status: "disconnected", reason: "token_revoked", provider: "gitlab" } };
+    expect(hostedDefaultStep(ctx(revoked))).toBe("install");
+    expect(hostedStepState("install", ctx(revoked))).toBe("error");
+    expect(hostedLock("repo", ctx(revoked))).toEqual(["Connect GitLab again first.", "Connect GitLab again first."]);
+  });
+
+  it("words the steps for GitLab", () => {
+    expect(hostedStepDef("install", "gitlab").title[0]).toBe("Connect GitLab");
+    expect(hostedStepDef("create", "gitlab").lede[0]).toMatch(/GitLab project/);
+    expect(hostedStepDef("agents", "gitlab")).toEqual(hostedStepDef("agents"));
+  });
+
+  it("asks for the provider only when it is GitLab", () => {
+    const draft = { ...newDraft("Europe/Lisbon"), campaign: "Lisbon Arc", secrets: "skip" as const };
+    expect(initRequest(draft, 555, "gitlab")).toMatchObject({ provider: "gitlab", repoId: 555 });
+    expect(initRequest(draft, 1)).not.toHaveProperty("provider");
+  });
+
+  it("calls an internal project not private", () => {
+    expect(repoVerdict({ id: 555, fullName: "player/vault", private: false }, "gitlab")).toMatchObject({ usable: false, tag: "Not private" });
+    expect(repoVerdict({ id: 555, fullName: "player/vault", private: false }, "gitlab").detail).toMatch(/internal/);
+    expect(repoVerdict({ id: 555, fullName: "player/vault", private: true, empty: true }, "gitlab")).toMatchObject({ usable: true, tag: "Empty" });
   });
 });
 

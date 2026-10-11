@@ -11,22 +11,33 @@ export { VaultHost } from "./hosted/vault-host.ts";
 /** Per isolate, shared by its requests. */
 let app: HostedApp | undefined;
 
+/** The app for this isolate, or the page that tells the operator what's missing. */
+function hosted(env: HostedEnv): { app: HostedApp } | { problem: Response } {
+  if (app) return { app };
+  const problem = configProblem(env);
+  if (problem) return { problem };
+  // Typed against the port, so the compiler holds VaultHost's RPC methods to what the Worker calls.
+  const vaults: VaultHosts = { get: (id) => env.VAULT_HOST.get(env.VAULT_HOST.idFromName(id)) };
+  app = createHostedApp({
+    settings: hostedSettings(env),
+    kv: env.OAUTH_KV,
+    registry: d1(env.REGISTRY),
+    vaults,
+    assets: env.ASSETS,
+    limits: { signIn: env.RL_SIGNIN, api: env.RL_API, mcp: env.RL_MCP, register: env.RL_REGISTER },
+  });
+  return { app };
+}
+
 export default {
   async fetch(request, env, ctx) {
-    if (!app) {
-      const problem = configProblem(env);
-      if (problem) return problem;
-      // Typed against the port, so the compiler holds VaultHost's RPC methods to what the Worker calls.
-      const vaults: VaultHosts = { get: (id) => env.VAULT_HOST.get(env.VAULT_HOST.idFromName(id)) };
-      app = createHostedApp({
-        settings: hostedSettings(env),
-        kv: env.OAUTH_KV,
-        registry: d1(env.REGISTRY),
-        vaults,
-        assets: env.ASSETS,
-        limits: { signIn: env.RL_SIGNIN, api: env.RL_API, mcp: env.RL_MCP, register: env.RL_REGISTER },
-      });
-    }
-    return app.fetch(request, ctx);
+    const h = hosted(env);
+    return "problem" in h ? h.problem : h.app.fetch(request, ctx);
+  },
+
+  /** Cron Trigger: GitLab has no webhooks, so each GitLab vault's project is checked here (visibility, existence, the connection). */
+  async scheduled(_event, env, ctx) {
+    const h = hosted(env);
+    if ("app" in h) ctx.waitUntil(h.app.routes.checkGitLab().then(() => undefined));
   },
 } satisfies ExportedHandler<HostedEnv>;

@@ -15,17 +15,23 @@ import {
 } from "@hippocampus/core";
 import { HttpError } from "@hippocampus/dashboard";
 import { GitHubStore } from "@hippocampus/store-github";
+import { GitLabStore } from "@hippocampus/store-gitlab";
 import { SEEDS, TEMPLATE } from "@hippocampus/template";
 import { GitHubAppError, type GitHubApp, type Permissions } from "./github-app.ts";
-import type { Registry, VaultRecord } from "./registry.ts";
+import { GitLabAuthError, type GitLabAccess } from "./gitlab.ts";
+import type { Provider, Registry, VaultRecord } from "./registry.ts";
 
-// Turning a person's repo into their vault, through the GitHub API (the Worker has no filesystem).
+// Turning a person's repo into their vault, through the host's API (the Worker has no filesystem):
+// the GitHub API with the app's installation token, or the GitLab API with the person's connection.
 
 /** What the vault's token may do: write notes and the vault's CI workflow, and nothing else. */
 export const VAULT_PERMISSIONS: Permissions = { contents: "write", workflows: "write", metadata: "read" };
 
 /** The files that tell agents and CI the vault's rules. Adopting an existing vault adds whichever are missing. */
 export const GUARDRAIL_FILES = ["AGENTS.md", "CLAUDE.md", CURATOR_RULES_PATH, ".github/workflows/validate.yml"];
+
+/** GitLab vaults get no GitHub Actions workflow: it would sit there doing nothing. */
+const guardrails = (provider: Provider) => (provider === "gitlab" ? GUARDRAIL_FILES.filter((p) => !p.startsWith(".github/")) : GUARDRAIL_FILES);
 
 /** What GitHub's "new repository" form can add. A repo with only these is as good as empty. */
 const GITHUB_STARTERS = new Set(["README.md", "LICENSE", ".gitignore"]);
@@ -44,17 +50,20 @@ export type Plan = { mode: "initialize" } | { mode: "adopt"; missing: string[] }
  * What to do with a repo that has commits, from its file list: adopt an existing vault (only its
  * missing guardrail files), initialize over GitHub's starter files, or refuse anything else.
  */
-export function plan(paths: string[]): Plan {
-  if (paths.includes(CONFIG_PATH)) return { mode: "adopt", missing: GUARDRAIL_FILES.filter((p) => !paths.includes(p)) };
+export function plan(paths: string[], provider: Provider = "github"): Plan {
+  if (paths.includes(CONFIG_PATH)) return { mode: "adopt", missing: guardrails(provider).filter((p) => !paths.includes(p)) };
   if (paths.every((p) => GITHUB_STARTERS.has(p))) return { mode: "initialize" };
   return { mode: "refuse" };
 }
 
 export interface BootstrapOptions {
-  app: GitHubApp;
+  /** GitHub: the app, and the installation the repo was picked from. */
+  app?: GitHubApp;
+  installationId?: number;
+  /** GitLab: the account's connection. Set this instead of `app` and `installationId`. */
+  gitlab?: GitLabAccess;
   registry: Registry;
   accountId: number;
-  installationId: number;
   /** The repo picked; `branch` defaults to `main` (an empty repo's first commit creates it). */
   repo: { id: number; fullName: string; branch?: string };
   settings: VaultSettings;
@@ -62,6 +71,57 @@ export interface BootstrapOptions {
   seed?: string;
   /** The vault's clock while building, for reproducible output. */
   now?: Date;
+}
+
+/** What bootstrapping needs of a store; both hosts' stores fit. */
+interface BootstrapStore {
+  info(): Promise<{ id: number; fullName: string; private: boolean; empty: boolean; branch: string }>;
+  list(): Promise<string[]>;
+  read(path: string): Promise<string | undefined>;
+  initialize(files: Record<string, string>, meta: CommitMeta): Promise<void>;
+  apply(changes: Change[], meta: CommitMeta): Promise<void>;
+}
+
+/** The host-specific part of bootstrapping: the store, a first token check, how to word refusals. */
+interface Target {
+  provider: Provider;
+  installationId: number;
+  store: BootstrapStore;
+  /** Gets a token now, so a missing permission is explained before anything else happens. */
+  preflight(): Promise<void>;
+  explain(err: unknown, repo: string): unknown;
+  publicHelp: string;
+}
+
+function target(o: BootstrapOptions): Target {
+  const name = o.repo.fullName;
+  if (o.gitlab) {
+    const access = o.gitlab;
+    const token = access.tokenFor(o.accountId);
+    return {
+      provider: "gitlab",
+      installationId: 0,
+      store: new GitLabStore({ project: o.repo.id, branch: o.repo.branch, token, fetch: access.fetch, apiUrl: access.client.apiUrl }),
+      preflight: async () => void (await token().catch((err: unknown) => {
+        throw explainGitLab(err, name);
+      })),
+      explain: explainGitLab,
+      publicHelp: "Make it private on GitLab (Settings → General → Visibility, project features, permissions → Project visibility: Private), then try again. Internal isn't enough: every signed-in user of the instance could read it.",
+    };
+  }
+  if (!o.app || o.installationId === undefined) throw new Error("bootstrapVault needs the GitHub app and installation, or a GitLab connection");
+  const { app, installationId } = o;
+  const token = app.tokenSource(installationId, { repositoryIds: [o.repo.id], permissions: VAULT_PERMISSIONS });
+  return {
+    provider: "github",
+    installationId,
+    store: new GitHubStore({ repo: name, branch: o.repo.branch, token, fetch: app.fetch, apiUrl: app.apiUrl }),
+    preflight: async () => void (await token().catch((err: unknown) => {
+      throw explain(err, name);
+    })),
+    explain,
+    publicHelp: "Make it private on GitHub (Settings → Danger Zone → Change visibility), then try again.",
+  };
 }
 
 export interface BootstrapResult {
@@ -86,18 +146,16 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
   if (o.seed !== undefined && !seed) throw new HttpError(400, `seed: unknown "${o.seed}"; choose from ${Object.keys(SEEDS).join(", ")}`, "INVALID");
 
   const name = o.repo.fullName;
-  const token = o.app.tokenSource(o.installationId, { repositoryIds: [o.repo.id], permissions: VAULT_PERMISSIONS });
-  // Mint now, so a missing permission is explained before anything else happens.
-  await token().catch((err: unknown) => {
-    throw explain(err, name);
+  const t = target(o);
+  await t.preflight();
+  const store = t.store;
+  const info = await store.info().catch((err: unknown) => {
+    throw t.explain(err, name);
   });
-  const store = new GitHubStore({ repo: name, branch: o.repo.branch, token, fetch: o.app.fetch, apiUrl: o.app.apiUrl });
-  const info = await store.info();
   if (info.id !== o.repo.id) throw new HttpError(409, `${name} is no longer the repo you picked; pick it again.`, "REPO_CHANGED");
-  if (!info.private)
-    throw new HttpError(400, `${info.fullName} is public: anyone could read this memory. Make it private on GitHub (Settings → Danger Zone → Change visibility), then try again.`, "PUBLIC_REPO");
+  if (!info.private) throw new HttpError(400, `${info.fullName} is ${t.provider === "gitlab" ? "not private" : "public"}: anyone could read this memory. ${t.publicHelp}`, "PUBLIC_REPO");
 
-  const p = info.empty ? ({ mode: "initialize" } as const) : plan(await store.list());
+  const p = info.empty ? ({ mode: "initialize" } as const) : plan(await store.list(), t.provider);
   if (p.mode === "refuse") throw new HttpError(409, `${info.fullName} already has files; pick an empty repo (or one with only a README, LICENSE or .gitignore).`, "NOT_EMPTY");
   if (p.mode === "adopt") {
     try {
@@ -106,9 +164,10 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
       throw new HttpError(409, `${info.fullName} has a ${CONFIG_PATH} that doesn't load: ${(err as Error).message}`, "BAD_VAULT");
     }
   }
-  const files = p.mode === "initialize" ? await buildVaultFiles(TEMPLATE, { ...o.settings, seed, now: o.now }) : undefined;
+  const built = p.mode === "initialize" ? await buildVaultFiles(TEMPLATE, { ...o.settings, seed, now: o.now }) : undefined;
+  const files = built && t.provider === "gitlab" ? Object.fromEntries(Object.entries(built).filter(([path]) => !path.startsWith(".github/"))) : built;
 
-  const { vault, replaced } = await o.registry.claimVault({ accountId: o.accountId, installationId: o.installationId, repoId: info.id, fullName: info.fullName, branch: info.branch });
+  const { vault, replaced } = await o.registry.claimVault({ accountId: o.accountId, provider: t.provider, installationId: t.installationId, repoId: info.id, fullName: info.fullName, branch: info.branch });
   try {
     if (files) await store.initialize(files, bootstrapCommit("chore: initialize Hippocampus vault"));
     else if (p.mode === "adopt") {
@@ -117,7 +176,7 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
     }
   } catch (err) {
     await o.registry.setVaultStatus(vault.id, "disconnected", "bootstrap_failed");
-    throw explain(err, info.fullName);
+    throw t.explain(err, info.fullName);
   }
   const ready = (await o.registry.setVaultStatus(vault.id, "ready"))!;
   return { vault: ready, mode: files ? "initialized" : "adopted", ...(replaced ? { replaced } : {}) };
@@ -129,5 +188,18 @@ export function explain(err: unknown, repo: string): unknown {
   if (err instanceof GitHubAppError && err.status === 422) return new HttpError(403, `The app can't get write access to ${repo}. ${fix}, and make sure ${repo} is one of its repositories.`, "APP_PERMISSIONS");
   if (err instanceof GitHubAppError && err.status === 404) return new HttpError(409, "The app isn't installed there anymore. Install it again from the setup page.", "NO_INSTALLATION");
   if (err instanceof VaultError && /\bworkflow/i.test(err.message)) return new HttpError(403, `The app may not write ${repo}'s workflow files. ${fix}.`, "APP_PERMISSIONS");
+  return err;
+}
+
+/** GitLab's refusals, in words that say what to do about them. */
+export function explainGitLab(err: unknown, project: string): unknown {
+  if (err instanceof GitLabAuthError)
+    return new HttpError(409, err.reason === "not_connected" ? "Connect your GitLab account first." : "GitLab no longer accepts the connection. Connect GitLab again from the setup page.", "GITLAB_RECONNECT");
+  if (err instanceof VaultError && /\b403\b/.test(err.message))
+    return new HttpError(
+      403,
+      `GitLab won't let Hippocampus write to ${project}. You need Developer access or better, and if the default branch is protected, Maintainers must be allowed to push to it (Settings → Repository → Protected branches).`,
+      "GITLAB_PERMISSIONS",
+    );
   return err;
 }

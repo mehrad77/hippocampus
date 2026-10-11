@@ -4,6 +4,9 @@ import { CALLBACK_PATH } from "../github-login.ts";
 import { GRANT_ID, confirmDeletion, deleteAccount, type AccountHooks, type ConnectedApps } from "./account.ts";
 import { adminRoutes } from "./admin.ts";
 import { GitHubApp, GitHubAppError } from "./github-app.ts";
+import { GITLAB_CALLBACK_PATH, GITLAB_CONNECT_PATH, GitLabAccess } from "./gitlab.ts";
+import { gitlabConnect } from "./gitlab-connect.ts";
+import { checkGitLabVaults } from "./gitlab-health.ts";
 import { logEvent, rateLimit, type RateLimiter } from "./limits.ts";
 import { hostedSetup } from "./onboarding.ts";
 import { Registry, type Account, type VaultRecord } from "./registry.ts";
@@ -48,6 +51,10 @@ export interface HostedRoutes {
   (request: Request): Promise<Response | undefined>;
   registry: Registry;
   app: GitHubApp;
+  /** Set when the instance has GitLab set up. */
+  gitlab?: GitLabAccess;
+  /** Check every GitLab vault against GitLab (a Cron Trigger runs this). */
+  checkGitLab(): Promise<string[]>;
   sessions: Sessions;
   /** The caller, looked up once per request: the Worker reuses it to pick the vault's Durable Object. */
   who(request: Request): Promise<Caller | undefined>;
@@ -62,6 +69,8 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
   const registry = new Registry(deps.registry, now);
   const app = new GitHubApp({ appId: settings.appId, privateKey: settings.privateKey, apiUrl: apiUrlOf(settings), fetch: deps.fetch, now });
   const sessions = createSessions({ settings, kv, registry, app, fetch: deps.fetch, now });
+  const gitlab = settings.gitlab ? new GitLabAccess(settings.gitlab, registry, { fetch: deps.fetch, now }) : undefined;
+  const connect = gitlab ? gitlabConnect({ publicUrl: settings.publicUrl, kv, access: gitlab, sessions }) : undefined;
   const hooks = deps.hooks ?? {};
   const admin = adminRoutes({ registry, admins: settings.admins, onVaultChanged: hooks.onVaultChanged });
 
@@ -100,7 +109,7 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
     }
     if (sub === "delete" && method === "POST") {
       confirmDeletion(account, body);
-      await deleteAccount(account.id, { registry, app, kv, hooks });
+      await deleteAccount(account.id, { registry, app, gitlab, kv, hooks });
       return json(200, { ok: true }, { "set-cookie": await sessions.end(request) });
     }
     throw new HttpError(404, `No such account route: ${method} ${sub}`, "NOT_FOUND");
@@ -143,7 +152,7 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
       let result: unknown;
       if (section === "admin") result = await admin(method, sub, body, url, caller.account);
       else {
-        const port = hostedSetup({ account: caller.account, settings, registry, app, kv, now, onVaultChanged: hooks.onVaultChanged });
+        const port = hostedSetup({ account: caller.account, settings, registry, app, gitlab, kv, now, onVaultChanged: hooks.onVaultChanged });
         result = (sub === "" || sub === "status") && method === "GET" ? await port.status() : await port.handle(method, sub, body, url);
       }
       return done(json(200, result ?? { ok: true }));
@@ -164,6 +173,11 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
     }
     if (pathname === LOGOUT_PATH) return method === "POST" ? sessions.logout(request) : notAllowed("POST");
     if (pathname === CALLBACK_PATH) return method === "GET" ? sessions.callback(request) : notAllowed("GET");
+    if (pathname === GITLAB_CALLBACK_PATH || pathname === GITLAB_CONNECT_PATH) {
+      if (method !== "GET") return notAllowed("GET");
+      if (!connect) return json(404, { error: "This Hippocampus isn't set up for GitLab.", code: "NO_GITLAB" });
+      return pathname === GITLAB_CALLBACK_PATH ? connect.callback(request) : connect.start(request);
+    }
     if (pathname === WEBHOOK_PATH) {
       const started = Date.now();
       const res = await handleWebhook(request, { secret: settings.webhookSecret, registry, onVaultChanged: hooks.onVaultChanged }).catch((err: unknown) => errorResponse(err, quiet));
@@ -175,7 +189,9 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
     return undefined;
   };
 
-  return Object.assign(handler, { registry, app, sessions, who });
+  const checkGitLab = async (): Promise<string[]> => (gitlab ? checkGitLabVaults({ registry, access: gitlab, onVaultChanged: hooks.onVaultChanged }) : []);
+
+  return Object.assign(handler, { registry, app, gitlab, checkGitLab, sessions, who });
 }
 
 /** Unexpected errors aren't logged: their messages can carry vault names or content. The request's log line records the 500. */

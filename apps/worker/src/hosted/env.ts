@@ -25,6 +25,11 @@ export interface HostedEnv {
   /** Only for local development against a fake GitHub. */
   GITHUB_API_URL?: string;
   GITHUB_OAUTH_URL?: string;
+  /** Optional: all three of the GitLab client id, secret and token key turn GitLab vaults on. */
+  GITLAB_URL?: string;
+  GITLAB_CLIENT_ID?: string;
+  GITLAB_CLIENT_SECRET?: string;
+  HIPPO_TOKEN_KEY?: string;
   HIPPO_EMBED_PROVIDER?: string;
   HIPPO_EMBED_MODEL?: string;
   HIPPO_EMBED_BASE_URL?: string;

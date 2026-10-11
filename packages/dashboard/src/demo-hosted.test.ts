@@ -45,6 +45,39 @@ describe("hosted demo", () => {
     expect((await api("actions/curator", { abort: curator.run!.id })).body).toMatchObject({ history: expect.arrayContaining([expect.objectContaining({ id: curator.run!.id, outcome: "aborted" })]) });
   });
 
+  it("walks the GitLab path: connect, pick a project, a vault with no Actions curator", async () => {
+    const { call, api } = client();
+    await call("/dashboard/auth/login");
+    await api("setup/access", { note: "Moving to Lisbon." });
+    await new Promise((r) => setTimeout(r, 5));
+    const before = (await api("setup/status")).body as HostedSetupStatus;
+    expect(before.providers).toEqual(["github", "gitlab"]);
+    expect(before.gitlab).toMatchObject({ connected: false, connectUrl: "/dashboard/api/__demo/gitlab-connect" });
+    expect((await api("setup/repos?provider=gitlab")).body).toMatchObject({ code: "NO_GITLAB_CONNECTION" });
+
+    expect((await api("__demo/gitlab-connect")).location).toBe("/dashboard/setup/#repo");
+    const after = (await api("setup/status")).body as HostedSetupStatus;
+    expect(after.gitlab).toMatchObject({ connected: true, login: "player" });
+    expect(after.items.find((i) => i.id === "install")).toMatchObject({ title: "Connect GitLab", state: "done" });
+    const { repos } = (await api("setup/repos?provider=gitlab")).body as { repos: { id: number; fullName: string; private: boolean }[] };
+    const open = repos.find((r) => !r.private)!;
+    const empty = repos.find((r) => r.fullName === "player/lisbon-vault")!;
+    expect((await api("setup/init", { provider: "gitlab", repoId: open.id, campaign: "Lisbon Arc" })).body).toMatchObject({ code: "PUBLIC_REPO" });
+    expect((await api("setup/init", { provider: "gitlab", repoId: empty.id, campaign: "Lisbon Arc" })).body).toMatchObject({ mode: "initialized", vault: { provider: "gitlab", url: "https://gitlab.example/player/lisbon-vault", status: "ready" } });
+
+    expect((await api("session")).body).toMatchObject({ vault: { kind: "gitlab", repo: "player/lisbon-vault", url: "https://gitlab.example/player/lisbon-vault" } });
+    expect((await api("setup/curator-actions", { enable: true })).body).toMatchObject({ code: "GITHUB_ONLY" });
+    expect((await api("setup/gitlab/disconnect", {})).body).toMatchObject({ code: "HAS_VAULT" });
+  });
+
+  it("jumps to GitLab stages", async () => {
+    const { api } = client();
+    await api("__demo/stage?to=installed&provider=gitlab");
+    expect(((await api("setup/status")).body as HostedSetupStatus).gitlab?.connected).toBe(true);
+    await api("__demo/stage?to=ready&provider=gitlab");
+    expect(((await api("setup/status")).body as HostedSetupStatus).vault).toMatchObject({ provider: "gitlab" });
+  });
+
   it("deletes the account only with the typed login, and signs out", async () => {
     const { api } = client();
     await api("__demo/stage?to=ready");

@@ -4,6 +4,7 @@ import { clearCache, useResource } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
+import { repoLinks } from "../../lib/vaultLinks.ts";
 import { signOut } from "../../lib/session.ts";
 import type { AccountApp, HostedStatus, SessionInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -33,6 +34,7 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
   const { t, v } = useTerms();
   const vault = status.vault!;
   const tone = VAULT_TONE[vault.status];
+  const links = repoLinks({ kind: vault.provider ?? "github", repo: vault.fullName, branch: vault.branch, url: vault.url });
   useScrollToHash(hash, false);
   return (
     <div className="stack sz">
@@ -60,13 +62,13 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
             rows={[
               [
                 "Repository",
-                <a className="mono sz-break" href={href.github(vault.fullName)} rel="noopener noreferrer">
+                <a className="mono sz-break" href={href.repo(vault)} rel="noopener noreferrer">
                   {vault.fullName}
                 </a>,
               ],
               ["Branch", <span className="mono">{vault.branch}</span>],
               ["State", <ToneTag tone={tone.tone} word={tone.word} compact />],
-              ["Private", "Yes: only you and the app can read it"],
+              ["Private", vault.provider === "gitlab" ? "Yes: only you and your GitLab connection can read it" : "Yes: only you and the app can read it"],
             ]}
           />
           <p className="small muted">It's your repository: clone it, open it in Obsidian, or back it up like any other. Deleting your account here leaves it untouched.</p>
@@ -83,7 +85,7 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
       </div>
 
       <HostedKeysPanel status={status} />
-      {session.capabilities.curator && <CuratorPanel repo={vault.fullName} branch={vault.branch} />}
+      {session.capabilities.curator && <CuratorPanel commits={links ? { url: links.commits, host: links.host } : undefined} />}
       <AppsPanel />
       <AccountPanel session={session} status={status} />
       <Personalization />
@@ -240,11 +242,11 @@ function AccountPanel({ session, status }: { session: SessionInfo; status: Hoste
         <p>This can't be undone. Right away:</p>
         <ul className="sz-howto">
           <li>Every key stops working, and connected apps are signed out.</li>
-          <li>The Hippocampus app is uninstalled from your repository.</li>
+          <li>{status.vault?.provider === "gitlab" ? "Hippocampus' connection to your GitLab account is revoked." : "The Hippocampus app is uninstalled from your repository."}</li>
           <li>Everything this Hippocampus keeps for you goes: your account, keys, the vault's search index and cache.</li>
         </ul>
         <p>
-          <strong>Your repository stays on GitHub, untouched.</strong> {v("Your memory is yours: delete the repository on GitHub if you want it gone too.", "The campaign is yours: delete the repository on GitHub if you want it gone too.")}
+          <strong>Your repository stays on {status.vault?.provider === "gitlab" ? "GitLab" : "GitHub"}, untouched.</strong> {v(`Your memory is yours: delete the repository on ${status.vault?.provider === "gitlab" ? "GitLab" : "GitHub"} if you want it gone too.`, `The campaign is yours: delete the repository on ${status.vault?.provider === "gitlab" ? "GitLab" : "GitHub"} if you want it gone too.`)}
         </p>
         <Field label={<>Type your GitHub login ({login}) to confirm</>}>
           {(f) => <input id={f.id} className="input mono" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" spellCheck={false} aria-describedby={f.describedBy} />}

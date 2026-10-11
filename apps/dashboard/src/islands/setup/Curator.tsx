@@ -17,7 +17,7 @@ type Past = CuratorStatus["history"][number];
 const newestFirst = (runs: readonly Past[]) => [...runs].sort((a, b) => b.ended.localeCompare(a.ended));
 
 /** The agent-run sleep: the open run (with abort) and the runs before it. No memory content, only counts. */
-export function CuratorPanel({ repo, branch }: { repo?: string; branch?: string }) {
+export function CuratorPanel({ commits }: { commits?: { url: string; host: string } }) {
   const { v } = useTerms();
   const s = useResource<CuratorStatus>("/curator", { poll: 30_000 });
   const [aborting, setAborting] = useState<Run>();
@@ -32,7 +32,7 @@ export function CuratorPanel({ repo, branch }: { repo?: string; branch?: string 
       ) : (
         <div className="stack">
           {s.data.run ? <OpenRun run={s.data.run} onAbort={() => setAborting(s.data?.run)} /> : <p className="small muted">{v("No update is running right now.", "Nobody is sleeping right now.")}</p>}
-          <History runs={newestFirst(s.data.history)} repo={repo} branch={branch} />
+          <History runs={newestFirst(s.data.history)} commits={commits} />
         </div>
       )}
       <ConfirmDialog
@@ -103,7 +103,7 @@ function OpenRun({ run, onAbort }: { run: Run; onAbort: () => void }) {
   );
 }
 
-function History({ runs, repo, branch }: { runs: Past[]; repo?: string; branch?: string }) {
+function History({ runs, commits }: { runs: Past[]; commits?: { url: string; host: string } }) {
   const { v } = useTerms();
   if (!runs.length)
     return (
@@ -146,8 +146,8 @@ function History({ runs, repo, branch }: { runs: Past[]; repo?: string; branch?:
                 <td data-label="Skipped">{r.skipped}</td>
                 <td data-label="Commits">
                   {r.commits ? (
-                    repo ? (
-                      <a href={href.githubCommits(repo, branch)} rel="noopener noreferrer" title="The vault's history on GitHub">
+                    commits ? (
+                      <a href={commits.url} rel="noopener noreferrer" title={`The vault's history on ${commits.host}`}>
                         {plural(r.commits, "commit")}
                       </a>
                     ) : (

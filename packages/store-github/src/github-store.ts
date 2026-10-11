@@ -1,6 +1,5 @@
 import { StoreConflictError, VaultError, type Change, type CommitMeta, type VaultStore } from "@hippocampus/core";
-import { MemoryBlobCache, gitBlobSha, type BlobCache } from "./blob-cache.ts";
-import { untar } from "./tar.ts";
+import { EmptyRepositoryError, HttpError, IGNORED, MemoryBlobCache, SnapshotCache, base64, gitBlobSha, ignored, untar, type BlobCache, type Snapshot, type TreeFile } from "@hippocampus/store-git";
 
 export interface GitHubStoreOptions {
   /** `owner/name` of the (private) vault repo. */
@@ -49,47 +48,6 @@ export interface RepoInfo {
   head?: string;
 }
 
-/** The repo has no commits, so GitHub's Git Data API refuses it (409). `GitHubStore.initialize()` makes the first one. */
-export class EmptyRepositoryError extends VaultError {
-  constructor(readonly repo: string) {
-    super(`${repo} is empty: it has no commits yet`);
-    this.name = "EmptyRepositoryError";
-  }
-}
-
-export interface TreeFile {
-  sha: string;
-  mode: string;
-}
-
-export interface Snapshot {
-  commit: string;
-  tree: string;
-  files: Map<string, TreeFile>;
-}
-
-/** Commit → its file listing. Commits are immutable, so entries never go stale. */
-export class SnapshotCache {
-  private readonly entries = new Map<string, Snapshot>();
-
-  constructor(private readonly max = 8) {}
-
-  get(commit: string): Snapshot | undefined {
-    const hit = this.entries.get(commit);
-    if (hit) {
-      this.entries.delete(commit);
-      this.entries.set(commit, hit);
-    }
-    return hit;
-  }
-
-  set(snap: Snapshot): void {
-    this.entries.delete(snap.commit);
-    this.entries.set(snap.commit, snap);
-    if (this.entries.size > this.max) this.entries.delete(this.entries.keys().next().value!);
-  }
-}
-
 interface TreeEntry {
   path: string;
   mode: string;
@@ -97,28 +55,7 @@ interface TreeEntry {
   sha: string;
 }
 
-// Mirrors FsStore: editor and VCS internals are never vault content.
-const IGNORED = new Set([".git", ".obsidian", ".trash", "node_modules"]);
-const ignored = (path: string) => path.split("/").some((seg) => IGNORED.has(seg));
-
 const encodePath = (path: string) => path.split("/").map(encodeURIComponent).join("/");
-
-/** Base64 of the UTF-8 bytes, without Node's Buffer (this runs in Workers too). */
-function base64(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(binary);
-}
-
-class HttpError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
 
 /**
  * Vault store over the GitHub REST API, for running without a local checkout.

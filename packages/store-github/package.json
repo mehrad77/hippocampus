@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@hippocampus/core": "workspace:*",
-    "@hippocampus/index": "workspace:*"
+    "@hippocampus/index": "workspace:*",
+    "@hippocampus/store-git": "workspace:*"
   },
   "license": "AGPL-3.0-only"
 }
