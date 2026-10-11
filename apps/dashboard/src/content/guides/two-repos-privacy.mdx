@@ -1,7 +1,7 @@
 ---
 title: Two repos and your privacy
 summary: The public tool and your private vault live apart, and data only flows one way. What stays private, what a hosted app's operator can see, where your data does travel, and why the demo is fiction.
-order: 11
+order: 12
 section: Under the hood
 sigil: lock
 ---
@@ -15,11 +15,11 @@ Hippocampus is a **tool**. Your memory is a **vault**. They live in two separate
 
 ## The public tool
 
-The Hippocampus repository is public and published to npm as `@mehrad77/hippocampus`. It holds the code, the vault template that `hippo init` copies, the fictional example campaign, and these guides. Every example in it, from tests to screenshots to these pages, uses the fictional Lisbon arc: the residency agent, Harbor University, the Migration Agency, a flat in Alfama.
+The Hippocampus repository is public and published to npm as `@mehrad77/hippocampus`. It holds the code, the vault template that `hippo init` copies, the fictional example vault, and these guides. Every example in it, from tests to screenshots to these pages, uses the fictional Lisbon arc: the residency agent, Harbor University, the Migration Agency, a flat in Alfama.
 
 ## Your private vault
 
-Your vault is a separate repository that you own. It holds your notes, quests, party sheets, the inbox, the chronicle, disputes, and the encrypted `secrets/` folder. Keep it **private**:
+Your vault is a separate repository that you own. It holds your notes, goals, agent sheets, the schema, the inbox, the chronicle, disputes, and the encrypted `secrets/` folder. Keep it **private**:
 
 - Create the GitHub repo as private before the first push. Session Zero's Git step checks the repo's visibility and warns you if it's public.
 - On the hosted app, install its GitHub App on the vault repo **only**, not on all your repositories.
@@ -85,7 +85,7 @@ None of this is hidden behind a default you didn't choose. The curator defaults 
 
 ## The demo is fiction
 
-`hippo dashboard --demo` opens the example campaign from the public seed, with three weeks of invented activity replayed through the curator's own rules. It lives in memory only: nothing is read from or written to your vault. Everything in it is made up: the residency agent and the campus agent, Harbor University and its Language Center, Lisbon, Alfama and Belém, and an insurer called Acme Health.
+`hippo dashboard --demo` opens the example vault from the public seed, with three weeks of invented activity replayed through the curator's own rules. It lives in memory only: nothing is read from or written to your vault. Everything in it is made up: the residency agent and the campus agent, Harbor University and its Language Center, Lisbon, Alfama and Belém, and an insurer called Acme Health.
 
 Use it whenever someone else will see the screen: a screenshot, a bug report, a talk, a question in a forum.
 

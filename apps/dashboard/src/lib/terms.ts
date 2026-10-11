@@ -7,6 +7,8 @@ export type Look = "plain" | "codex";
 export const TERMS = {
   // Pages
   tavern: ["Home", "Tavern"],
+  goals: ["Goals", "Quest board"],
+  /** @deprecated Same as `goals`. */
   quests: ["Goals", "Quest board"],
   council: ["Disputes", "Council"],
   satchel: ["Inbox", "Satchel"],
@@ -25,14 +27,21 @@ export const TERMS = {
   navPlay: ["Work", "At the table"],
   navLore: ["Knowledge", "Lore"],
   // Things
+  goal: ["goal", "quest"],
+  goalPlural: ["goals", "quests"],
+  /** @deprecated Same as `goal`. */
   quest: ["goal", "quest"],
+  /** @deprecated Same as `goalPlural`. */
   questPlural: ["goals", "quests"],
+  human: ["you", "the player"],
+  humans: ["people", "players"],
+  proposal: ["suggestion", "petition"],
+  confidential: ["confidential", "sealed from the table"],
   dispute: ["dispute", "dispute"],
   agent: ["agent", "party member"],
   entity: ["record", "entry"],
   episode: ["note", "episode"],
   sleep: ["nightly update", "sleep"],
-  human: ["you", "the player"],
   // Actions
   scribe: ["Add a note", "Scribe a memory"],
   search: ["Search", "Search"],
@@ -53,23 +62,38 @@ export function term(key: TermKey, look: Look): string {
   return TERMS[key][look === "codex" ? 1 : 0];
 }
 
-// Everyday names for the built-in entity types and episode kinds. Display only: filters, URLs and
-// CSS classes keep the vault's own names, and types a vault adds show as they are.
+// Type names come from the vault's type notes (`label`, `codex_label`); these cover vaults whose
+// notes don't say, and v1 names. Display only: filters, URLs and CSS classes keep the vault's own names.
 const PLAIN_TYPES: Record<string, string> = {
   quest: "goal",
   party: "agent",
   campaign: "project",
+  arc: "arc",
   character: "person",
   faction: "organization",
   location: "place",
-  lore: "reference",
+  lore: "topic",
+  item: "thing",
 };
-const PLAIN_KINDS: Record<string, string> = { beat: "milestone" };
 
-export function typeLabel(type: string, plain: boolean): string {
-  return plain ? (PLAIN_TYPES[type] ?? type) : type;
+/** What the dashboard knows about a type's names (a catalog or overview `TypeView`). */
+export interface TypeNames {
+  name: string;
+  label?: string;
+  codexLabel?: string;
 }
 
-export function kindLabel(kind: string, plain: boolean): string {
-  return plain ? (PLAIN_KINDS[kind] ?? kind) : kind;
+// The last type names a page loaded (catalog or overview), so links drawn without them still read right.
+const known = new Map<string, TypeNames>();
+
+/** Remember the vault's type names for `typeLabel` calls that don't pass them. */
+export function rememberTypeNames(types: readonly TypeNames[] | undefined): void {
+  for (const t of types ?? []) known.set(t.name, t);
+}
+
+/** A type in the reader's voice: the type note's `label` (plain) or `codex_label` (codex), else a fallback. */
+export function typeLabel(type: string, plain: boolean, types?: readonly TypeNames[]): string {
+  const t = types?.find((x) => x.name === type) ?? known.get(type);
+  if (plain) return t?.label ?? PLAIN_TYPES[type] ?? type;
+  return t?.codexLabel ?? type;
 }

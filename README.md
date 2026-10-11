@@ -1,6 +1,6 @@
 # 🧠 Hippocampus
 
-Shared, curated memory for a party of AI agents, stored as an **Obsidian vault** and organized like a **TTRPG campaign wiki**.
+Shared, curated memory for a party of AI agents, stored as an **Obsidian vault**. What it holds (people, goals, repos, clients, courses…) is defined by notes in the vault itself, and **presets** shape it for people, software, business, study or a household. It started as a TTRPG campaign wiki, and keeps some of that vocabulary: canon and rumor, the party, the chronicle.
 
 Agents don't dump memory and read it back. They submit *episodes* (raw memories) to an inbox. Hippocampus **sleeps**: it consolidates episodes into canon, links entities into a graph, and keeps facts honest with lane authority, rumor/canon status, and disputes for the human to rule on. It is episodic memory turned into semantic memory, like the real hippocampus.
 
@@ -9,7 +9,7 @@ Agents don't dump memory and read it back. They submit *episodes* (raw memories)
 ```
   this repo (PUBLIC)                         your vault (PRIVATE GitHub repo, open in Obsidian)
   ──────────────────                         ─────────────────────────────────────────────────
-  code · template · fictional seeds          HANDBOOK.md · quests/ · characters/ · chronicle/
+  code · template · seeds · presets          HANDBOOK.md · goals/ · characters/ · chronicle/
   CLI on npm, hosted app on Cloudflare ──►   inbox/<agent>/*.md   ◄── agents, over MCP
                                              sleep: a curator agent (or `hippo sleep`) turns the inbox into canon
 ```
@@ -42,10 +42,11 @@ The easiest way in is the dashboard. Run it anywhere: with no vault yet, it open
 npx @mehrad77/hippocampus dashboard
 ```
 
-Or set it up by hand. Create a vault (omit `--seed` for an empty one, or pass your own seed directory):
+Or set it up by hand. Create a vault (omit `--seed` for an empty one, or pass your own seed directory; `hippo preset list` shows the presets):
 
 ```bash
 npx @mehrad77/hippocampus init ~/vaults/my-campaign --seed example-relocation
+npx @mehrad77/hippocampus init ~/vaults/my-memory --human sam --preset people developer
 ```
 
 Create a key for secret facts:
@@ -66,9 +67,9 @@ The full guide, [docs/USAGE.md](docs/USAGE.md), covers connecting agents, the cu
 
 `hippo dashboard` opens your memory as a campaign codex in the browser:
 
-- **Tavern**: "previously on…", what needs your eye, quests in motion, the party, and activity.
-- **Quest board**: tick objectives, turn progress clocks, set status and deadlines.
-- **Council**: rule on disputes. Your ruling becomes canon at once.
+- **Tavern**: "previously on…", what needs your eye, goals in motion, overdue contacts, the party, and activity.
+- **Goals**: tick objectives, move progress, set status, due dates and repeats.
+- **Council**: rule on disputes, and accept or decline proposals and possible duplicates. Your ruling becomes canon at once.
 - **Satchel**: episodes waiting for the next sleep.
 - **Codex**, **entity sheets**, **Map** (the relation graph), **Chronicle** and **Party**.
 - **Guides** on how Hippocampus works, ⌘K search, and "Scribe a memory".
@@ -89,14 +90,14 @@ The hosted app serves these at `/mcp`. For local agents, `hippo serve --agent <i
 
 | Tool | Purpose |
 | --- | --- |
-| `onboard` | Who you are (lane, authority, quests), plus the handbook |
+| `onboard` | Who you are (lane, authority, goals), plus the handbook |
 | `introduce` | Ask to join the party; the human approves it on the dashboard |
-| `remember` | Queue an episode (fast, never blocks on the LLM; at most 8 KB) |
+| `remember` | Queue an episode of any of the vault's kinds, with typed data, a scope, or marked confidential (fast, never blocks on the LLM; at most 8 KB) |
 | `recall` | Search entities, with graph neighbors and pending episodes |
 | `get` / `neighbors` | Full entity note / graph walk |
 | `ask_canon` | The canonical answer to a factual question, with status and disputes |
-| `briefing` | "Previously on…": chronicle, changes, upcoming deadlines, disputes |
-| `update_quest` | Objectives, status, clocks, deadline, owner |
+| `briefing` | "Previously on…": chronicle, changes, upcoming dates, overdue contacts, disputes; with `about`, a brief on one person before contacting them |
+| `update_goal` | Objectives, status, progress, due date, owner, counterparty, repeat (`update_quest` is its old name) |
 | `sleep_start`, `sleep_answer`, `sleep_skip`, `sleep_status`, `sleep_abort` | Curator keys only: run sleep as the vault's curator, one question at a time |
 
 ## How facts stay honest
@@ -124,7 +125,7 @@ pnpm typecheck
 
 | Path | What |
 | --- | --- |
-| `packages/core` | Schemas, markdown and managed regions, vault model, reconcile rules, search, handbook, service, secrets, audit, migrations |
+| `packages/core` | Schemas, the schema registry (types, kinds, capabilities), markdown and managed regions, vault model, reconcile rules, goals, presets, search, handbook, service, secrets, audit, migrations |
 | `packages/curator` | LLM adapter (AI SDK), the sleep pipeline, and the relay that lets an agent run sleep |
 | `packages/mcp` | MCP tools and resources |
 | `packages/index`, `packages/embeddings`, `packages/store-github` | Search index, embedding adapters, the GitHub API store |
@@ -135,6 +136,7 @@ pnpm typecheck
 | `apps/cli` | The `hippo` CLI, published as `@mehrad77/hippocampus` |
 | `vault-template/` | What `hippo init` copies |
 | `seeds/example-relocation/` | Fictional example campaign |
+| `presets/` | People, developer, business, student and household presets: type and kind notes, templates, starter notes |
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPING.md](docs/DEVELOPING.md) (developing against your own private vault without leaking it). Coding agents: see [AGENTS.md](AGENTS.md). Architecture: [DESIGN.md](DESIGN.md).
 

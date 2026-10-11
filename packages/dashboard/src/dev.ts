@@ -12,6 +12,7 @@ import { serviceSource } from "./service-source.ts";
 import type { DashboardSource } from "./source.ts";
 
 const SEED = fileURLToPath(new URL("../../../seeds/example-relocation", import.meta.url));
+const TEMPLATE = fileURLToPath(new URL("../../../vault-template", import.meta.url));
 
 /**
  * The API inside `astro dev`: the demo campaign by default, or a real vault with `HIPPO_VAULT`.
@@ -36,7 +37,7 @@ export function devMiddleware(opts: { basePath: string; vaultDir?: string; hoste
     if (opts.vaultDir) {
       source = serviceSource(new HippoService(new FsStore(opts.vaultDir)), { mode: "local", vault: { kind: "dir", dir: opts.vaultDir } });
     } else {
-      const service = new HippoService(await buildDemoStore(new FsStore(SEED)));
+      const service = new HippoService(await buildDemoStore(new FsStore(SEED), { template: new FsStore(TEMPLATE) }));
       source = serviceSource(service, { mode: "demo", vault: { kind: "memory" } });
       const o = await service.overview();
       if (!hosted) setup = demoSetup({ agents: o.party.map((p) => ({ id: p.slug, title: p.title, lastSeen: p.lastSeen })), unknownAgents: o.attention.unknownAgents });

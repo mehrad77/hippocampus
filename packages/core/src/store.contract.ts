@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { CURRENT_VAULT_VERSION } from "./migrations.ts";
 import { applyChanges, type VaultStore } from "./store.ts";
 
 /** Behaviour every `VaultStore` adapter must share. Run it from each adapter's tests. */
 export function storeContract(name: string, make: (files: Record<string, string>) => Promise<VaultStore>, opts: { ignoresEditorFiles?: boolean } = {}): void {
   const seed = {
-    "_hippo/config.yaml": "version: 1\n",
+    "_hippo/config.yaml": `version: ${CURRENT_VAULT_VERSION}\n`,
     "characters/player.md": "# Player\n",
     "inbox/residency-agent/2026-09-27T100000-a.md": "agency appointment\n",
     "inbox/campus-agent/2026-09-27T110000-b.md": "João Silva · ı İ\n",

@@ -1,6 +1,6 @@
 /*
  * Guides: the help index (the Player's Handbook in the codex), guide pages, MDX components (asides,
- * clocks, diagrams), the Prism code theme, and the 404 page. Everything is built from the design
+ * progress, diagrams), the Prism code theme, and the 404 page. Everything is built from the design
  * tokens, so every theme comes for free. The plain look (IBM Carbon) overrides sit together at the
  * end of the file. No inline styles anywhere: the page CSP forbids them.
  */
@@ -168,7 +168,7 @@
   /* Prism tokens: category hues pulled toward the ink so they read on the code surface in both themes. */
   --code-key: color-mix(in oklab, var(--t-faction) 78%, var(--ink));
   --code-string: color-mix(in oklab, var(--t-location) 78%, var(--ink));
-  --code-number: color-mix(in oklab, var(--t-quest) 80%, var(--ink));
+  --code-number: color-mix(in oklab, var(--t-goal) 80%, var(--ink));
   --code-keyword: color-mix(in oklab, var(--t-lore) 80%, var(--ink));
   --code-function: color-mix(in oklab, var(--t-character) 78%, var(--ink));
   --code-variable: color-mix(in oklab, var(--t-item) 70%, var(--ink));
@@ -246,36 +246,32 @@
   color: var(--c, var(--gold));
 }
 
-/* ── Clocks ──────────────────────────────────────────────────────────── */
+/* ── Progress ────────────────────────────────────────────────────────── */
 
-.guide-clocks {
+.guide-progresses {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
   margin: var(--space-4) 0;
 }
 
-.guide-clock {
+.guide-progress {
   display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
+  flex-direction: column;
+  gap: var(--space-2);
   margin: 0;
-  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-2);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--rule);
   border-radius: var(--radius-l);
   background: var(--surface-2);
   box-shadow: var(--shadow-1);
 }
 
-.guide-clock figcaption {
+.guide-progress figcaption {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  gap: var(--space-2);
+  align-items: baseline;
   line-height: 1.3;
-}
-
-.guide-clock .mono {
-  letter-spacing: 0.05em;
 }
 
 /* ── Diagrams ────────────────────────────────────────────────────────── */

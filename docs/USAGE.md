@@ -28,7 +28,7 @@ If the current directory (or `-v`, or `HIPPO_VAULT`) is not a vault yet, the das
 
 | Step | Done for you | Shown to copy |
 | --- | --- | --- |
-| Vault | create one from the template (optionally with a seed), open one, or connect a GitHub repo or MCP server | `hippo migrate` when the format is older |
+| Vault | create one from the template (optionally with a seed and presets), open one, or connect a GitHub repo or MCP server | `hippo migrate` when the format is older |
 | Party | add agents (`party/<id>.md`), including unknown agents seen in the inbox | |
 | Secrets | forge the age key, or reuse the one on this machine | where to back it up |
 | Curator | save the model settings and test them | key pages for hosted providers |
@@ -39,7 +39,7 @@ If the current directory (or `-v`, or `HIPPO_VAULT`) is not a vault yet, the das
 
 Settings that Session Zero saves (curator model and key, default vault, hosted app URL) go to `~/.config/hippocampus/env` (mode 0600; set `HIPPO_CONFIG_DIR` to move it). The CLI reads that file after the shell environment and a local `.env`, so those still win. Keys are never sent back to the browser.
 
-After setup, the same command opens your campaign: the **Tavern** (what happened, what needs you), the **Quest board**, the **Council** (disputes), the **Satchel** (the inbox), the **Codex** with entity sheets, the relation **Map**, the **Chronicle**, the **Party**, and **Guides**. Use `--github you/my-campaign` for a vault on GitHub, or `--mcp https://…/mcp` with `HIPPO_MCP_TOKEN` for any Hippocampus MCP server. Over MCP, writes are filed as that token's agent and rulings aren't available. `--demo` opens a fictional campaign to explore.
+After setup, the same command opens your campaign: the **Tavern** (what happened, what needs you, who you're overdue to contact), **Goals**, the **Council** (disputes, proposals and possible duplicates), the **Satchel** (the inbox), the **Codex** with entity sheets, the relation **Map**, the **Chronicle**, the **Party**, and **Guides**. Use `--github you/my-campaign` for a vault on GitHub, or `--mcp https://…/mcp` with `HIPPO_MCP_TOKEN` for any Hippocampus MCP server. Over MCP, writes are filed as that token's agent and rulings aren't available. `--demo` opens a fictional campaign to explore.
 
 The dashboard has two looks, set under **Setup & health → Personalization** (the last card) and saved in your browser:
 - **Plain** (the default): IBM Carbon design, everyday names (Home, Goals, Disputes, Inbox, Records, Timeline, Agents) and Confirmed/Unverified for fact status.
@@ -51,16 +51,46 @@ The dashboard listens on 127.0.0.1 only. The terminal prints a one-time sign-in 
 
 ## 1. Create your vault
 
-Start from the empty template, the fictional example campaign, or your own seed directory:
+Start from the empty template, the fictional example campaign, or your own seed directory, and add presets for what the memory is for:
 
 ```bash
+npx @mehrad77/hippocampus init ~/vaults/my-memory --name "Harbor term" --human sam --preset people student
 npx @mehrad77/hippocampus init ~/vaults/my-campaign --seed example-relocation
 ```
 
+| Flag | |
+| --- | --- |
+| `--name <name>` | What the memory is about (`--campaign` is the older name) |
+| `--human <id>` | A human's id. Repeat it for several people sharing the vault, the primary one first (default `player`) |
+| `--preset <name…>` | Presets to add (below) |
+| `--seed <name-or-path>` | Copy a seed: a bundled name or a directory |
+| `--timezone`, `--domains` | Chronicle days, and the lanes agents can hold authority over |
+
 Then:
-- edit `_hippo/config.yaml`: set `campaign`, `human` (your id), `timezone`, and `domains` (your lanes)
+- check `_hippo/config.yaml`: `name`, `humans` (give a human `domains` to make them the authority there, and `github:` or, for a vault on GitLab, `gitlab:` for the hosted dashboard), `timezone`, `domains`
 - replace the example party in `party/` with your agents, one note each, with `lane` and `authority` domains
 - open the folder in Obsidian and install the Dataview community plugin for the dashboards
+
+**Humans.** Everyone listed under `humans` outranks every agent; between humans, the one whose `domains` cover a field wins, and otherwise they dispute. The first is the primary human: a value without `by` is theirs, and the dashboard acts as them unless `hippo dashboard --as <id>` (or, on the hosted app, the signed-in GitHub login, or the connected GitLab username on a GitLab vault) says otherwise.
+
+**Types and kinds.** What the vault holds is written down in it: one note per entity type in `_hippo/schema/types/` (folder, fields, statuses, description and `## Is` / `## Is not` examples the curator reads) and one per episode kind in `_hippo/schema/kinds/`. Edit them like any note. A field can be `human_only` (agents can only propose a value), `secret`, `confidential`, an `identity_key` (an email or url that says two notes are one thing), `succession` (a new employer closes the old one), or `recurs: yearly` (a birthday in the briefing). `hippo validate` lists notes that don't fit, as advice.
+
+**Presets** are bundles of type and kind notes, templates and starter notes:
+
+| Preset | Adds |
+| --- | --- |
+| `people` | archetypes (stranger, colleague, close friend, family, recruiter, landlord, professor, bureaucrat) with stakes, autonomy (draft, routine, any) and contact cadence that people `extends:`; groups; email, phone and handle as identity keys, birthdays, employer, title and city as succession, sensitivities only you set; your voice per language and `## Never say` / `## Boundaries` sections on your own note; `rollup` (one conversation's numbers, no text) and `moment` kinds |
+| `developer` | repositories (url as identity key) and services, `depends_on` ↔ `used_by`, an `incident` kind; decisions logged on the repo they shape |
+| `business` | clients, deals and invoices as goals with their own statuses, a `commitment` kind that opens a deal, the `sales` domain |
+| `student` | courses (code as identity key), assignments as goals that can repeat weekly, a `lecture` kind kept as a gist |
+| `household` | assets (warranty date, secret serial number), chores and bills as repeating goals, a `purchase` kind |
+
+```bash
+npx @mehrad77/hippocampus preset list
+npx @mehrad77/hippocampus -v ~/vaults/my-memory preset add developer
+```
+
+`preset add` copies what the vault doesn't have, merges the preset's fields into your existing types, adds its domains and relations to the config, appends its sections to your note when they're missing, and commits exactly those files. It never replaces a file you have unless you pass `--force`.
 
 ## 2. Put it in a private repo
 
@@ -86,7 +116,7 @@ npx @mehrad77/hippocampus -v ~/vaults/my-campaign secrets show passport
 
 ## 4. Connect your agents
 
-Every agent should first call `onboard` (or read `HANDBOOK.md` in the vault). The handbook is regenerated on every sleep and explains the conventions, the party, the lanes, and the active quests.
+Every agent should first call `onboard` (or read `HANDBOOK.md` in the vault). The handbook is regenerated on every sleep and explains the conventions, the vault's types and kinds, the party, the lanes, and the open goals.
 
 **MCP (local agents):**
 
@@ -100,7 +130,11 @@ Or serve over local HTTP at `http://127.0.0.1:8765/mcp?agent=<id>`:
 npx @mehrad77/hippocampus -v ~/vaults/my-campaign serve --http 8765
 ```
 
-Tools: `onboard`, `introduce`, `remember`, `recall`, `get`, `neighbors`, `ask_canon`, `briefing`, `update_quest`, plus the curator's `sleep_*` tools (§5). For remote agents and Claude.ai or ChatGPT connectors, use the hosted app (§8).
+Tools: `onboard`, `introduce`, `remember`, `recall`, `get`, `neighbors`, `ask_canon`, `briefing` (with `about`, a brief on one person before contacting them), `update_goal` (`update_quest` still works), plus the curator's `sleep_*` tools (§5).
+
+`remember` takes any of the vault's kinds with its typed `data`, for example a call that is only data: `kind: interaction, data: { with: "[[migration-agency]]", channel: call }`. `scope` says where a memory holds (`lang:pt`), and `confidential: true` keeps it out of search, summaries and the chronicle. From the terminal: `hippo remember -k moment --data with=[[migration-agency]] --data trigger=first_contact "First message, in Portuguese"`.
+
+**Confidential** values stay in your notes but out of search, summaries, the chronicle and every agent's view, except an agent bound to its id (a single-agent key, an OAuth connection, `serve --agent`) with authority over them. The curator sees them while curating. For remote agents and Claude.ai or ChatGPT connectors, use the hosted app (§8).
 
 Agent ids are exact: lowercase letters, digits and dashes, matching `party/<id>.md`. Your own id (the config's `human`) and the reserved ids `human`, `curator`, `unknown` and `hippocampus` are refused. An agent without a party sheet can still write, but its memories count as rumors until you approve it (§6). One `remember` call takes at most 8 KB; split longer memories.
 
@@ -203,11 +237,12 @@ Turning it off on the setup page removes the file.
 
 ## 6. The daily loop
 
-1. Open the dashboard's Tavern, or `_hippo/review.md` (the morning review). Both list disputes, unverified rumors, stale facts, orphan notes, and episodes that failed.
-2. **Rule on disputes:** in the dashboard's Council, pick the right claim or type the value; it becomes canon immediately, by you. Or open the dispute note in Obsidian and set `ruling: <correct value>`, and the next sleep makes it canon.
+1. Open the dashboard's Tavern, or `_hippo/review.md` (the morning review). Both list disputes, proposals, possible duplicates, new guidelines, unverified rumors, stale facts, shape notes, orphan notes, and episodes that failed.
+2. **Rule on disputes:** in the dashboard's Council, pick the right claim or type the value; it becomes canon immediately, by you. Or open the dispute note in Obsidian and set `ruling: <correct value>`, and the next sleep makes it canon. **Proposals** (an agent's value for a field only you set) and **possible duplicates** are accepted or declined the same way.
 3. **Approve introductions:** an agent that isn't in the party yet can call `introduce` with a title, its lane, host, model and a few lines about itself. It lands in `inbox/<agent>/_introduction-<id>.md` and shows on the Party page and in the Tavern. **Approve** adds `party/<agent>.md` with the authority domains you choose; **Dismiss** removes the introduction, and the agent's word stays a rumor. Older tools ignore these files (the `_` prefix), so no format change was needed.
 4. Edit anything in Obsidian. Your word outranks every agent. The curator only rewrites `%% hippo:… %%` regions and the `facts`/`relations` properties, never your prose.
-5. Tick quest objectives and turn clocks on the dashboard's Quest board, or directly in quest notes.
+5. Tick objectives, move progress and set due dates and repeats on the dashboard's Goals page, or directly in goal notes. A repeating goal (rent every month, a weekly problem set) comes back with its next due date when it's done.
+6. Recount contact stats from the chronicle with `hippo fmt --stats` if you edited them by hand.
 
 ## 7. Upgrading
 
@@ -217,7 +252,7 @@ Bump the pinned version in your schedule and CI, then run:
 npx @mehrad77/hippocampus@<new> -v ~/vaults/my-campaign migrate
 ```
 
-The tool refuses to write to a vault whose format version differs from its own. `hippo validate` reports the mismatch, and `migrate` upgrades the files and `_hippo/config.yaml`'s `version`. Read [CHANGELOG.md](../CHANGELOG.md) for format changes.
+The tool refuses to write to a vault whose format version differs from its own. `hippo validate` reports the mismatch (this release still passes a v1 vault, with a hint, so pinned CI keeps working), and `migrate` upgrades the files and `_hippo/config.yaml`'s `version`. In a git vault it commits exactly the files it changed, as `Hippo-Actor: migration`; `--dry-run` lists them. It prints what it couldn't carry over as it was (an extra clock becomes an objective, for example). The hosted app never migrates by itself: until the owner clicks Upgrade on the dashboard, agents get `VAULT_UPGRADE_NEEDED` and the dashboard shows only the Upgrade banner. Read [CHANGELOG.md](../CHANGELOG.md) for format changes.
 
 ## 8. The hosted app
 
@@ -228,7 +263,7 @@ The tool refuses to write to a vault whose format version differs from its own. 
 1. **Sign in** with GitHub on the instance's welcome page and ask for access, with an optional note. An admin approves accounts by hand; the setup page unlocks once you're in.
 2. **Create a private repo.** The setup page opens GitHub's form, filled in (`vault`, private). It must be empty, or hold only a README, LICENSE or .gitignore. A repo that already holds a Hippocampus vault is adopted instead: only missing guardrail files are added.
 3. **Install the app** on that repo only. GitHub asks you to authorize it, then sends you back.
-4. **Pick the repo and name the campaign:** your id, time zone and domains, optionally the fictional example campaign. A key for secret facts is made in your browser; download the key file and keep it safe. Only its public half goes into the vault.
+4. **Pick the repo and name the vault:** your id, time zone and domains, optionally the fictional example campaign and presets. A key for secret facts is made in your browser; download the key file and keep it safe. Only its public half goes into the vault.
 5. **Set up the vault.** One commit puts the template into the repo.
 6. **Connect agents** (below) and **set up a curator** (§5).
 
@@ -244,9 +279,9 @@ The tool refuses to write to a vault whose format version differs from its own. 
 
 | Kind | Scopes | For |
 | --- | --- | --- |
-| Agent key | `read`, `remember`, `quest` | Any of your agents. Each names itself (`agent`) on every call |
-| Single-agent key | `read` plus your choice of `remember` and `quest` | One agent, bound to its id |
-| Curator key | `read`, `curate` | The agent that runs sleep. It sees secret memories in plain text while curating |
+| Agent key | `read`, `remember`, `goal` | Any of your agents. Each names itself (`agent`) on every call |
+| Single-agent key | `read` plus your choice of `remember` and `goal` | One agent, bound to its id; it sees confidential values it has authority over |
+| Curator key | `read`, `curate` | The agent that runs sleep. It sees secret and confidential memories in plain text while curating |
 
 ```bash
 claude mcp add --transport http hippocampus https://<your-instance>/mcp --header "Authorization: Bearer hippo_…"
@@ -340,10 +375,11 @@ Sign in at your Worker's address. Admins are approved on sign-in and find an Adm
 - **validate**, on every push and pull request (except pushes that only add inbox memories, and the app's own `[skip ci]` commits): checks that the vault still loads.
 - **audit**, once a day: runs `hippo audit` over the last day's commits.
 
-Every commit Hippocampus makes names its actor in a trailer: `Hippo-Actor: agent:<id>`, `curator`, `human` or `bootstrap`. The curator's commits also carry `Hippo-Model` (and, from the relay, `Hippo-Curator` and `Hippo-Run`). `hippo audit` checks each commit with a non-human actor against what that actor may do:
+Every commit Hippocampus makes names its actor in a trailer: `Hippo-Actor: agent:<id>`, `curator`, `human`, `bootstrap` or `migration`. The curator's commits also carry `Hippo-Model` (and, from the relay, `Hippo-Curator` and `Hippo-Run`). `hippo audit` checks each commit with a non-human actor against what that actor may do:
 
-- agents only add episodes and introductions to their own inbox folder (and edit quests with the `quest` scope);
-- the curator writes canon, the chronicle, disputes and secrets, but never your prose, facts you set, the config, the party or the vault's CI, and never writes a secret in plain text;
+- agents only add episodes and introductions to their own inbox folder (and edit goal props and objectives with the `goal` scope);
+- the curator writes canon, the chronicle, disputes and secrets, but never your prose, facts you set, `human_only` fields, the config, the schema, the party or the vault's CI, and never writes a secret or confidential value in plain text;
+- a migration only rewrites the config, schema, templates, dashboards and Handbook, and moves notes without changing your prose, facts or relations;
 - the human (no trailer, or `human`) may change anything.
 
 ```bash

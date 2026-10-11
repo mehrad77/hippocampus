@@ -181,10 +181,17 @@ describe("onboarding", () => {
     // Settings are checked before anything touches GitHub.
     expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS, timezone: "Mars/Olympus" })).body).toMatchObject({ code: "INVALID" });
     expect((await post(player, "setup/init", { repoId: 1, ...SETTINGS })).status).toBe(404);
-    const init = await post<{ vault: { id: string; status: string; fullName: string }; mode: string }>(player, "setup/init", { repoId: 9001, ...SETTINGS });
+    expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS, presets: ["pirates"] })).body).toMatchObject({ code: "INVALID" });
+    expect((await get<HostedSetupStatus>(player, "setup/status")).body.presets?.map((p) => p.name)).toEqual(["business", "developer", "household", "people", "student"]);
+    const init = await post<{ vault: { id: string; status: string; fullName: string }; mode: string }>(player, "setup/init", { repoId: 9001, ...SETTINGS, presets: ["people"] });
     expect(init.body).toMatchObject({ mode: "initialized", vault: { status: "ready", fullName: "player/vault", branch: "main" } });
     const vaultId = init.body.vault.id;
     expect(gh.at("player/vault").files()[".github/workflows/validate.yml"]).toBeDefined();
+    // The preset went in with the template, in the same first commit.
+    expect(gh.at("player/vault").files()["archetypes/stranger.md"]).toContain("type: archetype");
+    expect(gh.at("player/vault").files()["_hippo/config.yaml"]).toMatch(/^presets: \[people\]$/m);
+    // The person who set it up is its human, linked to their login, so the dashboard acts as them.
+    expect(gh.at("player/vault").files()["_hippo/config.yaml"]).toContain("- {id: player, github: player}");
     expect(seen.changed).toContain(vaultId);
     expect(await kv.get(`hosted:install:${PLAYER}`, "json")).toBeNull();
     expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS })).body).toMatchObject({ code: "HAS_VAULT" });

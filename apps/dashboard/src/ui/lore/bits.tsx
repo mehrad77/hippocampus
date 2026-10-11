@@ -2,10 +2,11 @@ import { useCallback, useMemo } from "react";
 import { useResource } from "../../lib/cache.ts";
 import { titleCase } from "../../lib/format.ts";
 import { useTerms } from "../../lib/prefs.ts";
-import { kindLabel, typeLabel } from "../../lib/terms.ts";
+import { rememberTypeNames, typeLabel } from "../../lib/terms.ts";
 import { href } from "../../lib/routes.ts";
 import type { Catalog, FactStatus, Ref } from "../../lib/types.ts";
 import { EntityLink, TypeDot } from "../EntityLink.tsx";
+import { kindLabel } from "../play/model.ts";
 
 const LINK = /\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g;
 
@@ -14,18 +15,24 @@ export function plainText(text: string): string {
   return text.replace(LINK, (_m, target: string, alias?: string) => (alias ?? target).trim());
 }
 
-export { kindLabel, typeLabel } from "../../lib/terms.ts";
+export { typeLabel } from "../../lib/terms.ts";
+export { kindLabel } from "../play/model.ts";
 
-/** `type → label` in the reader's voice. */
+/** `type → label` in the reader's voice, from the vault's type notes (`label`, `codex_label`) once the catalog is in. */
 export function useTypeLabel(): (type: string) => string {
   const { plain } = useTerms();
-  return useCallback((type: string) => typeLabel(type, plain), [plain]);
+  const catalog = useResource<Catalog>("/catalog");
+  const types = catalog.data?.types;
+  rememberTypeNames(types);
+  return useCallback((type: string) => typeLabel(type, plain, types), [plain, types]);
 }
 
-/** `episode kind → label` in the reader's voice. */
+/** `episode kind → label` in the reader's voice, checked against the vault's kinds once the catalog is in. */
 export function useKindLabel(): (kind: string) => string {
-  const { plain } = useTerms();
-  return useCallback((kind: string) => kindLabel(kind, plain), [plain]);
+  const { look } = useTerms();
+  const catalog = useResource<Catalog>("/catalog");
+  const kinds = catalog.data?.kinds;
+  return useCallback((kind: string) => kindLabel(kind, kinds, look), [look, kinds]);
 }
 
 const TALLY: [FactStatus, string, [plain: string, codex: string]][] = [
@@ -80,10 +87,10 @@ export function AgentLink({ agent, refs }: { agent: string; refs?: Map<string, R
   return <SlugLink slug={agent} refs={refs ?? new Map()} fallbackType="party" />;
 }
 
-/** "quest" chip with its type dot, linking to the Codex filtered to that type. */
+/** A type chip ("goal") with its type dot, linking to the Codex filtered to that type. */
 export function TypeLink({ type }: { type: string }) {
-  const { plain, v } = useTerms();
-  const label = typeLabel(type, plain);
+  const { v } = useTerms();
+  const label = useTypeLabel()(type);
   return (
     <a className={`chip typed typed--${type}`} href={href.codex(type)} title={v(`All ${label} records`, `All ${type} entries`)}>
       <TypeDot type={type} />

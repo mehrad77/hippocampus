@@ -1,12 +1,18 @@
 import { normalizeName } from "@hippocampus/core/text";
+import { addInterval } from "../../lib/progress.ts";
 import type { Look } from "../../lib/terms.ts";
-import type { ClaimView, EpisodeView, Overview, QuestCard } from "../../lib/types.ts";
+import type { ClaimView, EpisodeView, GoalCard, KindView, Overview } from "../../lib/types.ts";
 
-// Pure helpers for the "At the table" pages (quests, council, satchel, party): no DOM, unit-tested.
+// Pure helpers for the "At the table" pages (goals, council, inbox, agents): no DOM, unit-tested.
 // Messages a reader sees take the look, so they read in plain words or in the codex's.
 
-export const QUEST_STATUSES = ["active", "blocked", "dormant", "done", "failed"] as const;
-export type QuestStatus = (typeof QUEST_STATUSES)[number];
+/** A goal's core states; a goal type may name them with its own words (`statuses:`). */
+export const GOAL_STATES = ["active", "blocked", "dormant", "done", "failed"] as const;
+export type GoalState = (typeof GOAL_STATES)[number];
+/** @deprecated Same as `GOAL_STATES`. */
+export const QUEST_STATUSES = GOAL_STATES;
+/** @deprecated Same as `GoalState`. */
+export type QuestStatus = GoalState;
 export type Authority = ClaimView["authority"];
 export type EpisodeKind = EpisodeView["kind"];
 
@@ -19,42 +25,75 @@ export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to.slice(0, 10)}T00:00:00Z`) - Date.parse(`${from.slice(0, 10)}T00:00:00Z`)) / DAY);
 }
 
-export function isQuestStatus(s: string | undefined): s is QuestStatus {
-  return !!s && (QUEST_STATUSES as readonly string[]).includes(s);
+export function isGoalState(s: string | undefined): s is GoalState {
+  return !!s && (GOAL_STATES as readonly string[]).includes(s);
+}
+/** @deprecated Same as `isGoalState`. */
+export const isQuestStatus = isGoalState;
+
+const STATE_WORD: Record<GoalState, string> = { active: "Active", blocked: "Blocked", dormant: "On hold", done: "Done", failed: "Failed" };
+
+/** A core state in the reader's words: "On hold" in plain, "dormant" (as written in the note) in the codex. */
+export function goalStateWord(state: GoalState, look: Look = "plain"): string {
+  return look === "codex" ? state : STATE_WORD[state];
+}
+/** @deprecated Same as `goalStateWord`. */
+export const questStatusWord = goalStateWord;
+
+/** The core state a status word stands for, as core's `goalState` decides it: the vocabulary, else the word; unknown words are active. */
+export function stateOf(word: string | undefined, statuses?: Record<string, string>): GoalState {
+  const w = (word ?? "active").trim().toLowerCase();
+  const mapped = statuses ? Object.entries(statuses).find(([k]) => k.toLowerCase() === w)?.[1]?.toLowerCase() : undefined;
+  return isGoalState(mapped) ? mapped : isGoalState(w) ? w : "active";
 }
 
-const QUEST_WORD: Record<QuestStatus, string> = { active: "Active", blocked: "Blocked", dormant: "On hold", done: "Done", failed: "Failed" };
-
-/** A quest status in the reader's words: "On hold" in plain, "dormant" (as written in the note) in the codex. */
-export function questStatusWord(status: QuestStatus, look: Look = "plain"): string {
-  return look === "codex" ? status : QUEST_WORD[status];
+/** The statuses a goal of a type can take: its own words (each with its core state), else the core states. */
+export function statusOptions(statuses: Record<string, string> | undefined, look: Look = "plain"): { word: string; state: GoalState; label: string }[] {
+  const words = statuses && Object.keys(statuses).length ? Object.keys(statuses) : [...GOAL_STATES];
+  return words.map((word) => {
+    const state = stateOf(word, statuses);
+    return { word, state, label: isGoalState(word) ? goalStateWord(word, look) : word };
+  });
 }
 
-/** One of core's quest change notes (`clock Paperwork 3/6`, `status → dormant`) in the reader's words. */
+/** One of core's goal change notes (`progress 3/6`, `status dormant`; older cores: `clock Paperwork 3/6`, `status → dormant`) in the reader's words. */
 export function changeLabel(change: string, look: Look = "plain"): string {
   if (look === "codex") return change;
   const clock = /^clock (.+ \d+\/\d+)$/.exec(change);
   if (clock) return clock[1]!;
-  const status = /^status → (\S+)$/.exec(change);
-  if (status && isQuestStatus(status[1])) return `status → ${questStatusWord(status[1])}`;
+  const status = /^status (?:→ )?(\S+)$/.exec(change);
+  if (status) return `status → ${isGoalState(status[1]) ? goalStateWord(status[1]) : status[1]}`;
+  if (change === "due none") return "no due date";
+  if (change === "repeat none") return "no longer repeats";
   return change;
 }
 
-/** What the quest action accepts (`POST /actions/quest`), minus the quest ref. */
-export interface QuestEdit {
-  status?: QuestStatus;
+/** What the goal action accepts (`POST /actions/goal`), minus the goal ref. */
+export interface GoalEdit {
+  /** A core state or a word of the goal type's own statuses. */
+  status?: string;
   complete?: string[];
   reopen?: string[];
   add?: string[];
-  clock?: { name: string; segments?: number; filled?: number; deadline?: string };
-  deadline?: string;
+  progress?: { done?: number; total?: number; tick?: number };
+  /** `null` clears it. */
+  due?: string | null;
+  owner?: string;
+  counterparty?: string;
+  /** `null` stops it repeating. */
+  repeat?: { every?: string; after_last?: string } | null;
 }
 
 const same = (a: string, b: string) => normalizeName(a) === normalizeName(b);
 
-/** The server's edit, mirrored for an optimistic update. Matching is exact (after normalizing): the UI sends objective text verbatim. */
-export function editQuest(q: QuestCard, edit: QuestEdit, today: string): QuestCard {
-  let objectives = q.objectives.map((o) => ({ ...o }));
+/**
+ * The server's goal update, mirrored for an optimistic update: objectives (matched exactly, after
+ * normalizing; the UI sends their text verbatim), progress clamped to 0…total, status words through
+ * the type's vocabulary, and a repeating goal marked done rolling over to its next due date.
+ * Server-only details (who it's due after for `after_last`, links) settle when the answer arrives.
+ */
+export function editGoal(g: GoalCard, edit: GoalEdit, today: string, statuses?: Record<string, string>): GoalCard {
+  let objectives = g.objectives.map((o) => ({ ...o }));
   for (const text of edit.complete ?? []) {
     const hit = objectives.find((o) => same(o.text, text));
     if (hit) hit.done = true;
@@ -66,98 +105,129 @@ export function editQuest(q: QuestCard, edit: QuestEdit, today: string): QuestCa
   }
   for (const text of edit.add ?? []) if (!objectives.some((o) => same(o.text, text))) objectives = [...objectives, { text, done: false }];
 
-  let clocks = q.clocks;
-  if (edit.clock) {
-    const c = edit.clock;
-    const found = clocks.some((x) => same(x.name, c.name));
-    clocks = (found ? clocks : [...clocks, { name: c.name, segments: c.segments ?? 6, filled: 0 }]).map((x) => {
-      if (!same(x.name, c.name)) return x;
-      const segments = c.segments ?? x.segments;
-      const deadline = c.deadline ?? x.deadline;
-      return { ...x, segments, filled: Math.max(0, Math.min(segments, c.filled ?? x.filled)), deadline, daysLeft: deadline ? daysBetween(today, deadline) : x.daysLeft };
-    });
+  let progress = g.progress;
+  if (edit.progress) {
+    const total = Math.round(edit.progress.total ?? g.progress?.total ?? 0);
+    if (total >= 1) {
+      let done = edit.progress.done ?? g.progress?.done ?? 0;
+      done += edit.progress.tick ?? 0;
+      progress = { done: Math.max(0, Math.min(total, Math.round(done))), total };
+    }
   }
-  const deadline = edit.deadline ?? q.deadline;
+
+  let due = edit.due === undefined ? (g.due ?? g.deadline) : (edit.due ?? undefined);
+  const repeat = edit.repeat === undefined ? g.repeat : (edit.repeat ?? undefined);
+  let word = edit.status ?? g.word ?? g.status;
+  let state = edit.status !== undefined ? stateOf(edit.status, statuses) : (g.state ?? stateOf(g.status, statuses));
+  let lastDone = g.lastDone;
+  const completed = edit.status !== undefined && state === "done" && stateOf(g.word ?? g.status, statuses) !== "done";
+  if (completed && repeat?.every) {
+    // Back it comes: next due date, steps unticked, progress at zero, active again.
+    lastDone = today;
+    const anchor = !repeat.after_last && due && /^\d{4}-\d{2}-\d{2}/.test(due) ? due.slice(0, 10) : today;
+    due = addInterval(anchor, repeat.every) ?? due;
+    objectives = objectives.map((o) => ({ ...o, done: false }));
+    if (progress) progress = { done: 0, total: progress.total };
+    word = (statuses && Object.keys(statuses).find((k) => stateOf(k, statuses) === "active")) ?? "active";
+    state = "active";
+  }
+  const dueChanged = due !== (g.due ?? g.deadline);
+  const nextDue = repeat?.after_last && !dueChanged ? g.nextDue : due;
   return {
-    ...q,
-    status: edit.status ?? q.status,
+    ...g,
+    status: state,
+    state,
+    word,
     objectives,
-    clocks,
-    deadline,
-    daysLeft: edit.deadline ? daysBetween(today, edit.deadline) : q.daysLeft,
+    progress,
+    due,
+    deadline: due,
+    repeat,
+    lastDone,
+    nextDue,
+    daysLeft: nextDue ? daysBetween(today, nextDue) : undefined,
   };
 }
 
-export function recountQuests(quests: QuestCard[]): Record<string, number> {
+export function recountGoals(goals: GoalCard[]): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const q of quests) out[q.status ?? "active"] = (out[q.status ?? "active"] ?? 0) + 1;
+  for (const g of goals) {
+    const s = g.state ?? g.status ?? "active";
+    out[s] = (out[s] ?? 0) + 1;
+  }
   return out;
 }
 
-/** Replace one quest card (by slug) and keep the status counts honest. */
-export function withQuest(o: Overview, slug: string, fn: (q: QuestCard) => QuestCard): Overview {
-  const quests = o.quests.map((q) => (q.slug === slug ? fn(q) : q));
-  return { ...o, quests, counts: { ...o.counts, quests: recountQuests(quests) } };
+/** The overview's goals (`quests` on older servers). */
+export function goalsOf(o: Pick<Overview, "goals" | "quests">): GoalCard[] {
+  return o.goals ?? o.quests;
 }
 
-/** Board order: soonest deadline first (overdue on top, undated last), then active before blocked, then by title. */
-export function byUrgency(a: QuestCard, b: QuestCard): number {
+/** Replace one goal card (by slug) and keep the state counts honest. */
+export function withGoal(o: Overview, slug: string, fn: (g: GoalCard) => GoalCard): Overview {
+  const goals = goalsOf(o).map((g) => (g.slug === slug ? fn(g) : g));
+  const counts = recountGoals(goals);
+  return { ...o, goals, quests: goals, counts: { ...o.counts, goals: counts, quests: counts } };
+}
+
+const stateOfCard = (g: GoalCard): GoalState => (isGoalState(g.state) ? g.state : isGoalState(g.status) ? g.status : "active");
+
+/** Board order: soonest due first (overdue on top, undated last), then active before blocked, then by title. */
+export function byUrgency(a: GoalCard, b: GoalCard): number {
   const da = a.daysLeft ?? Number.POSITIVE_INFINITY;
   const db = b.daysLeft ?? Number.POSITIVE_INFINITY;
   if (da !== db) return da < db ? -1 : 1;
-  if (a.status !== b.status) return a.status === "blocked" ? 1 : b.status === "blocked" ? -1 : 0;
+  const sa = stateOfCard(a);
+  const sb = stateOfCard(b);
+  if (sa !== sb) return sa === "blocked" ? 1 : sb === "blocked" ? -1 : 0;
   return a.title.localeCompare(b.title);
 }
 
-export function groupQuests(quests: QuestCard[]): { board: QuestCard[]; dormant: QuestCard[]; finished: QuestCard[] } {
-  const status = (q: QuestCard) => q.status ?? "active";
+/** Goals by core state (whatever word their type uses): in progress, on hold, finished. */
+export function groupGoals(goals: GoalCard[]): { board: GoalCard[]; dormant: GoalCard[]; finished: GoalCard[] } {
   return {
-    board: quests.filter((q) => status(q) === "active" || status(q) === "blocked").sort(byUrgency),
-    dormant: quests.filter((q) => status(q) === "dormant").sort((a, b) => a.title.localeCompare(b.title)),
-    // Newest first: the tale you just finished is the one you want to see.
-    finished: quests.filter((q) => status(q) === "done" || status(q) === "failed").sort((a, b) => (b.updated ?? "").localeCompare(a.updated ?? "") || a.title.localeCompare(b.title)),
+    board: goals.filter((g) => stateOfCard(g) === "active" || stateOfCard(g) === "blocked").sort(byUrgency),
+    dormant: goals.filter((g) => stateOfCard(g) === "dormant").sort((a, b) => a.title.localeCompare(b.title)),
+    // Newest first: the goal you just finished is the one you want to see.
+    finished: goals
+      .filter((g) => stateOfCard(g) === "done" || stateOfCard(g) === "failed")
+      .sort((a, b) => (b.updated ?? "").localeCompare(a.updated ?? "") || a.title.localeCompare(b.title)),
   };
 }
 
-/** The soonest deadline still ahead, counting quest deadlines and clock deadlines. */
-export function nextDue(quests: QuestCard[], look: Look = "plain"): { what: string; slug: string; daysLeft: number } | undefined {
+/** The soonest due date still ahead: each goal's next due date (a repeating goal's next occurrence). */
+export function nextDue(goals: GoalCard[]): { what: string; slug: string; daysLeft: number } | undefined {
   let best: { what: string; slug: string; daysLeft: number } | undefined;
-  const consider = (what: string, slug: string, days: number | undefined) => {
-    if (days !== undefined && days >= 0 && (!best || days < best.daysLeft)) best = { what, slug, daysLeft: days };
-  };
-  for (const q of quests) {
-    consider(q.title, q.slug, q.daysLeft);
-    for (const c of q.clocks) consider(look === "codex" ? `${q.title}: ${c.name} clock` : `${q.title}: ${c.name}`, q.slug, c.daysLeft);
+  for (const g of goals) {
+    const days = g.daysLeft;
+    if (days !== undefined && days >= 0 && (!best || days < best.daysLeft)) best = { what: g.title, slug: g.slug, daysLeft: days };
   }
   return best;
 }
 
-/** Why a new clock (a progress tracker, in plain words) can't be added yet, or undefined when it can. */
-export function clockProblem(q: QuestCard, name: string, segments: number, look: Look = "plain"): string | undefined {
-  const codex = look === "codex";
-  if (!name.trim()) return codex ? "Name the clock first." : "Name the progress tracker first.";
-  if (name.trim().length > 100) return "Keep the name under 100 characters.";
-  if (!Number.isInteger(segments) || segments < 2 || segments > 12) return codex ? "A clock has 2 to 12 segments." : "A progress tracker has 2 to 12 parts.";
-  if (q.clocks.some((c) => same(c.name, name))) return codex ? "This quest already has a clock with that name." : "This goal already has a progress tracker with that name.";
+/** Why progress can't be tracked with `total` steps, or undefined when it can. */
+export function progressProblem(total: number, look: Look = "plain"): string | undefined {
+  if (!Number.isInteger(total) || total < 1 || total > 1000) return look === "codex" ? "Progress runs from 1 to 1000 steps." : "Use a whole number of steps from 1 to 1000.";
   return undefined;
 }
 
 /** Why a new objective (a step, in plain words) can't be added yet. */
-export function objectiveProblem(q: QuestCard, text: string, look: Look = "plain"): string | undefined {
+export function objectiveProblem(g: Pick<GoalCard, "objectives">, text: string, look: Look = "plain"): string | undefined {
   const codex = look === "codex";
   if (!text.trim()) return codex ? "Write the objective first." : "Write the step first.";
   if (text.trim().length > 300) return "Keep it under 300 characters.";
-  if (q.objectives.some((o) => same(o.text, text))) return codex ? "That objective is already on the list." : "That step is already on the list.";
+  if (g.objectives.some((o) => same(o.text, text))) return codex ? "That objective is already on the list." : "That step is already on the list.";
   return undefined;
 }
 
 /** Why an agent id is refused, mirroring core's `addPartyMember` checks that the browser can know about. */
-export function agentIdProblem(id: string, taken: string[], human?: string, look: Look = "plain"): string | undefined {
+export function agentIdProblem(id: string, taken: string[], humans?: string | readonly string[], look: Look = "plain"): string | undefined {
   const codex = look === "codex";
   const v = id.trim().toLowerCase();
   if (!v) return codex ? "Give the agent an id." : "Enter an agent ID.";
   if (!AGENT_ID.test(v)) return "Use lowercase letters, digits and dashes, starting with a letter or digit (63 at most).";
-  if (human && v === human.toLowerCase()) return codex ? `"${v}" is you, the human, not an agent.` : `"${v}" is your own name, not an agent.`;
+  const people = typeof humans === "string" ? [humans] : (humans ?? []);
+  if (people.some((h) => h.toLowerCase() === v)) return codex ? `"${v}" is one of the players, not a party member.` : `"${v}" is one of this vault's people, not an agent.`;
   if (taken.some((t) => t.toLowerCase() === v)) return codex ? `"${v}" is already in the party.` : `"${v}" is already an agent.`;
   return undefined;
 }
@@ -168,19 +238,31 @@ export function unwrapRef(ref: string): string {
   return (m ? (m[1] ?? "") : ref).trim().replace(/\.md$/, "");
 }
 
-export const KIND_LABEL: Record<EpisodeKind, readonly [plain: string, codex: string]> = {
+/** Labels of the core kinds; a vault's own kinds read as their name (see `kindLabel`). */
+const CORE_KIND_LABEL: Readonly<Record<string, readonly [plain: string, codex: string]>> = {
   fact: ["Fact", "Fact"],
   observation: ["Observation", "Observation"],
   decision: ["Decision", "Decision"],
   task: ["Task", "Task"],
   question: ["Question", "Question"],
+  interaction: ["Contact", "Encounter"],
   beat: ["Milestone", "Story beat"],
 };
 
-/** An episode kind as a reader sees it; an unknown kind shows as written. */
-export function kindLabel(kind: string, look: Look = "plain"): string {
-  const pair = KIND_LABEL[kind as EpisodeKind];
-  return pair ? pair[look === "codex" ? 1 : 0] : kind;
+const capitalize = (s: string) => (s ? s[0]!.toUpperCase() + s.slice(1).replace(/[_-]+/g, " ") : s);
+
+/**
+ * An episode kind as a reader sees it. The vault's kinds come from its registry (`kinds`): core ones
+ * get their usual label, the vault's own read as their name. A kind the registry doesn't know is
+ * filed as an observation, and says so.
+ */
+export function kindLabel(kind: string, kinds?: readonly Pick<KindView, "name">[], look: Look = "plain"): string {
+  // The chronicle writes `kind/channel` for an interaction on a channel (`interaction/call`).
+  const [base = kind, channel] = kind.split("/");
+  const pair = Object.hasOwn(CORE_KIND_LABEL, base) ? CORE_KIND_LABEL[base] : undefined;
+  let label = pair ? pair[look === "codex" ? 1 : 0] : capitalize(base);
+  if (kinds?.length && !kinds.some((k) => k.name === base)) label = `${label} (as observation)`;
+  return channel ? `${label} · ${channel}` : label;
 }
 
 export function confidenceLabel(c: number | undefined): string | undefined {

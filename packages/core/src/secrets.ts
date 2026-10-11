@@ -7,16 +7,27 @@ import { Decrypter, Encrypter, armor, generateX25519Identity, identityToRecipien
  */
 export const SECRET_SCHEME = "secret://";
 
+/** A scoped key's `:` (`pin@org:harbor`) is stored as `~`, which no scope contains, so file names stay portable. */
 export function secretRef(entity: string, field: string): string {
-  return `${SECRET_SCHEME}${entity}/${field}`;
+  return `${SECRET_SCHEME}${entity}/${field.replace(/:/g, "~")}`;
+}
+
+/** The `facts:` key a secret file name stands for (the inverse of `secretRef`'s encoding). */
+export function secretFieldOf(fileField: string): string {
+  return fileField.replace(/~/g, ":");
 }
 
 export function isSecretRef(value: unknown): value is string {
   return typeof value === "string" && value.startsWith(SECRET_SCHEME);
 }
 
-export function secretPath(secretsFolder: string, ref: string): string {
-  return `${secretsFolder}/${ref.slice(SECRET_SCHEME.length)}.age`;
+/**
+ * The file a ref's ciphertext lives in. A `suffix` names a sibling file for a value that isn't the
+ * field's own yet, like a proposal waiting for the human (`<field>.<episode>.age`); its ref is
+ * `${ref}.${suffix}`, so `secretPath(folder, ref, s) === secretPath(folder, `${ref}.${s}`)`.
+ */
+export function secretPath(secretsFolder: string, ref: string, suffix?: string): string {
+  return `${secretsFolder}/${ref.slice(SECRET_SCHEME.length)}${suffix ? `.${suffix}` : ""}.age`;
 }
 
 export async function encryptSecret(recipient: string, plaintext: string): Promise<string> {

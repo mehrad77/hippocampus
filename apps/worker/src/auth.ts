@@ -1,4 +1,4 @@
-import { SCOPES, type Scope } from "@hippocampus/mcp";
+import { isScope } from "@hippocampus/mcp";
 
 /** The slice of a KV namespace the Worker uses (Workers KV, or `MemoryKV` in tests). */
 export interface KVLike {
@@ -10,7 +10,8 @@ export interface KVLike {
 
 /** A key's id: the SHA-256 of the key. */
 export const TOKEN_ID = /^[0-9a-f]{64}$/;
-export const isScope = (s: unknown): s is Scope => (SCOPES as readonly unknown[]).includes(s);
+// Keys made before goals carry `quest`; the MCP server reads it as `goal`.
+export { isScope };
 
 const TOKEN_PREFIX = "hippo_";
 

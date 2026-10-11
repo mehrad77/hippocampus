@@ -1,6 +1,6 @@
 ---
-title: Party and lanes
-summary: Every agent gets a character sheet with a lane and authority domains. How authority is computed, and what happens to strangers.
+title: Humans, agents and lanes
+summary: The humans a memory belongs to, and the agents that share it. Each agent's lane and authority domains, how authority is computed, and what happens to strangers.
 order: 5
 section: The table
 sigil: party
@@ -8,9 +8,11 @@ sigil: party
 import Aside from "../../components/guides/Aside.astro";
 import Link from "../../components/guides/Link.astro";
 
-The agents that share your vault are the **party**. Each one has a sheet in `party/<id>.md` that says what it's for (its **lane**) and where its word counts as canon (its **authority domains**). The curator uses these sheets to settle conflicts. `onboard` uses them to tell each agent who it is, and `HANDBOOK.md` lists them for everyone.
+A vault has two kinds of members. The **humans** it belongs to, listed in its config, outrank everyone. The **agents** that share it (the party, in the codex look) each have a sheet in `party/<id>.md` that says what the agent is for (its **lane**) and where its word counts as canon (its **authority domains**). The curator uses these sheets to settle conflicts. `onboard` uses them to tell each agent who it is, and `HANDBOOK.md` lists them for everyone.
 
-## A party sheet
+Any type with the `actor` capability works this way; the vault's own `party` type has it.
+
+## An agent's sheet
 
 ```markdown
 ---
@@ -35,7 +37,7 @@ Owns [[apartment-hunt]].
 | `authority` | Domains where its reports are canon at once |
 | `host` | Where it runs, for your reference (a chat app, a bot, a coding agent) |
 
-Agent ids are lowercase letters, digits and dashes, starting with a letter or digit, up to 63 characters. That's the same rule everywhere, so an id works on the command line, on the hosted app and in its consent page. Your own id and the reserved ids `human`, `curator`, `unknown` and `hippocampus` can't be agent ids, and an agent must use its exact id: a title or alias doesn't count.
+Agent ids are lowercase letters, digits and dashes, starting with a letter or digit, up to 63 characters. That's the same rule everywhere, so an id works on the command line, on the hosted app and in its consent page. The humans' ids and the reserved ids `human`, `curator`, `unknown` and `hippocampus` can't be agent ids, and an agent must use its exact id: a title or alias doesn't count.
 
 ## Domains and authority
 
@@ -45,24 +47,24 @@ Domains are the tags that define lanes. They're listed in `_hippo/config.yaml`:
 domains: [residency, insurance, university, language, housing, career, finance, health, story]
 ```
 
-The rule is simple. **An agent has authority over a note when one of its `authority` domains matches one of the note's tags, or the note's type.** Matching ignores case. Authority is computed fresh for every decision. Retag a note or edit a party sheet, and the next report is judged by the new rules.
+The rule is simple. **An agent has authority over a note when one of its `authority` domains matches one of the note's tags, or the note's type.** Matching ignores case. Authority is computed fresh for every decision. Retag a note or edit an agent's sheet, and the next report is judged by the new rules.
 
-In the example campaign:
+In the example vault:
 
 | Agent | Authority | Canon at once on, for example |
 | --- | --- | --- |
-| `residency-agent` | residency, insurance | Migration Agency, the permit portal, the residence-permit quest |
+| `residency-agent` | residency, insurance | Migration Agency, the permit portal, the residence-permit goal |
 | `campus-agent` | university, language | Harbor University, the HU Language Center, the student portal |
-| `home-finder` | housing | The apartment-hunt quest |
-| `job-scout` | career | The paid-work quest |
-| `game-master` | story | The Lisbon arc campaign |
+| `home-finder` | housing | The apartment-hunt goal |
+| `job-scout` | career | The paid-work goal |
+| `game-master` | story | The Lisbon arc |
 | `archivist` | none | Nothing: all its reports start as rumors |
 
 Notes with no matching tag, like Lisbon itself, belong to no one. Every report there is a rumor until enough agents agree. See <Link guide="facts-and-status">Facts and their status</Link>.
 
 <Aside kind="warn" title="Types count as domains">
 
-A domain is also compared with the note's **type**. An agent with authority over a domain named `lore` would be authoritative on every lore note. Keep domain names distinct from type names unless that's what you want.
+A domain is also compared with the note's **type**, and a type can give one of its fields a `domain` of its own. An agent with authority over a domain named `lore` would be authoritative on every lore note. Keep domain names distinct from type names unless that's what you want.
 
 </Aside>
 
@@ -70,25 +72,42 @@ A domain is also compared with the note's **type**. An agent with authority over
 
 When the curator creates a new entity from an episode, it tags it with domains from your list, as the model suggests. If the model suggests none, the note gets the **reporting agent's authority domains**. So a flat in Alfama that the home finder mentions first will usually end up tagged `housing`, with the home finder holding authority over it. Retag the note in Obsidian if that's wrong.
 
-## You are not an agent
+## Humans are not agents
 
-The human player is set by `human:` in `_hippo/config.yaml` (`player` in the example). Your word outranks every agent everywhere, whatever the tags say. Facts with no `by`, facts written by your id, and memories you scribe all count as yours. You don't need a party sheet. Your character note, `characters/player.md`, is about you as a character, not about permissions.
+The humans are listed under `humans:` in `_hippo/config.yaml`:
+
+```yaml
+humans:
+  - { id: player, domains: [finance, housing], github: player-gh, gitlab: player-gl }
+  - { id: partner, domains: [health] }
+```
+
+| Key | Meaning |
+| --- | --- |
+| `id` | The human's id. It can't be used as an agent id |
+| `domains` | Where this human outranks the other humans. Leave it empty in a vault with one human |
+| `github` | The GitHub login, so the hosted dashboard knows which human signed in |
+| `gitlab` | The GitLab username, the same for a vault kept on GitLab (matched against the GitLab account you connected) |
+
+The first one is the **primary** human: facts with no `by` are theirs, and the local dashboard acts as them unless you start it with `hippo dashboard --as <human>`. On the hosted app, the signed-in person maps to the human with their `github` login; on a GitLab vault, the human with their connected GitLab username as `gitlab` comes first. Otherwise it's the primary human. Setting up a vault fills these in for you.
+
+A human's word outranks every agent everywhere, whatever the tags say. Between humans, the one with the domain wins, and two humans without it open a dispute; see <Link guide="precedence-and-disputes">Precedence and disputes</Link>. Facts written by a human's id and memories a human scribes count as theirs. Humans don't need a sheet in `party/`. Your own note in `characters/` (`characters/player.md` in the example) is about you as a person, not about permissions.
 
 ## Strangers at the table
 
-An agent that writes to the inbox without a party sheet is **unknown**:
+An agent that writes to the inbox without a sheet in `party/` is **unknown**:
 
 - Its episodes are accepted and consolidated. Nothing is thrown away.
 - It has no authority anywhere, so everything it reports starts as a rumor.
 - `onboard` tells it so, and asks it to **introduce** itself: a title, its lane, where it runs, its model and a few lines about what it does. The introduction waits in `inbox/<id>/` for you.
-- On the Party page, **Approve** seats it with the authority domains you choose (you can change its name and lane first), and **Dismiss** tears the introduction up. A dismissed agent can still write, as a rumor, and may introduce itself again.
-- The Tavern lists unknown agents under what needs your attention, and Session Zero offers to add them.
+- On the Agents page (Party, in the codex look), **Approve** seats it with the authority domains you choose (you can change its name and lane first), and **Dismiss** tears the introduction up. A dismissed agent can still write, as a rumor, and may introduce itself again.
+- The Home page lists unknown agents under what needs your attention, and Setup offers to add them.
 
 An agent's id comes from the episode's `agent:` property, or else from its folder in `inbox/`. Over MCP it comes from the connection: `--agent`, `?agent=`, a single-agent key or connector on the hosted app, or the `agent` argument the agent passes with an agent key. Ids are compared in lowercase.
 
-## Adding a party member
+## Adding an agent
 
-**From the dashboard.** The Party page, and the Party step of Session Zero, add a member with an id, a name, a lane, authority domains from your list, and a host. The dashboard checks the id, refuses unknown domains, refuses your own id or one that's already taken, then writes `party/<id>.md` and regenerates `HANDBOOK.md` together.
+**From the dashboard.** The Agents page, and the Agents step of Setup, add a member with an id, a name, a lane, authority domains from your list, and a host. The dashboard checks the id, refuses unknown domains, refuses a human's id or one that's already taken, then writes `party/<id>.md` and regenerates `HANDBOOK.md` together.
 
 **By hand.** Copy `_hippo/templates/party.md` (Obsidian's template picker offers it) to `party/<id>.md` and fill in `lane`, `authority` and `host`. The next sleep, or `hippo handbook`, puts it in the handbook.
 
@@ -96,7 +115,7 @@ Then connect the agent with that id. See <Link guide="connecting-agents">Connect
 
 <Aside kind="tip" title="Write lanes like job descriptions">
 
-A good lane says what the agent owns *and* what it leaves alone: "Quest board and story framing. Stamps beats; never steals other lanes." Agents read their lane in `onboard`, and a clear one keeps them from wandering into each other's work.
+A good lane says what the agent owns *and* what it leaves alone: "Goal board and story framing. Records story beats; never steals other lanes." Agents read their lane in `onboard`, and a clear one keeps them from wandering into each other's work.
 
 </Aside>
 

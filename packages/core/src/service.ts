@@ -1,45 +1,76 @@
-import { displayName, formatValue, getObjectives, getSummary, type Entity } from "./entity.ts";
+import { actorProps } from "./actor.ts";
+import { displayName, formatValue, getHumanGuidelines, getSummary, type Entity } from "./entity.ts";
+import { applyGoalUpdate, getObjectives, goalProps, goalStateOf, legacyClocks, nextDue, type Clock, type GoalState, type GoalUpdate, type Progress, type Repeat } from "./goal.ts";
 import { createEpisode, type NewEpisode } from "./episode.ts";
 import { HANDBOOK_PATH, renderHandbook, renderOnboarding } from "./handbook.ts";
+import { validateEpisode } from "./kinds.ts";
 import { INTRODUCTION_LIMITS, createIntroduction, type NewIntroduction } from "./introduction.ts";
+import { resolveInheritance, type InheritedGuideline } from "./inherit.ts";
 import { humanText } from "./markdown.ts";
-import { addPartyMember, applyQuestUpdate, applyRuling, assertAgentId, isSecretField, type NewPartyMember, type QuestUpdate } from "./ops.ts";
+import { addPartyMember, applyRuling, assertAgentId, declineProposal, isSecretField, questToGoalUpdate, retractFact, type NewPartyMember, type QuestUpdate } from "./ops.ts";
 import { miniSearcher, type SearcherFactory } from "./search.ts";
-import type { Clock, FactStatus, FactValue } from "./schema.ts";
+import type { DecisionEntry, DisputeKind, FactStatus, FactValue, Guideline, ProposalState, QuestionEntry, Stats } from "./schema.ts";
 import { StoreConflictError, type VaultStore } from "./store.ts";
-import { fold, isoDate, truncate } from "./text.ts";
+import { fold, isoDate, localParts, parseFactKey, truncate } from "./text.ts";
 import { ACTOR_TRAILER, actorTrailer, withTrailers } from "./trailers.ts";
 import { Vault, VaultError } from "./vault.ts";
 import {
+  addDays,
+  cadenceOf,
   catalog,
   chroniclePage,
   entityCard,
   entityDetail,
   episodeView,
   graph,
+  isConfidentialField,
   lastSleepAt,
+  overdueContacts,
   overview,
   parseChronicleDay,
+  readChronicle,
   refOf,
+  seesConfidential,
   shown,
   upcomingDates,
   viewContext,
+  type CadenceView,
   type Catalog,
+  type ChronicleEntryView,
   type ChroniclePage,
   type EntityDetail,
   type Graph,
   type Overview,
+  type ReadAs,
   type SearchResult,
   type Shown,
 } from "./views.ts";
-import { link, unwrapLink } from "./wikilink.ts";
+import { link, parseLinks, unwrapLink } from "./wikilink.ts";
 
 export interface FactView {
+  /** The `facts:` key: the field, or `field@scope`. */
   field: string;
   value: string;
   status: FactStatus;
   by: string;
   at?: string;
+  /** The context it holds in (`lang:pt`), when the key has one. */
+  scope?: string;
+  valid_from?: string;
+  valid_until?: string;
+  confidence?: number;
+  /** The value is confidential: shown only to a bound caller with authority over it, else masked. */
+  confidential?: true;
+}
+
+
+export interface GuidelinesView {
+  /** The human's own guidelines: the prose under the note's `## Guidelines` heading. */
+  human: string;
+  /** The entity's own guidelines. */
+  items: Guideline[];
+  /** Guidelines it inherits (`extends:`, inheritable tags), each with the note it comes from. */
+  inherited: InheritedGuideline[];
 }
 
 export interface EntityBrief {
@@ -55,13 +86,58 @@ export interface EntityView extends EntityBrief {
   aliases: string[];
   tags: string[];
   status?: string;
+  /** Goals: the core state behind `status`. */
+  state?: GoalState;
   owner?: string;
+  counterparty?: string;
+  due?: string;
+  /** Goals: when it's next due (a repeat after the last contact counts from that contact). */
+  next_due?: string;
+  progress?: Progress;
+  repeat?: Repeat;
+  last_done?: string;
+  /** @deprecated Same as `due`. */
   deadline?: string;
   objectives?: { text: string; done: boolean }[];
+  /** @deprecated v1 clocks, until the migration turns them into progress and objectives. */
   clocks?: Clock[];
+  /** Goals: the status as written (a core state or a word of the type's vocabulary). */
+  word?: string;
+  /** Agents: what it handles, where its word is authoritative, where it runs. */
+  lane?: string;
+  authority?: string[];
+  host?: string;
+  guidelines?: GuidelinesView;
+  stats?: Stats;
+  decisions?: DecisionEntry[];
+  questions?: QuestionEntry[];
+  /** Notes it inherits from: its `extends:` chain (nearest first), then inheritable notes its tags name. */
+  inherits?: string[];
+  cadence?: CadenceView;
   relations: { rel: string; dir: "out" | "in"; ref: string; title: string }[];
   disputes: string[];
   notes: string;
+}
+
+/** A proposal settled by a human; `value` (masked like any shown value) only when accepted. */
+export interface ProposalDecision extends Partial<Shown> {
+  proposal: string;
+  decision: "accepted" | "declined";
+  entity: string;
+  field: string;
+}
+
+/** What to know before talking to someone (`briefing` with `about`). */
+export interface PersonBrief extends EntityBrief {
+  guidelines: GuidelinesView;
+  /** The last three interactions with them in the past 90 days, newest first. */
+  interactions: ChronicleEntry[];
+  /** Open goals they own or are the counterparty of. */
+  goals: { ref: string; title: string; role: "owner" | "counterparty"; state: GoalState; next_due?: string; progress?: Progress }[];
+  /** Open disputes, proposals and possible merges about them. */
+  disputes: { ref: string; kind: DisputeKind; field: string; state?: ProposalState }[];
+  stats?: Stats;
+  cadence?: CadenceView;
 }
 
 export interface EpisodeBrief {
@@ -74,22 +150,68 @@ export interface EpisodeBrief {
 
 export interface ChronicleEntry extends EpisodeBrief {}
 
-function factViews(e: Entity, limit = Infinity): FactView[] {
+/** Whether this reader sees `field`'s confidential value: the human (dashboard), or a bound agent with authority over it. */
+function sees(vault: Vault, read: ReadAs, e: Entity, field: string): boolean {
+  return !!read.human || seesConfidential(vault, read.caller, e, field);
+}
+
+// Confidential values stay masked unless the human reads, or the caller is a bound agent with authority over them.
+function factViews(vault: Vault, e: Entity, opts: ReadAs & { limit?: number } = {}): FactView[] {
   return Object.entries(e.fm.facts)
-    .slice(0, limit)
-    .map(([field, f]) => ({ field, value: formatValue(f.value), status: f.status, by: f.by ?? "human", at: f.at }));
+    .slice(0, opts.limit ?? Infinity)
+    .map(([field, f]) => {
+      const confidential = isConfidentialField(vault, e, field, f);
+      const { scope } = parseFactKey(field);
+      return {
+        field,
+        value: formatValue(f.value, { confidential: confidential && !sees(vault, opts, e, field) }),
+        status: f.status,
+        by: f.by ?? vault.config.human,
+        at: f.at,
+        ...(scope ? { scope } : {}),
+        ...(f.valid_from ? { valid_from: f.valid_from } : {}),
+        ...(f.valid_until ? { valid_until: f.valid_until } : {}),
+        ...(f.confidence !== undefined ? { confidence: f.confidence } : {}),
+        ...(confidential ? { confidential: true as const } : {}),
+      };
+    });
+}
+
+function guidelinesView(vault: Vault, e: Entity): GuidelinesView {
+  return {
+    human: getHumanGuidelines(e),
+    items: e.fm.guidelines ?? [],
+    inherited: resolveInheritance(vault, e).guidelines.filter((g) => g.source !== e.slug),
+  };
+}
+
+/** Whether a chronicle entry is about `e`: it touched it, or its text links it. */
+function mentions(vault: Vault, entry: ChronicleEntryView, e: Entity): boolean {
+  return [...entry.touched, ...parseLinks(entry.text).map((l) => l.target)].some((t) => t === e.slug || vault.resolve(t)?.slug === e.slug);
 }
 
 /** Episode text limit: a memory is one concrete thing, and every byte goes through the curator's prompts. */
 export const MAX_EPISODE_BYTES = 8 * 1024;
 
 export interface ActAs {
-  /** Act as the vault's human (`config.human`) instead of the agent named in the call. */
-  asHuman?: boolean;
+  /**
+   * Act as one of the vault's humans instead of the agent named in the call: `true` for the primary
+   * human, or a human's id.
+   */
+  asHuman?: boolean | string;
+}
+
+/** The human `asHuman` names (validated), or undefined when acting as an agent. */
+function humanOf(vault: Vault, opts: ActAs): string | undefined {
+  if (!opts.asHuman) return undefined;
+  if (opts.asHuman === true) return vault.config.humans[0]!.id;
+  const h = vault.human(opts.asHuman);
+  if (!h) throw new VaultError(`"${opts.asHuman}" is not one of this vault's humans (${vault.config.humans.map((x) => x.id).join(", ")})`);
+  return h.id;
 }
 
 function actingAs(vault: Vault, agent: string, opts: ActAs): string {
-  return opts.asHuman ? vault.config.human : assertAgentId(vault, agent);
+  return humanOf(vault, opts) ?? assertAgentId(vault, agent);
 }
 
 /** `message` signed with who made it, for `hippo audit`: `agent` is an agent id, or undefined for the human. */
@@ -120,8 +242,8 @@ function checkIntroduction(input: NewIntroduction): void {
   }
 }
 
-function brief(e: Entity, factLimit = 8): EntityBrief {
-  return { ref: link(e.slug), type: e.fm.type, title: displayName(e), summary: truncate(getSummary(e), 400), facts: factViews(e, factLimit) };
+function brief(vault: Vault, e: Entity, opts: ReadAs & { limit?: number } = {}): EntityBrief {
+  return { ref: link(e.slug), type: e.fm.type, title: displayName(e), summary: truncate(getSummary(e), 400), facts: factViews(vault, e, { limit: 8, ...opts }) };
 }
 
 /** The operations agents perform on memory. Transport-agnostic: used by the MCP server and CLI. */
@@ -170,19 +292,29 @@ export class HippoService {
    * File one episode in the inbox. `agent` must be an agent's exact id; the human's own memories
    * (the dashboard, `hippo remember` without `-a`) pass `asHuman`, which files them under `config.human`.
    */
-  async remember(agent: string, input: Omit<NewEpisode, "agent">, opts: ActAs = {}): Promise<{ id: string; path: string }> {
-    if (!input.text?.trim()) throw new VaultError("text is required");
-    const bytes = new TextEncoder().encode(input.text).length;
+  async remember(
+    agent: string,
+    input: Omit<NewEpisode, "agent">,
+    opts: ActAs = {},
+  ): Promise<{ id: string; path: string; kind: string; warnings?: string[] }> {
+    const bytes = new TextEncoder().encode(input.text ?? "").length + (input.data ? new TextEncoder().encode(JSON.stringify(input.data)).length : 0);
     if (bytes > MAX_EPISODE_BYTES) throw new VaultError(`text is ${bytes} bytes; one memory can be at most ${MAX_EPISODE_BYTES} (8 KB), so split it into several`);
     const vault = await this.vault();
     const id = actingAs(vault, agent, opts);
-    const ep = createEpisode(vault.config.folders.inbox, { ...input, agent: id }, this.opts.now?.());
+    // The kind decides whether text is required, kept as a gist or forbidden, and what data it takes.
+    const { kind, text, data, warnings } = validateEpisode(vault.schema, input);
+    const ep = createEpisode(vault.config.folders.inbox, { ...input, kind, text, data, agent: id }, this.opts.now?.());
     vault.addEpisode(ep);
     await vault.flush({ message: signed(`remember(${id}): ${ep.id}`, opts.asHuman ? undefined : id) });
-    return { id: ep.id, path: ep.path };
+    return { id: ep.id, path: ep.path, kind: ep.kind, ...(warnings.length ? { warnings } : {}) };
   }
 
-  async recall(query: string, opts: { types?: string[]; limit?: number } = {}) {
+  /** Today in the vault's timezone. */
+  private today(vault: Vault): string {
+    return localParts(vault.nowIso(), vault.config.timezone).date;
+  }
+
+  async recall(query: string, opts: ReadAs & { types?: string[]; limit?: number } = {}) {
     const vault = await this.vault();
     const index = await this.searcher(vault);
     const limit = opts.limit ?? 6;
@@ -201,30 +333,101 @@ export class HippoService {
       .map((h) => vault.episodes.find((ep) => ep.id === h.id)!)
       .filter(Boolean)
       .map((ep) => ({ id: ep.id, agent: ep.agent, kind: ep.kind, at: ep.at, text: truncate(ep.text, 300) }));
-    return { entities: entities.map((e) => brief(e)), related: related.slice(0, 10), pending: recent };
+    return { entities: entities.map((e) => brief(vault, e, { caller: opts.caller, human: opts.human })), related: related.slice(0, 10), pending: recent };
   }
 
-  async get(ref: string): Promise<EntityView> {
+  async get(ref: string, opts: ReadAs = {}): Promise<EntityView> {
     const vault = await this.vault();
     const e = vault.resolve(ref);
     if (!e) throw new VaultError(`no entity "${ref}"${await this.suggest(vault, ref)}`);
+    const goal = vault.schema.has(e.fm.type, "goal");
+    const p = goal ? goalProps(e) : undefined;
+    const clocks = goal ? legacyClocks(e) : [];
+    const actor = vault.schema.has(e.fm.type, "actor") ? actorProps(e) : undefined;
+    const inheritance = resolveInheritance(vault, e);
+    const guidelines = guidelinesView(vault, e);
+    const inherits = [...inheritance.chain, ...inheritance.mixins].map((x) => link(x.slug));
+    const cadence = cadenceOf(vault, e, this.today(vault));
     return {
-      ...brief(e, Infinity),
+      ...brief(vault, e, { caller: opts.caller, human: opts.human, limit: Infinity }),
       summary: getSummary(e),
       path: e.path,
       aliases: e.fm.aliases,
       tags: e.fm.tags,
       status: e.fm.status,
+      ...(p
+        ? {
+            state: goalStateOf(vault, e),
+            counterparty: p.counterparty,
+            due: p.due,
+            next_due: nextDue(e, vault),
+            progress: p.progress,
+            repeat: p.repeat,
+            last_done: p.last_done,
+            deadline: p.due,
+            word: p.status ?? "active",
+          }
+        : {}),
       owner: e.fm.owner,
-      deadline: e.fm.deadline,
-      objectives: e.fm.type === "quest" ? getObjectives(e) : undefined,
-      clocks: e.fm.clocks,
+      objectives: goal ? getObjectives(e) : undefined,
+      clocks: clocks.length ? clocks : undefined,
+      ...(actor ? { lane: actor.lane, authority: actor.authority, host: actor.host } : {}),
+      ...(guidelines.human || guidelines.items.length || guidelines.inherited.length ? { guidelines } : {}),
+      ...(e.fm.stats ? { stats: e.fm.stats } : {}),
+      ...(e.fm.decisions?.length ? { decisions: e.fm.decisions } : {}),
+      ...(e.fm.questions?.length ? { questions: e.fm.questions } : {}),
+      ...(inherits.length ? { inherits } : {}),
+      ...(cadence ? { cadence } : {}),
       relations: vault.neighbors(e.slug).map((n) => ({ rel: n.rel, dir: n.dir, ref: link(n.entity.slug), title: displayName(n.entity) })),
       disputes: vault
         .openDisputes()
         .filter((d) => unwrapLink(d.fm.entity) === e.slug)
         .map((d) => `${link(d.slug)} (${d.fm.field})`),
       notes: truncate(humanText(e.body).replace(/^## Notes\s*/, ""), 1500),
+    };
+  }
+
+  /**
+   * What to know before talking to someone: canon facts, guidelines (own and inherited), the last
+   * three interactions in 90 days, open goals with them, open disputes and proposals, and contact stats.
+   */
+  async personBrief(ref: string, opts: ReadAs = {}): Promise<PersonBrief> {
+    const vault = await this.vault();
+    const e = vault.resolve(ref);
+    if (!e) throw new VaultError(`no entity "${ref}"${await this.suggest(vault, ref)}`);
+    const today = this.today(vault);
+    const interaction = (kind: string) => vault.schema.kind(kind.split("/")[0]).def.behaviour === "interaction";
+    const interactions = (await readChronicle(vault, addDays(today, -89), today))
+      .filter((c) => interaction(c.kind) && mentions(vault, c, e))
+      .slice(-3)
+      .reverse()
+      .map((c) => ({ id: c.id, agent: c.agent, kind: c.kind, at: c.at, text: truncate(c.text, 300) }));
+    const goals: PersonBrief["goals"] = [];
+    for (const g of vault.withCapability("goal")) {
+      const state = goalStateOf(vault, g);
+      if (state === "done" || state === "failed") continue;
+      const p = goalProps(g);
+      const role = p.owner && vault.resolve(p.owner)?.slug === e.slug ? "owner" : p.counterparty && vault.resolve(p.counterparty)?.slug === e.slug ? "counterparty" : undefined;
+      if (!role) continue;
+      const next = nextDue(g, vault);
+      goals.push({ ref: link(g.slug), title: displayName(g), role, state, ...(next ? { next_due: next } : {}), ...(p.progress ? { progress: p.progress } : {}) });
+    }
+    const disputes = vault
+      .openDisputes()
+      .filter((d) => vault.resolve(d.fm.entity)?.slug === e.slug || (d.fm.targets ?? []).some((t) => vault.resolve(t)?.slug === e.slug))
+      .map((d) => ({ ref: link(d.slug), kind: d.fm.kind ?? ("conflict" as const), field: d.fm.field, ...(d.fm.state ? { state: d.fm.state } : {}) }));
+    const cadence = cadenceOf(vault, e, today);
+    const base = brief(vault, e, { caller: opts.caller, human: opts.human, limit: Infinity });
+    return {
+      ...base,
+      summary: getSummary(e),
+      facts: base.facts.filter((f) => f.status === "canon"),
+      guidelines: guidelinesView(vault, e),
+      interactions,
+      goals,
+      disputes,
+      ...(e.fm.stats ? { stats: e.fm.stats } : {}),
+      ...(cadence ? { cadence } : {}),
     };
   }
 
@@ -259,7 +462,7 @@ export class HippoService {
   }
 
   /** Archivist: the single canonical answer to a factual question, with status and provenance. */
-  async askCanon(question: string) {
+  async askCanon(question: string, opts: ReadAs = {}) {
     const vault = await this.vault();
     const index = await this.searcher(vault);
     const terms = fold(question)
@@ -268,7 +471,7 @@ export class HippoService {
     const answers: (FactView & { entity: string; score: number })[] = [];
     for (const hit of await index.search(question, { kind: "entity", limit: 5 })) {
       const e = vault.entities.get(hit.id)!;
-      for (const f of factViews(e)) {
+      for (const f of factViews(vault, e, { caller: opts.caller, human: opts.human })) {
         const hay = fold(`${f.field.replace(/_/g, " ")} ${f.value}`);
         const overlap = terms.filter((t) => hay.includes(t)).length;
         answers.push({ ...f, entity: link(e.slug), score: hit.score * (1 + overlap) });
@@ -280,7 +483,12 @@ export class HippoService {
     const disputes = vault
       .openDisputes()
       .filter((d) => entities.has(unwrapLink(d.fm.entity)))
-      .map((d) => ({ ref: link(d.slug), entity: d.fm.entity, field: d.fm.field, claims: d.fm.claims.map((c) => `${c.value} (${c.by ?? "human"})`) }));
+      .map((d) => {
+        const e = vault.resolve(d.fm.entity);
+        // A confidential claim masks the whole dispute, as the fact's own flag does.
+        const confidential = vault.disputeHidden(d, e) && !(e && sees(vault, opts, e, d.fm.field));
+        return { ref: link(d.slug), entity: d.fm.entity, field: d.fm.field, claims: d.fm.claims.map((c) => `${formatValue(c.value, { confidential })} (${c.by ?? "human"})`) };
+      });
     return { facts: top, disputes, pending_inbox: vault.episodes.length };
   }
 
@@ -288,9 +496,12 @@ export class HippoService {
   async briefing(opts: { since?: string; horizonDays?: number } = {}) {
     const vault = await this.vault();
     const now = this.opts.now?.() ?? new Date();
-    const since = opts.since ? isoDate(opts.since) : isoDate(new Date(now.getTime() - 7 * 86400_000));
-    const horizon = isoDate(new Date(now.getTime() + (opts.horizonDays ?? 30) * 86400_000));
-    const today = isoDate(now);
+    // Days are the vault's local days, so an evening in Lisbon isn't "tomorrow" in UTC.
+    const tz = vault.config.timezone;
+    const localDay = (d: Date) => localParts(d.toISOString(), tz).date;
+    const since = opts.since ? isoDate(opts.since) : localDay(new Date(now.getTime() - 7 * 86400_000));
+    const horizon = localDay(new Date(now.getTime() + (opts.horizonDays ?? 30) * 86400_000));
+    const today = localDay(now);
 
     const chronicle: ChronicleEntry[] = [];
     for (const path of await this.store.list(vault.config.folders.chronicle)) {
@@ -300,7 +511,7 @@ export class HippoService {
     }
 
     const updated = [...vault.entities.values()]
-      .filter((e) => e.fm.updated && e.fm.updated.slice(0, 10) >= since && e.fm.type !== "party")
+      .filter((e) => e.fm.updated && e.fm.updated.slice(0, 10) >= since && !vault.schema.has(e.fm.type, "actor"))
       .map((e) => ({ ref: link(e.slug), type: e.fm.type, title: displayName(e), updated: e.fm.updated!, by: e.fm.updated_by }));
 
     const upcoming = upcomingDates(vault, today, horizon).map(({ what, date, slug }) => ({ what, date, ref: link(slug) }));
@@ -310,51 +521,66 @@ export class HippoService {
       chronicle: chronicle.slice(-40),
       updated,
       upcoming,
+      overdue: overdueContacts(vault, today, vault.config.briefing.overdue_per_day),
       disputes: vault.openDisputes().map((d) => ({ ref: link(d.slug), entity: d.fm.entity, field: d.fm.field })),
       pending_inbox: vault.episodes.length,
     };
   }
 
+  /** Record goal progress directly: status, objectives, progress, due date, owner, counterparty, repeat. */
+  async updateGoal(agent: string, ref: string, update: GoalUpdate, opts: ActAs = {}) {
+    const { target, changes } = await this.applyGoal(agent, ref, () => update, opts);
+    return { goal: target, changes };
+  }
+
+  /** @deprecated The v1 shape: a clock becomes progress, a deadline the due date. Use `updateGoal`. */
   async updateQuest(agent: string, ref: string, update: QuestUpdate, opts: ActAs = {}) {
+    const { target, changes } = await this.applyGoal(agent, ref, (goal) => questToGoalUpdate(goal, update), opts);
+    return { quest: target, changes };
+  }
+
+  private applyGoal(agent: string, ref: string, update: (goal: Entity) => GoalUpdate, opts: ActAs) {
     return this.mutate((vault) => {
       const by = actingAs(vault, agent, opts);
-      const quest = vault.resolve(ref);
-      if (!quest || quest.fm.type !== "quest") throw new VaultError(`no quest "${ref}"`);
-      const changes = applyQuestUpdate(vault, quest, update, by);
+      const goal = vault.resolve(ref);
+      if (!goal || !vault.schema.has(goal.fm.type, "goal")) throw new VaultError(`no goal "${ref}"`);
+      const changes = applyGoalUpdate(vault, goal, update(goal), by);
       if (changes.length) vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
-      return { message: signed(`quest(${quest.slug}): ${changes.join("; ")}`, opts.asHuman ? undefined : by), result: { quest: link(quest.slug), changes } };
+      return { message: signed(`goal(${goal.slug}): ${changes.join("; ")}`, opts.asHuman ? undefined : by), result: { target: link(goal.slug), changes } };
     });
   }
 
   // ── Human views and actions (the dashboard) ──────────────────────────────────
 
-  async overview(): Promise<Overview> {
-    return overview(await this.vault());
+  /** The dashboard's overview; `human` reveals confidential values to the vault's own human. */
+  async overview(opts: ReadAs = {}): Promise<Overview> {
+    return overview(await this.vault(), opts);
   }
 
-  async catalog(): Promise<Catalog> {
-    return catalog(await this.vault());
+  async catalog(opts: ReadAs = {}): Promise<Catalog> {
+    return catalog(await this.vault(), opts);
   }
 
-  async graph(): Promise<Graph> {
-    return graph(await this.vault());
+  async graph(opts: ReadAs = {}): Promise<Graph> {
+    return graph(await this.vault(), opts);
   }
 
-  async chronicle(month?: string): Promise<ChroniclePage> {
-    return chroniclePage(await this.vault(), month);
+  async chronicle(month?: string, opts: ReadAs = {}): Promise<ChroniclePage> {
+    return chroniclePage(await this.vault(), month, opts);
   }
 
-  async entityDetail(ref: string): Promise<EntityDetail> {
+  /** One note for the dashboard; `human` reveals confidential values to the vault's own human. */
+  async entityDetail(ref: string, opts: ReadAs = {}): Promise<EntityDetail> {
     const vault = await this.vault();
     const e = vault.resolve(ref);
     if (!e) throw new VaultError(`no entity "${ref}"${await this.suggest(vault, ref)}`);
-    return entityDetail(vault, e);
+    return entityDetail(vault, e, opts);
   }
 
-  async search(query: string, opts: { limit?: number } = {}): Promise<SearchResult> {
+  async search(query: string, opts: { limit?: number } & ReadAs = {}): Promise<SearchResult> {
     const vault = await this.vault();
     const index = await this.searcher(vault);
-    const ctx = viewContext(vault);
+    const ctx = viewContext(vault, opts);
     const entities = (await index.search(query, { kind: "entity", limit: opts.limit ?? 8 })).map((h) => vault.entities.get(h.id)!).filter(Boolean);
     const seen = new Set(entities.map((e) => e.slug));
     const related: SearchResult["related"] = [];
@@ -374,11 +600,13 @@ export class HippoService {
   }
 
   /**
-   * The human settles a dispute: pick one of the claims, apply a ruling already written in Obsidian
-   * (`pending`), or give a new value. It becomes canon right away, exactly as the next sleep would.
+   * A human settles a dispute: pick one of the claims, apply a ruling already written in Obsidian
+   * (`pending`), or give a new value. It becomes canon right away, by that human (`as`, default the
+   * primary one), exactly as the next sleep would.
    */
-  async rule(dispute: string, choice: { claim?: number; value?: string; pending?: boolean }, opts: { via?: string } = {}) {
+  async rule(dispute: string, choice: { claim?: number; value?: string; pending?: boolean }, opts: { as?: string; via?: string } = {}) {
     return this.mutate((vault) => {
+      const by = humanOf(vault, { asHuman: opts.as || true })!;
       const slug = unwrapLink(dispute);
       const d = vault.disputes.get(slug);
       if (!d || d.fm.status !== "open") throw new VaultError(`no open dispute "${dispute}"`);
@@ -399,10 +627,65 @@ export class HippoService {
       } else {
         throw new VaultError("pick a claim or give a value");
       }
-      applyRuling(vault, d, value);
+      const hidden = vault.disputeHidden(d, entity);
+      applyRuling(vault, d, value, by);
       vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
-      const result: { dispute: string; entity: string; field: string } & Shown = { dispute: slug, entity: entity.slug, field: d.fm.field, ...shown(value) };
-      return { message: signed(`rule(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): ${entity.slug}.${d.fm.field} = ${result.secret ? "🔒" : result.value}`), result };
+      const confidential = hidden || isConfidentialField(vault, entity, d.fm.field, entity.fm.facts[d.fm.field]);
+      const result: { dispute: string; entity: string; field: string } & Shown = { dispute: slug, entity: entity.slug, field: d.fm.field, ...shown(value, { confidential }) };
+      // Neither a secret nor a confidential value goes into the commit message.
+      return { message: signed(`rule(${by}${opts.via ? ` via ${opts.via}` : ""}): ${entity.slug}.${d.fm.field} = ${result.secret ? "🔒" : result.confidential ? "◐" : result.value}`), result };
+    });
+  }
+
+  /**
+   * A human settles a proposal (or a possible merge): `accept` applies the value (a typed `value`, the
+   * claim at `claim`, else the latest claim) as canon by that human; `decline` closes it unchanged, and
+   * the same value isn't proposed again. Merges can only be declined: merging is done by hand.
+   */
+  async decideProposal(ref: string, choice: { decision: "accept" | "decline"; value?: string; claim?: number }, opts: { as?: string; via?: string } = {}): Promise<ProposalDecision> {
+    return this.mutate<ProposalDecision>((vault) => {
+      const by = humanOf(vault, { asHuman: opts.as || true })!;
+      const slug = unwrapLink(ref);
+      const d = vault.disputes.get(slug);
+      if (!d || d.fm.status !== "open" || (d.fm.kind !== "proposal" && d.fm.kind !== "merge")) throw new VaultError(`no open proposal "${ref}"`);
+      const entity = vault.resolve(d.fm.entity);
+      const via = opts.via ? ` via ${opts.via}` : "";
+      if (choice.decision === "decline") {
+        declineProposal(vault, d);
+        vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
+        return { message: signed(`decline(${by}${via}): ${slug}`), result: { proposal: slug, decision: "declined", entity: entity?.slug ?? unwrapLink(d.fm.entity), field: d.fm.field } };
+      }
+      if (d.fm.kind === "merge") throw new VaultError(`${slug} is a possible duplicate: merge the notes by hand, or decline it`);
+      if (!entity) throw new VaultError(`proposal ${slug} is about ${d.fm.entity}, which no longer exists`);
+      let value: FactValue;
+      if (choice.value?.trim()) {
+        if (isSecretField(vault, entity, d.fm.field)) throw new VaultError(`${entity.slug}.${d.fm.field} is secret: accept one of the claims instead`);
+        value = choice.value.trim();
+      } else {
+        const claim = choice.claim !== undefined ? d.fm.claims[choice.claim] : d.fm.claims.at(-1);
+        if (!claim) throw new VaultError(choice.claim !== undefined ? `proposal ${slug} has no claim #${choice.claim}` : `proposal ${slug} has no value to accept; give one`);
+        value = claim.value;
+      }
+      applyRuling(vault, d, value, by);
+      vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
+      const result: ProposalDecision = { proposal: slug, decision: "accepted", entity: entity.slug, field: d.fm.field, ...shown(value, { confidential: isConfidentialField(vault, entity, d.fm.field, entity.fm.facts[d.fm.field]) }) };
+      // Neither a secret nor a confidential value goes into the commit message.
+      return { message: signed(`accept(${by}${via}): ${entity.slug}.${d.fm.field} = ${result.secret ? "🔒" : result.confidential ? "◐" : result.value}`), result };
+    });
+  }
+
+  /**
+   * A human withdraws a fact (`field`, or `field@scope`): it becomes `retconned`, and the next report
+   * about it starts over. Only the vault's humans retract; `as` picks which (default: the primary).
+   */
+  async retract(ref: string, field: string, opts: { scope?: string; as?: string; via?: string } = {}) {
+    return this.mutate((vault) => {
+      const by = humanOf(vault, { asHuman: opts.as || true })!;
+      const entity = vault.resolve(ref);
+      if (!entity) throw new VaultError(`no entity "${ref}"`);
+      const key = retractFact(vault, entity, field, by, { scope: opts.scope });
+      vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
+      return { message: signed(`retract(${by}${opts.via ? ` via ${opts.via}` : ""}): ${entity.slug}.${key}`), result: { entity: entity.slug, field: key } };
     });
   }
 
@@ -424,7 +707,7 @@ export class HippoService {
     checkIntroduction(input);
     return this.mutate<IntroduceResult>((vault) => {
       const id = assertAgentId(vault, agent);
-      const member = vault.partyMember(id);
+      const member = vault.actorMember(id);
       if (member) {
         return { message: "", result: { status: "member", agent: id, path: member.path, message: `already in the party as ${displayName(member)} (${member.path})` } };
       }

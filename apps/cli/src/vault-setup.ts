@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { CONFIG_PATH, applyChanges, buildVaultFiles, generateKeyPair, parseConfig, renderConfig, validateVaultSettings, type VaultStore } from "@hippocampus/core";
+import { CONFIG_PATH, applyChanges, buildVaultFiles, generateKeyPair, parseConfig, renderConfig, validatePresetNames, validateVaultSettings, type HumanSetting, type VaultStore } from "@hippocampus/core";
+import { PRESETS } from "@hippocampus/template";
 import { identityToRecipient } from "age-encryption";
 import { parseDocument } from "yaml";
 import { Git } from "./git.ts";
@@ -18,6 +19,10 @@ export interface InitVaultOptions {
   assets: string;
   campaign?: string;
   human?: string;
+  /** The vault's humans, primary first; wins over `human`. */
+  humans?: HumanSetting[];
+  /** Presets to add (bundled names, see `hippo preset list`), in order. */
+  presets?: string[];
   timezone?: string;
   domains?: string[];
 }
@@ -50,8 +55,9 @@ export async function initVault(opts: InitVaultOptions): Promise<{ dir: string; 
     const entries = (await readdir(target)).filter((e) => !HARMLESS.has(e));
     if (entries.length) throw new Error(`${target} is not empty; choose a new or empty folder`);
   }
-  const settings = { campaign: opts.campaign, human: opts.human, timezone: opts.timezone, domains: opts.domains };
+  const settings = { campaign: opts.campaign, human: opts.human, ...(opts.humans?.length ? { humans: opts.humans } : {}), timezone: opts.timezone, domains: opts.domains };
   validateVaultSettings(settings);
+  validatePresetNames(opts.presets ?? [], PRESETS);
 
   let seed: string | undefined;
   if (opts.seed) {
@@ -69,7 +75,7 @@ export async function initVault(opts: InitVaultOptions): Promise<{ dir: string; 
   }
   if (seed) for (const [path, content] of await readTree(seed)) files.set(path, content);
   const { text, binary } = splitText(files);
-  const built = await buildVaultFiles(text, settings);
+  const built = await buildVaultFiles(text, { ...settings, presets: opts.presets, presetFiles: PRESETS });
 
   await mkdir(target, { recursive: true });
   for (const [path, content] of [...Object.entries(built), ...binary]) {
@@ -95,6 +101,11 @@ async function readTree(dir: string): Promise<Map<string, Buffer>> {
   };
   await walk("");
   return out;
+}
+
+/** The template's text files by vault path, which `hippo migrate` takes new notes and scaffolding from. */
+export async function templateFiles(assets: string): Promise<Record<string, string>> {
+  return splitText(await readTree(join(assets, "vault-template"))).text;
 }
 
 /** The vault is built from text; anything else a seed brings (images, PDFs) is copied as is. */

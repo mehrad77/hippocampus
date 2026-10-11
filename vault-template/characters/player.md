@@ -6,4 +6,4 @@ tags: [pc]
 ---
 
 ## Notes
-The player character, the human this campaign is about.
+The human this memory belongs to.

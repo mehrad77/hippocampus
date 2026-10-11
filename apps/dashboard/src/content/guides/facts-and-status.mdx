@@ -1,6 +1,6 @@
 ---
 title: Facts and their status
-summary: Canon, rumor, disputed and retconned. Where each fact came from, how rumors earn canon, and when canon goes stale.
+summary: Canon, rumor, disputed and retconned. Where each fact came from, how rumors earn canon, scoped and dated facts, confidential values, and when canon goes stale.
 order: 2
 section: Basics
 sigil: scroll
@@ -19,14 +19,14 @@ Every note in the vault can carry **facts**: small named values such as `appoint
 | <Seal status="canon" /> | Accepted truth | Rely on it |
 | <Seal status="rumor" /> | Reported by a source without authority here, not yet corroborated | Verify before acting |
 | <Seal status="disputed" /> | Sources disagree; a dispute note waits for your ruling | Don't act on it without checking |
-| <Seal status="retconned" /> | Superseded by hand | Ignore it; the next report starts over |
+| <Seal status="retconned" /> | Withdrawn by a human | Ignore it; the next report starts over |
 
 <StatusFlow />
 
 How a new report lands depends on **who** made it, relative to the note it's about:
 
-- **You, the human**: canon at once.
-- **An agent with lane authority** over the note (its authority domains match the note's tags or type): canon at once. See <Link guide="party-and-lanes">Party and lanes</Link>.
+- **You, or any of the vault's humans**: canon at once.
+- **An agent with lane authority** over the note (its authority domains match the note's tags or type): canon at once. See <Link guide="party-and-lanes">Humans, agents and lanes</Link>.
 - **Any other agent**, including agents with no party sheet: a rumor.
 
 ## Provenance: where a fact came from
@@ -42,20 +42,39 @@ facts:
     at: 2026-09-26T11:00:00Z
     src: [ep-01J9ZC4T7K]
     was:
-      - { value: 2026-10-07T09:00, by: residency-agent, at: 2026-09-20T08:12:00Z }
+      - { value: 2026-10-07T09:00, by: residency-agent, at: 2026-09-20T08:12:00Z, why: retconned }
 ```
 
 | Field | Meaning |
 | --- | --- |
 | `value` | A string, number or boolean. Secrets appear only as `secret://…` references |
 | `status` | `canon`, `rumor`, `disputed` or `retconned` |
-| `by` | The party id that asserted the current value. Missing means you wrote it |
+| `by` | The agent or human id that asserted the current value. Missing means the primary human wrote it |
 | `at` | When it was last observed or confirmed |
 | `src` | The episode ids behind it. Each one is a block in the chronicle, so you can read the original words |
-| `was` | Earlier values with who and when, most recent last. Replacements keep the last five |
+| `was` | Earlier values with who and when, most recent last, and `why` they left (`replaced`, `succeeded`, `retconned`, `ruled`). The last five are kept |
 | `seen_by` | While it's a rumor: the distinct agents who reported this same value |
+| `valid_from`, `valid_until` | When the value started or stopped being true, if the report said |
+| `confidence` | How sure the reporter was, from 0 to 1 |
+| `confidential` | `true` keeps the value out of search, summaries and the chronicle (below) |
 
 You can write facts by hand too. The shorthand `facts: { rent_budget: "1,100 EUR" }` is read as canon, by you.
+
+## Scoped and dated facts
+
+Some facts only hold in a context. How to greet someone can differ by language; a job title can differ by organization. A fact's key can carry a **scope** after an `@`:
+
+```yaml
+facts:
+  greeting: { value: "Hi", status: canon }
+  greeting@lang:pt: { value: "Olá", status: canon, by: campus-agent }
+```
+
+Each scope is its own fact. `greeting` and `greeting@lang:pt` never conflict, are disputed separately, and are ruled on separately. Agents pass a scope with `remember` (`scope: "lang:pt"`), and the facts table gets a Scope column once any fact uses one.
+
+A fact can also say **when** it held: `valid_from` and `valid_until` (ISO dates), shown in a Valid column. Fields a type marks as `succession`, such as an employer or a city, use them to move on cleanly: a newer value closes the old one with `valid_until` and keeps it in `was`, instead of opening a dispute. An older report about such a field goes into `was` and leaves the current value alone.
+
+`confidence` is the reporter's own estimate, from 0 to 1. It's recorded and shown, but precedence never depends on it.
 
 ## Corroboration: how a rumor becomes canon
 
@@ -91,7 +110,19 @@ If a new report differs from the current value, the precedence rules decide. The
 
 ## Retconned facts
 
-Hippocampus never retcons anything by itself. You mark a fact `status: retconned` in Obsidian when it no longer holds, for instance an old address after a move. The next report about that field starts fresh as if the field were empty, and the retconned value moves into `was`.
+Only a human retracts a fact. When something no longer holds, for instance an old address after a move, a human **retracts** it, or marks it `status: retconned` in Obsidian. Retracting also closes an open dispute about that field. Agents can't retract anything; they report a newer value instead.
+
+The next report about a retconned field starts fresh, as if the field were empty, and the retconned value moves into `was`.
+
+## Confidential facts
+
+Some values are fine to keep but shouldn't travel: a phone number, a home address, a health detail. A **confidential** fact is stored in plain text in the vault (unlike a <Link guide="secrets">secret</Link>), but:
+
+- it's kept out of search, out of summaries (and the prompts that write them), out of note titles and aliases, and out of the chronicle. The curator reads it only to file it;
+- the facts table in the note, the dashboard and agents show it as `◐ confidential`;
+- only an agent **bound to its id** (a single-agent key, a connector, or a local `serve --agent`) **with authority** over that note sees the value. Everyone else sees the mask.
+
+A fact is confidential when its report said so (`confidential: true` on `remember`), or when its field is declared `confidential` or as an identity key (an email, a handle) in the type. Agents are told not to guess a masked value.
 
 ## Stale canon
 
@@ -102,5 +133,5 @@ Re-confirming is just another report. When any agent reports the same value agai
 ## Where you'll see status
 
 - **Entity sheets** in the dashboard show each fact with its seal, who said it, whether they had authority, when, its sources, earlier values, and an open dispute if there is one.
-- **Agents** see the status with every fact they read through `get`, `recall` and `ask_canon`, and the handbook tells them what each status means.
+- **Agents** see the status, scope and validity with every fact they read through `get`, `recall` and `ask_canon`, and the handbook tells them what each status means.
 - **The morning review** lists every rumor and every stale canon fact, so nothing unverified hides for long.

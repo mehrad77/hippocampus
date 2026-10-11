@@ -5,6 +5,7 @@ import { useSession } from "../lib/session.ts";
 import type { SessionInfo } from "../lib/types.ts";
 import { Icon } from "./Icon.tsx";
 import { SkeletonPanel } from "./Parts.tsx";
+import { UpgradeBanner } from "./UpgradeBanner.tsx";
 
 /**
  * Every data page starts here: wait for the session, send a vault-less install to Session Zero,
@@ -20,7 +21,12 @@ export function PageGate({ children, allowSetup }: { children: (session: Session
   if (session.error?.status === 401) return <SignInDoor code={session.error.code} message={session.error.message} />;
   if (session.error && !session.data) return <ServerTrouble message={session.error.message} status={session.error.status} />;
   if (!session.data || toSetup) return <SkeletonPanel lines={6} />;
-  return <>{children(session.data)}</>;
+  return (
+    <>
+      <UpgradeBanner session={session.data} />
+      {children(session.data)}
+    </>
+  );
 }
 
 function SignInDoor({ code, message }: { code: string; message: string }) {

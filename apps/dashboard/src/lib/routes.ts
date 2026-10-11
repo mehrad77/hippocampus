@@ -4,11 +4,13 @@ export const API = `${BASE}/api`;
 /** Sign-in and sign-out on the Worker (GitHub), next to the API rather than under it. */
 export const AUTH = `${BASE}/auth`;
 
-export type Page = "tavern" | "quests" | "council" | "codex" | "map" | "chronicle" | "satchel" | "party" | "guides" | "setup" | "admin" | "welcome" | "privacy";
+/** `quests` is the old name of `goals` (its page redirects there). */
+export type Page = "tavern" | "goals" | "quests" | "council" | "codex" | "map" | "chronicle" | "satchel" | "party" | "guides" | "setup" | "admin" | "welcome" | "privacy";
 
 const PATHS: Record<Page, string> = {
   tavern: "/",
-  quests: "/quests/",
+  goals: "/goals/",
+  quests: "/goals/",
   council: "/council/",
   codex: "/codex/",
   map: "/map/",

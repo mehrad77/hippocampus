@@ -9,4 +9,4 @@ host: any MCP client
 ---
 
 ## Notes
-Narrates from the [[HANDBOOK]], quests, and the chronicle. Submits `kind: beat` episodes.
+Narrates from the [[HANDBOOK]], goals, and the chronicle. Submits `kind: beat` episodes.

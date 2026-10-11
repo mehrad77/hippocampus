@@ -31,7 +31,7 @@ describe("initVault", () => {
     expect(r).toEqual({ dir: target, campaign: "lisbon-arc", human: "student" });
 
     const raw = readFileSync(join(target, CONFIG_PATH), "utf8");
-    expect(raw).toContain("# Party id of the human player.");
+    expect(raw).toContain("# The humans this memory belongs to;");
     expect(raw).toMatch(/^domains: \[ ?residency, housing ?\]$/m);
     const config = parseConfig(raw);
     expect(config).toMatchObject({ campaign: "lisbon-arc", human: "student", timezone: "Europe/Lisbon", domains: ["residency", "housing"] });
@@ -42,6 +42,19 @@ describe("initVault", () => {
     expect(existsSync(join(target, "HANDBOOK.md"))).toBe(true);
     expect(existsSync(join(target, ".gitignore"))).toBe(true);
     expect(existsSync(join(target, ".git"))).toBe(true);
+  });
+
+  it("adds presets and several humans, the primary first", async () => {
+    const target = join(tmp, "people");
+    await initVault({ target, assets: assetRoot(), humans: [{ id: "sam" }, { id: "player" }], presets: ["people", "student"] });
+    const vault = await Vault.load(new FsStore(target));
+    expect(vault.config.humans.map((h) => h.id)).toEqual(["sam", "player"]);
+    expect(vault.config.presets).toEqual(["people", "student"]);
+    expect(vault.schema.type("assignment")?.capabilities).toEqual(["goal"]);
+    expect(vault.entities.get("stranger")?.fm.type).toBe("archetype");
+    expect(readFileSync(join(target, "characters/sam.md"), "utf8")).toContain("## Never say");
+    await expect(initVault({ target: join(tmp, "nope"), assets: assetRoot(), presets: ["pirates"] })).rejects.toThrow(/no preset "pirates"/);
+    expect(existsSync(join(tmp, "nope"))).toBe(false);
   });
 
   it("copies a bundled seed and keeps its own player character", async () => {

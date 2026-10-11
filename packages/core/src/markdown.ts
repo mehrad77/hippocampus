@@ -1,4 +1,5 @@
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
+import { VaultError } from "./errors.ts";
 
 export interface ParsedDoc {
   data: Record<string, unknown>;
@@ -35,6 +36,22 @@ function dropUndefined(value: Record<string, unknown>): Record<string, unknown> 
 //   %% hippo:end facts %%
 // Everything outside regions is human-owned and never rewritten.
 
+const MARKER = /%% hippo:(?:begin|end) [\w-]+ %%/;
+
+/**
+ * Text that goes inside a managed region with `%%` broken up (`% %`), so it can neither open an
+ * Obsidian comment that hides the human's prose nor forge a region marker. Every renderer of agent
+ * text runs it through here (or `regionLine`).
+ */
+export function escapeRegionText(text: string): string {
+  return text.replace(/%(?=%)/g, "% ");
+}
+
+/** One line of region text: newlines collapsed, `%%` broken up. */
+export function regionLine(text: string): string {
+  return escapeRegionText(text.replace(/\s*[\r\n]+\s*/g, " "));
+}
+
 const regionRe = (name: string) =>
   new RegExp(`%% hippo:begin ${name} %%\\n([\\s\\S]*?)\\n?%% hippo:end ${name} %%`);
 
@@ -48,6 +65,8 @@ export function getRegion(body: string, name: string): string | undefined {
  * or at the top of the body when there are none, so human prose stays below.
  */
 export function setRegion(body: string, name: string, content: string): string {
+  // A marker inside the content would end the region early: what follows it would read as the human's prose.
+  if (MARKER.test(content)) throw new VaultError(`refused to write region "${name}": its content contains a region marker`);
   const block = `%% hippo:begin ${name} %%\n${content.replace(/\n+$/, "")}\n%% hippo:end ${name} %%`;
   const re = regionRe(name);
   if (re.test(body)) return body.replace(re, () => block);
@@ -87,5 +106,5 @@ export function parseChecklist(text: string): ChecklistItem[] {
 }
 
 export function renderChecklist(items: ChecklistItem[]): string {
-  return items.map((i) => `- [${i.done ? "x" : " "}] ${i.text}`).join("\n");
+  return items.map((i) => `- [${i.done ? "x" : " "}] ${regionLine(i.text)}`).join("\n");
 }

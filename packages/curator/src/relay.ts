@@ -16,7 +16,20 @@ import {
 } from "@hippocampus/core";
 import { z } from "zod";
 import type { LLM } from "./llm.ts";
-import { CURATOR_AUTHOR, beginRun, consolidate, describeEpisode, finishRun, loadHouseRules, pickBatch, summarize, summaryTargets, type EpisodeOutcome, type SleepReport } from "./sleep.ts";
+import {
+  CURATOR_AUTHOR,
+  beginRun,
+  consolidate,
+  describeEpisode,
+  finishRun,
+  loadHouseRules,
+  needsModel,
+  pickBatch,
+  summarize,
+  summaryTargets,
+  type EpisodeOutcome,
+  type SleepReport,
+} from "./sleep.ts";
 
 // Sleep driven by an outside agent, one tool call at a time. The server keeps no model of its own: each
 // curator LLM call becomes a question the agent answers, and every call replays the current unit (the
@@ -25,7 +38,7 @@ import { CURATOR_AUTHOR, beginRun, consolidate, describeEpisode, finishRun, load
 // question's hash changes and only what changed is asked again.
 
 /** How the curating agent answers questions. Shared by the MCP `sleep` prompt and the plugin skill. */
-export const SLEEP_PROCEDURE = `You are the curator of a Hippocampus vault tonight: you turn the inbox's episodes into canon by answering the server's questions. The server does the bookkeeping; you make the judgment calls.
+export const SLEEP_PROCEDURE = `You are the curator of a Hippocampus memory vault tonight: you turn the memories waiting in its inbox into confirmed notes by answering the server's questions. The server does the bookkeeping; you make the judgment calls.
 
 How to answer:
 1. Each question has \`system\` (your instructions for this step), \`prompt\` (the input) and \`schema\` (a JSON Schema). Follow \`system\`, read \`prompt\`, and answer with one JSON value that matches \`schema\`. No prose, no code fences.
@@ -34,7 +47,7 @@ How to answer:
 4. Use only what each question gives you. Never invent names, dates, numbers or facts, and never carry a value from one question into another.
 5. If an episode is unclear, or isn't yours to decide, call \`sleep_skip\` with a short reason (never a secret value). It stays in the inbox for the human.
 
-Questions can contain secret values (ID numbers, credentials). Use them only to answer that question, and never repeat them anywhere else.`;
+Questions can contain secret values (ID numbers, credentials) and confidential details (marked "Confidential: yes"). Use them only to answer that question, and never repeat them anywhere else.`;
 
 /** One curator step for the agent: follow `system`, read `prompt`, answer with JSON matching `schema`. */
 export interface Question {
@@ -430,7 +443,7 @@ export class SleepRelay {
         subject: `chore(sleep): ${ep.id} (${ep.agent}) ${clip(describeEpisode(report), 100)}`,
         settle: (s) => {
           s.report.consolidated.push(report);
-          for (const slug of report.touched) s.evidence[slug] = [...(s.evidence[slug] ?? []), evidence];
+          if (evidence) for (const slug of report.touched) s.evidence[slug] = [...(s.evidence[slug] ?? []), evidence];
           s.marks.push(...marksOf(secrets, s.seed));
           this.advance(s);
         },
@@ -480,7 +493,8 @@ export class SleepRelay {
       const sent = [...p.submitted.keys()].some((k) => k.startsWith(`${unit}#`) && !p.used.has(k));
       if (out.length >= room && !sent) continue;
       const ep = vault.episodes.find((e) => e.id === id);
-      if (!ep) continue;
+      // One curated from its data alone asks nothing, and would change the vault every probe shares.
+      if (!ep || !needsModel(vault, ep)) continue;
       // consolidate asks its first question before it changes anything, so one vault serves every probe.
       const first = new FirstQuestion(state.model);
       await consolidate(vault, first, ep, this.searcher, { houseRules }).catch((err: unknown) => {

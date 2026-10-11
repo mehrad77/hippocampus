@@ -14,7 +14,7 @@ export const PLAYER = { login: "player", id: 4242, repo: 9001 };
 /** An admin. */
 export const GM = { login: "game-master", id: 7, repo: 9002 };
 export const SCOUT = { login: "job-scout", id: 5150, repo: 9003 };
-export const SETTINGS = { campaign: "Lisbon relocation", human: "player", timezone: "Europe/Lisbon", domains: ["residency", "housing"] };
+export const SETTINGS = { name: "Lisbon relocation", timezone: "Europe/Lisbon", domains: ["residency", "housing"] };
 
 export type Visit = ReturnType<typeof browser>;
 
@@ -150,7 +150,7 @@ export async function hostedApp(opts: { limits?: HostedAppDeps["limits"]; gitlab
     await registry.setAccountStatus(who.id, "approved");
     const installation = gh.addInstallation({ account: { id: who.id, login: who.login, type: "User" }, repos: [`${who.login}/vault`] });
     await visit(github.installed(who.login, installation.id));
-    const init = await post(visit, "setup/init", { repoId: who.repo, ...SETTINGS, human: who.login });
+    const init = await post(visit, "setup/init", { repoId: who.repo, ...SETTINGS, humans: [{ id: who.login }] });
     if (init.status !== 200) throw new Error(`setup/init: ${init.status} ${await init.text()}`);
     const { vault } = (await init.json()) as { vault: { id: string } };
     return { visit, vault: vault.id, installation };

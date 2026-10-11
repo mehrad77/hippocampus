@@ -8,6 +8,7 @@ import {
   buildVaultFiles,
   parseConfig,
   validateVaultSettings,
+  vaultVersionStatus,
   withTrailers,
   type Change,
   type CommitMeta,
@@ -16,7 +17,7 @@ import {
 import { HttpError } from "@hippocampus/dashboard";
 import { GitHubStore } from "@hippocampus/store-github";
 import { GitLabStore } from "@hippocampus/store-gitlab";
-import { SEEDS, TEMPLATE } from "@hippocampus/template";
+import { PRESETS, SEEDS, TEMPLATE } from "@hippocampus/template";
 import { GitHubAppError, type GitHubApp, type Permissions } from "./github-app.ts";
 import { GitLabAuthError, type GitLabAccess } from "./gitlab.ts";
 import type { Provider, Registry, VaultRecord } from "./registry.ts";
@@ -41,6 +42,15 @@ export const BOOTSTRAP_AUTHOR = { name: "Hippocampus", email: "hippocampus@users
 /** A commit by the hosted app itself. `[skip ci]`: the vault's own workflow arrives in these commits and needn't validate the template. */
 export const bootstrapCommit = (message: string): CommitMeta => ({
   message: withTrailers(`${message} [skip ci]`, { [ACTOR_TRAILER]: actorTrailer({ kind: "bootstrap" }) }),
+  author: BOOTSTRAP_AUTHOR,
+});
+
+/**
+ * The commit that brings a vault to format `version`, made when the owner clicks Upgrade on the hosted dashboard for an older
+ * vault. No `[skip ci]`: the vault's own CI validates the migrated tree.
+ */
+export const migrationCommit = (version: number): CommitMeta => ({
+  message: withTrailers(`chore: migrate vault to format v${version}`, { [ACTOR_TRAILER]: actorTrailer({ kind: "migration" }) }),
   author: BOOTSTRAP_AUTHOR,
 });
 
@@ -69,6 +79,8 @@ export interface BootstrapOptions {
   settings: VaultSettings;
   /** An example campaign laid over the template (`example-relocation`). */
   seed?: string;
+  /** Presets added to a new vault, in order (names of `PRESETS`). Refused for a repo that already holds a vault. */
+  presets?: string[];
   /** The vault's clock while building, for reproducible output. */
   now?: Date;
 }
@@ -142,8 +154,11 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
   } catch (err) {
     throw new HttpError(400, (err as Error).message, "INVALID");
   }
-  const seed = o.seed === undefined ? undefined : SEEDS[o.seed];
+  const seed = o.seed === undefined || !Object.hasOwn(SEEDS, o.seed) ? undefined : SEEDS[o.seed];
   if (o.seed !== undefined && !seed) throw new HttpError(400, `seed: unknown "${o.seed}"; choose from ${Object.keys(SEEDS).join(", ")}`, "INVALID");
+
+  const unknown = o.presets?.find((n) => !Object.hasOwn(PRESETS, n));
+  if (unknown !== undefined) throw new HttpError(400, `presets: unknown "${unknown}"; choose from ${Object.keys(PRESETS).sort().join(", ")}`, "INVALID");
 
   const name = o.repo.fullName;
   const t = target(o);
@@ -158,13 +173,18 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
   const p = info.empty ? ({ mode: "initialize" } as const) : plan(await store.list(), t.provider);
   if (p.mode === "refuse") throw new HttpError(409, `${info.fullName} already has files; pick an empty repo (or one with only a README, LICENSE or .gitignore).`, "NOT_EMPTY");
   if (p.mode === "adopt") {
+    // Presets shape a new vault; an existing one gets them from its owner (`hippo preset add`), who can review the changes.
+    if (o.presets?.length)
+      throw new HttpError(400, `${info.fullName} already holds a vault, and presets apply only to new vaults. Pick it again without presets, then add them with \`hippo preset add\` in a clone.`, "PRESETS_NEW_ONLY");
     try {
-      assertVaultVersion(parseConfig(await store.read(CONFIG_PATH)));
+      // An older vault is adopted as it is and upgraded when its owner clicks Upgrade; a newer one needs a newer app.
+      const config = parseConfig(await store.read(CONFIG_PATH));
+      if (vaultVersionStatus(config) === "newer") assertVaultVersion(config);
     } catch (err) {
       throw new HttpError(409, `${info.fullName} has a ${CONFIG_PATH} that doesn't load: ${(err as Error).message}`, "BAD_VAULT");
     }
   }
-  const built = p.mode === "initialize" ? await buildVaultFiles(TEMPLATE, { ...o.settings, seed, now: o.now }) : undefined;
+  const built = p.mode === "initialize" ? await buildVaultFiles(TEMPLATE, { ...o.settings, seed, presets: o.presets, presetFiles: PRESETS, now: o.now }) : undefined;
   const files = built && t.provider === "gitlab" ? Object.fromEntries(Object.entries(built).filter(([path]) => !path.startsWith(".github/"))) : built;
 
   const { vault, replaced } = await o.registry.claimVault({ accountId: o.accountId, provider: t.provider, installationId: t.installationId, repoId: info.id, fullName: info.fullName, branch: info.branch });

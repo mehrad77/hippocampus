@@ -7,8 +7,8 @@ import type { EntityDetail, Graph, Ref } from "./types.ts";
 export type GraphNode = Graph["nodes"][number];
 export type GraphEdge = Graph["edges"][number];
 
-/** Entity types in the order legends list them; types a vault adds sort after these. */
-export const TYPE_ORDER = ["campaign", "quest", "party", "character", "faction", "location", "item", "lore"];
+/** Entity types in the order legends list them (v1 names next to their v2 ones); types a vault adds sort after these. */
+export const TYPE_ORDER = ["arc", "campaign", "goal", "quest", "party", "character", "faction", "location", "item", "lore"];
 
 export function typeRank(type: string): number {
   const i = TYPE_ORDER.indexOf(type);

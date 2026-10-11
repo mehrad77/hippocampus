@@ -17,3 +17,8 @@ export const SECTIONS: { name: Section; plain: string; blurb: readonly [plain: s
 export function plainSection(name: string): string {
   return SECTIONS.find((s) => s.name === name)?.plain ?? name;
 }
+
+/** Guides that moved, old slug → new slug. Their old URLs redirect, so links and bookmarks keep working. */
+export const GUIDE_REDIRECTS: Readonly<Record<string, string>> = {
+  "quests-and-clocks": "goals-and-progress",
+};

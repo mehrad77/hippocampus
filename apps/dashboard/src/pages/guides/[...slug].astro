@@ -1,19 +1,24 @@
 ---
 import { getCollection, render, type CollectionEntry } from "astro:content";
+import { GUIDE_REDIRECTS } from "../../components/guides/sections.ts";
 import GuideLayout from "../../layouts/GuideLayout.astro";
+import { href } from "../../lib/routes.ts";
 
 export async function getStaticPaths() {
   const guides = (await getCollection("guides")).sort((a, b) => a.data.order - b.data.order);
-  return guides.map((entry, i) => {
+  const moved = Object.entries(GUIDE_REDIRECTS).map(([slug, to]) => ({ params: { slug }, props: { moved: to } }));
+  return [...moved, ...guides.map((entry, i) => {
     const near = (g: CollectionEntry<"guides"> | undefined) => (g ? { slug: g.id, title: g.data.title } : undefined);
     return {
       params: { slug: entry.id },
       props: { entry, position: i + 1, total: guides.length, prev: near(guides[i - 1]), next: near(guides[i + 1]) },
     };
-  });
+  })];
 }
 
-interface Props {
+type Props = Guide | { moved: string };
+
+interface Guide {
   entry: CollectionEntry<"guides">;
   position: number;
   total: number;
@@ -21,6 +26,7 @@ interface Props {
   next?: { slug: string; title: string };
 }
 
+if ("moved" in Astro.props) return Astro.redirect(href.guide(Astro.props.moved));
 const { entry, position, total, prev, next } = Astro.props;
 const { Content, headings } = await render(entry);
 ---

@@ -1,7 +1,7 @@
-import { SLUG, validTimezone, type VaultSettings } from "@hippocampus/core";
+import { SLUG, presetCatalog, validTimezone, type HumanSetting, type VaultSettings } from "@hippocampus/core";
 import { HttpError, type HostedGitLab, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSetupPort, type HostedSetupStatus, type HostedVault, type SetupItem, type Snippet } from "@hippocampus/dashboard";
 import { GitHubStore } from "@hippocampus/store-github";
-import { SEEDS } from "@hippocampus/template";
+import { PRESETS, SEEDS } from "@hippocampus/template";
 import { TOKEN_ID } from "../auth.ts";
 import { bootstrapVault } from "./bootstrap.ts";
 import { curatorActionsEnabled, setCuratorActions } from "./curator-actions.ts";
@@ -30,6 +30,10 @@ export interface HostedSetupDeps {
 
 /** Checking emptiness costs a few requests per repo, so only this many get checked. */
 const MAX_CHECKED = 8;
+/** GitHub's login rule: alphanumerics and single inner dashes, up to 39 characters. */
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+/** A GitLab username: letters, digits, `_`, `-` and `.`, starting and ending with a letter, digit or `_`. */
+const GITLAB_LOGIN = /^[A-Za-z0-9_](?:[A-Za-z0-9_.-]{0,253}[A-Za-z0-9_])?$/;
 const READ_ONLY = { metadata: "read", contents: "read" } as const;
 
 const REASONS: Record<DisconnectReason, string> = {
@@ -137,6 +141,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       ...(curatorActions === undefined ? {} : { curatorActions }),
       publicUrl,
       mcpUrl,
+      presets: presetCatalog(PRESETS).map(({ name, description }) => ({ name, description })),
       items: [],
     };
     s.items = items(s);
@@ -144,23 +149,26 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
   }
 
   async function init(body: unknown): Promise<HostedInitResult> {
-    const req = initRequest(body);
+    const req = initRequest(body, account.login);
     const existing = await registry.vaultOf(account.id);
     if (existing?.status === "ready") throw new HttpError(409, `You already have a vault: ${existing.fullName}.`, "HAS_VAULT");
-    const settingsOf = { campaign: req.campaign, human: req.human, timezone: req.timezone, domains: req.domains, recipient: req.recipient };
+    const settingsOf = { campaign: req.campaign, humans: req.humans, timezone: req.timezone, domains: req.domains, recipient: req.recipient };
     if (req.provider === "gitlab") {
       const g = needGitLab();
       const found = await gitlabProjects();
       if (!found) throw new HttpError(409, "Connect your GitLab account first.", "NO_GITLAB_CONNECTION");
       const project = found.projects.find((p) => p.id === req.repoId);
       if (!project) throw new HttpError(404, "That isn't one of your GitLab projects with write access (Developer or better), in your personal namespace. Pick another.", "NOT_FOUND");
+      // The person setting the vault up is its primary human by their GitLab username too, unless the request links one.
+      const humans = req.humans && !req.humans.some((h) => h.gitlab) ? [{ ...req.humans[0]!, gitlab: found.login }, ...req.humans.slice(1)] : req.humans;
       const result = await bootstrapVault({
         gitlab: g,
         registry,
         accountId: account.id,
         repo: { id: project.id, fullName: project.fullName, branch: project.defaultBranch },
-        settings: settingsOf,
+        settings: { ...settingsOf, humans },
         seed: req.seed,
+        presets: req.presets,
         now: now(),
       });
       await changed(result.replaced);
@@ -179,6 +187,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       repo: { id: repo.id, fullName: repo.fullName, branch: repo.defaultBranch },
       settings: settingsOf,
       seed: req.seed,
+      presets: req.presets,
       now: now(),
     });
     await clearPendingInstallation(kv, account.id);
@@ -250,33 +259,67 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
   };
 }
 
-/** The campaign settings and the repo for `init`, checked before anything touches GitHub. */
-export function initRequest(body: unknown): VaultSettings & { repoId: number; provider: Provider; seed?: string } {
+/**
+ * The vault's settings and the repo for `init`, checked before anything touches GitHub. Takes
+ * `name` (or the older `campaign`) and `humans` (or one `human`); the signed-in `login` becomes the
+ * first human's `github:` unless the request links someone already.
+ */
+export function initRequest(body: unknown, login?: string): VaultSettings & { repoId: number; provider: Provider; seed?: string; presets?: string[] } {
   const b = (body ?? {}) as Record<string, unknown>;
   const bad = (msg: string): never => {
     throw new HttpError(400, msg, "INVALID");
   };
   if (b.provider !== undefined && b.provider !== "github" && b.provider !== "gitlab") bad("provider: github or gitlab");
+  const slugs = (v: unknown, field: string): string[] => {
+    if (v === undefined) return [];
+    if (!Array.isArray(v) || v.length > 30) bad(`${field}: a list of up to 30 ids`);
+    const ids = [...new Set((v as unknown[]).map((d) => (typeof d === "string" ? d.trim().toLowerCase() : "")))];
+    for (const d of ids) if (!SLUG.test(d)) bad(`${field}: "${d}" must be lowercase letters, digits and dashes`);
+    return ids;
+  };
   if (typeof b.repoId !== "number" || !Number.isSafeInteger(b.repoId) || b.repoId <= 0) bad("repoId: pick one of the installation's repos");
-  const campaign = typeof b.campaign === "string" ? b.campaign.trim() : "";
-  if (!campaign || campaign.length > 120) bad("campaign: a name, up to 120 characters");
-  const human = typeof b.human === "string" ? b.human.trim().toLowerCase() : "";
-  if (!SLUG.test(human)) bad("human: your id in the vault, lowercase letters, digits and dashes (like player)");
+  const rawName = b.name ?? b.campaign;
+  const name = typeof rawName === "string" ? rawName.trim() : "";
+  if (!name || name.length > 120) bad("name: what the memory is about, up to 120 characters");
+
+  let humans: HumanSetting[];
+  if (b.humans !== undefined) {
+    if (!Array.isArray(b.humans) || !b.humans.length || b.humans.length > 10) bad("humans: a list of 1 to 10 people, the primary one first");
+    humans = (b.humans as unknown[]).map((h, i) => {
+      const o = (typeof h === "string" ? { id: h } : (h ?? {})) as Record<string, unknown>;
+      const id = typeof o.id === "string" ? o.id.trim().toLowerCase() : "";
+      if (!SLUG.test(id)) bad(`humans[${i}].id: an id in the vault, lowercase letters, digits and dashes (like player)`);
+      const github = o.github === undefined ? undefined : typeof o.github === "string" && GITHUB_LOGIN.test(o.github.trim()) ? o.github.trim() : bad(`humans[${i}].github: a GitHub login`);
+      const gitlab = o.gitlab === undefined ? undefined : typeof o.gitlab === "string" && GITLAB_LOGIN.test(o.gitlab.trim()) ? o.gitlab.trim() : bad(`humans[${i}].gitlab: a GitLab username`);
+      const domains = slugs(o.domains, `humans[${i}].domains`);
+      return { id, ...(github ? { github } : {}), ...(gitlab ? { gitlab } : {}), ...(domains.length ? { domains } : {}) };
+    });
+  } else {
+    const id = typeof b.human === "string" ? b.human.trim().toLowerCase() : "";
+    if (!SLUG.test(id)) bad("human: your id in the vault, lowercase letters, digits and dashes (like player)");
+    humans = [{ id }];
+  }
+  if (new Set(humans.map((h) => h.id)).size !== humans.length) bad("humans: each id once");
+  // The person setting the vault up is its primary human, so the dashboard acts as them.
+  if (login && !humans.some((h) => h.github)) humans[0] = { ...humans[0]!, github: login };
+
   if (typeof b.timezone !== "string" || !validTimezone(b.timezone)) bad("timezone: an IANA name like Europe/Lisbon");
-  if (!Array.isArray(b.domains) || b.domains.length > 30) bad("domains: a list of up to 30 ids");
-  const domains = [...new Set((b.domains as unknown[]).map((d) => (typeof d === "string" ? d.trim().toLowerCase() : "")))];
-  for (const d of domains) if (!SLUG.test(d)) bad(`domains: "${d}" must be lowercase letters, digits and dashes`);
-  if (b.seed !== undefined && (typeof b.seed !== "string" || !SEEDS[b.seed])) bad(`seed: choose from ${Object.keys(SEEDS).join(", ")}`);
+  if (!Array.isArray(b.domains)) bad("domains: a list of up to 30 ids");
+  const domains = slugs(b.domains, "domains");
+  if (b.seed !== undefined && (typeof b.seed !== "string" || !Object.hasOwn(SEEDS, b.seed))) bad(`seed: choose from ${Object.keys(SEEDS).join(", ")}`);
+  const presets = b.presets === undefined ? [] : slugs(b.presets, "presets");
+  for (const p of presets) if (!Object.hasOwn(PRESETS, p)) bad(`presets: "${p}" isn't one; choose from ${Object.keys(PRESETS).sort().join(", ")}`);
   // An age X25519 recipient: `age1` and 58 bech32 characters.
   if (b.recipient !== undefined && (typeof b.recipient !== "string" || !/^age1[02-9ac-hj-np-z]{58}$/.test(b.recipient))) bad("recipient: an age public key (age1…)");
   return {
     repoId: b.repoId as number,
     provider: (b.provider as Provider | undefined) ?? "github",
-    campaign,
-    human,
+    campaign: name,
+    humans,
     timezone: b.timezone as string,
     domains,
     ...(b.seed === undefined ? {} : { seed: b.seed as string }),
+    ...(presets.length ? { presets } : {}),
     ...(b.recipient === undefined ? {} : { recipient: b.recipient as string }),
   };
 }

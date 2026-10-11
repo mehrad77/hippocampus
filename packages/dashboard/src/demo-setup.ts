@@ -1,3 +1,5 @@
+import { presetCatalog } from "@hippocampus/core";
+import { PRESETS } from "@hippocampus/template";
 import { HttpError } from "./http.ts";
 import type { AgentConnect, Job, LlmSetupRequest, LocalSetupStatus, ScheduleStatus, SetupItem, SetupPort, VaultSetupRequest } from "./setup.ts";
 
@@ -62,7 +64,7 @@ export function demoSetup(opts: { agents: { id: string; title: string; lastSeen?
         kind: "local",
         items: items(),
         vault: state.vault,
-        defaults: { dir: "~/vaults/my-campaign", timezone: "Europe/Lisbon", seeds: ["example-relocation"], domains: ["residency", "housing", "university", "career", "finance", "health", "story"] },
+        defaults: { dir: "~/vaults/my-campaign", timezone: "Europe/Lisbon", seeds: ["example-relocation"], domains: ["residency", "housing", "university", "career", "finance", "health", "story"], presets: demoPresets() },
         secrets: { identityFile: "~/.config/hippocampus/age-identity.txt", identity: state.identity, recipient: state.identity ? "age1demo…" : undefined, matches: state.identity },
         llm: { ...state.llm, overriddenBy: [] },
         git: { repo: true, branch: "main", ghAvailable: false, dirty: 0 },
@@ -136,3 +138,6 @@ function nextRun(hour: number, minute: number): string {
   if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
   return d.toISOString();
 }
+
+/** The bundled presets, as a new vault's picker lists them. */
+export const demoPresets = () => presetCatalog(PRESETS).map(({ name, description }) => ({ name, description }));

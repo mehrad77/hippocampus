@@ -62,6 +62,7 @@
     "@hippocampus/index": "workspace:*",
     "@hippocampus/mcp": "workspace:*",
     "@hippocampus/store-github": "workspace:*",
+    "@hippocampus/template": "workspace:*",
     "tsup": "^8.5.1",
     "tsx": "^4.23.15"
   }

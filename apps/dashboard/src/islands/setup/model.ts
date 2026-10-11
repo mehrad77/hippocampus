@@ -369,7 +369,7 @@ export function providerForServer(name: string): string {
 export const TOKEN_SCOPES: readonly { id: "read" | "remember" | "quest"; label: Wording; help: Wording }[] = [
   { id: "read", label: ["Read", "Read"], help: ["Search and read the vault. Every token needs it.", "Recall and read the vault. Every token needs it."] },
   { id: "remember", label: ["Remember", "Remember"], help: ["Send new notes to the inbox.", "File new memories into the inbox."] },
-  { id: "quest", label: ["Goals (quest)", "Quest"], help: ["Update goals: objectives, clocks and deadlines.", "Update quests: objectives, clocks and deadlines."] },
+  { id: "quest", label: ["Goals (quest)", "Quest"], help: ["Update goals: steps, progress, due dates and repeats.", "Update quests: objectives, progress and due dates."] },
 ];
 
 // ── Errors ──────────────────────────────────────────────────────────────────

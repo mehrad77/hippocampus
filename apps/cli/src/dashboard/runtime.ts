@@ -32,19 +32,21 @@ export interface OpenOptions {
   env: Env;
   /** Use the persistent search index (`--no-index` turns it off). */
   index: boolean;
-  /** Where `seeds/` lives, for the demo. */
+  /** Where `vault-template/` and `seeds/` live, for the demo. */
   assets: string;
   log?: (msg: string) => void;
+  /** Which human local, GitHub and demo vaults act as (`hippo dashboard --as`); default the first. Over MCP the token's agent acts. */
+  human?: string;
 }
 
 /** Open a vault for the dashboard. Fails early (bad path, token or URL) so the old one stays in place. */
 export async function openVault(target: VaultTarget, opts: OpenOptions): Promise<ActiveVault> {
   switch (target.kind) {
     case "demo": {
-      const store = await buildDemoStore(new FsStore(join(opts.assets, "seeds", "example-relocation")));
+      const store = await buildDemoStore(new FsStore(join(opts.assets, "seeds", "example-relocation")), { template: new FsStore(join(opts.assets, "vault-template")) });
       const service = new HippoService(store);
       const vault: VaultInfo = { kind: "memory" };
-      return { mode: "demo", vault, target, store, service, source: serviceSource(service, { mode: "demo", vault }), close: async () => {} };
+      return { mode: "demo", vault, target, store, service, source: serviceSource(service, { mode: "demo", vault }, { human: opts.human }), close: async () => {} };
     }
     case "dir": {
       const dir = resolve(expandHome(target.dir));
@@ -88,7 +90,7 @@ async function withService(base: Omit<ActiveVault, "source" | "service" | "close
     }
   }
   const service = new HippoService(base.store!, { searcher: index?.index.searcher });
-  const source = serviceSource(service, { mode: base.mode, vault: base.vault });
+  const source = serviceSource(service, { mode: base.mode, vault: base.vault }, { human: opts.human });
   return { ...base, service, index, source, close: async () => index?.close() };
 }
 

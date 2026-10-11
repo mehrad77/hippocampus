@@ -3,8 +3,8 @@ import { ApiError, postJson } from "../../lib/api.ts";
 import { invalidate, patch } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
 import { readPrefs } from "../../lib/prefs.ts";
-import type { Overview, QuestCard } from "../../lib/types.ts";
-import { changeLabel, editQuest, withQuest, type QuestEdit } from "./model.ts";
+import type { GoalCard, Overview } from "../../lib/types.ts";
+import { changeLabel, editGoal, goalsOf, withGoal, type GoalEdit } from "./model.ts";
 
 /** The server's message, with plain advice for the one error a human can act on. */
 export function errorMessage(err: unknown): string {
@@ -21,37 +21,38 @@ export function settle(): Promise<void[]> {
   return invalidate((k) => k.startsWith("/overview") || k.startsWith("/entity") || k.startsWith("/catalog") || k.startsWith("/graph"));
 }
 
-// Quest edits are optimistic and sent one at a time: clicking through a clock quickly must not race
+// Goal edits are optimistic and sent one at a time: clicking through progress quickly must not race
 // itself into a CONFLICT, and the board settles on the server's answer once the queue is empty.
 let queue: Promise<unknown> = Promise.resolve();
 let inFlight = 0;
 
-type QuestRef = Pick<QuestCard, "slug" | "title">;
+/** The goal to edit, and its type's status words (so the optimistic copy reads them right). */
+export type GoalRef = Pick<GoalCard, "slug" | "title"> & { statuses?: Record<string, string> };
 
 /** Apply `edit` to the cached board at once; returns the card as it was, for rollback. */
-function optimistic(slug: string, edit: QuestEdit, today: string): QuestCard | undefined {
-  let before: QuestCard | undefined;
+function optimistic(g: GoalRef, edit: GoalEdit, today: string): GoalCard | undefined {
+  let before: GoalCard | undefined;
   patch<Overview>("/overview", (o) => {
-    before = o.quests.find((x) => x.slug === slug);
-    return withQuest(o, slug, (x) => editQuest(x, edit, today));
+    before = goalsOf(o).find((x) => x.slug === g.slug);
+    return withGoal(o, g.slug, (x) => editGoal(x, edit, today, g.statuses));
   });
   return before;
 }
 
-export function updateQuest(q: QuestRef, edit: QuestEdit, today: string): Promise<boolean> {
-  return send(q, edit, optimistic(q.slug, edit, today));
+export function updateGoal(g: GoalRef, edit: GoalEdit, today: string): Promise<boolean> {
+  return send(g, edit, optimistic(g, edit, today));
 }
 
-const bursts = new Map<string, { timer: number; before?: QuestCard }>();
+const bursts = new Map<string, { timer: number; before?: GoalCard }>();
 
 /**
- * Like `updateQuest`, but changes to the same `key` within `ms` collapse into one request with the
- * last value: stepping a clock with the arrow keys shouldn't send (and toast) every step.
+ * Like `updateGoal`, but changes to the same `key` within `ms` collapse into one request with the
+ * last value: stepping progress with the arrow keys shouldn't send (and toast) every step.
  */
-export function updateQuestSoon(q: QuestRef, edit: QuestEdit, today: string, key: string, ms = 450): void {
-  const id = `${q.slug}\u0000${key}`;
+export function updateGoalSoon(g: GoalRef, edit: GoalEdit, today: string, key: string, ms = 450): void {
+  const id = `${g.slug}\u0000${key}`;
   const burst = bursts.get(id);
-  const before = optimistic(q.slug, edit, today);
+  const before = optimistic(g, edit, today);
   if (burst) window.clearTimeout(burst.timer);
   // A pending burst counts as in flight, so an earlier reply doesn't settle the board under it.
   else inFlight++;
@@ -59,26 +60,26 @@ export function updateQuestSoon(q: QuestRef, edit: QuestEdit, today: string, key
   next.timer = window.setTimeout(() => {
     bursts.delete(id);
     inFlight--;
-    void send(q, edit, next.before);
+    void send(g, edit, next.before);
   }, ms);
   bursts.set(id, next);
 }
 
-function send(q: QuestRef, edit: QuestEdit, before: QuestCard | undefined): Promise<boolean> {
+function send(g: GoalRef, edit: GoalEdit, before: GoalCard | undefined): Promise<boolean> {
   inFlight++;
   const run = queue.then(async () => {
     try {
-      const res = await postJson<{ quest: string; changes: string[] }>("/actions/quest", { quest: q.slug, ...edit });
+      const res = await postJson<{ goal: string; changes: string[] }>("/actions/goal", { goal: g.slug, ...edit });
       // Read the look when the answer arrives: the reader may have switched it meanwhile.
       const { look } = readPrefs();
-      toast(res.changes.length ? `${q.title}: ${res.changes.map((c) => changeLabel(c, look)).join(" · ")}` : `${q.title}: already like that, nothing changed.`, "ok");
+      toast(res.changes.length ? `${g.title}: ${res.changes.map((c) => changeLabel(c, look)).join(" · ")}` : `${g.title}: already like that, nothing changed.`, "ok");
       return true;
     } catch (err) {
       if (before) {
         const restore = before;
-        patch<Overview>("/overview", (o) => withQuest(o, q.slug, () => restore));
+        patch<Overview>("/overview", (o) => withGoal(o, g.slug, () => restore));
       }
-      toast(`${q.title}: ${errorMessage(err)}`, "error");
+      toast(`${g.title}: ${errorMessage(err)}`, "error");
       return false;
     } finally {
       if (--inFlight === 0) void settle();
@@ -100,7 +101,7 @@ export function useHashTarget(ready: boolean): void {
       if (!id) return;
       const el = document.getElementById(id);
       if (!el) return;
-      // A target inside a folded section (say, a finished quest) needs the section open first.
+      // A target inside a folded section (say, a finished goal) needs the section open first.
       const fold = el.closest("details");
       if (fold && !fold.open) fold.open = true;
       const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;

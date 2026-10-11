@@ -27,7 +27,7 @@ export function withTrailers(message: string, trailers: Record<string, string | 
   return lines.length ? `${body}\n\n${lines.join("\n")}` : message;
 }
 
-/** The `Hippo-Actor` value for an actor: `agent:<id>`, `curator`, `human` or `bootstrap`. */
+/** The `Hippo-Actor` value for an actor: `agent:<id>`, `curator`, `human`, `bootstrap` or `migration`. */
 export function actorTrailer(actor: Actor): string {
   return actor.kind === "agent" ? `agent:${actor.id}` : actor.kind;
 }
@@ -35,7 +35,7 @@ export function actorTrailer(actor: Actor): string {
 /** The actor a `Hippo-Actor` value names, or undefined for one this version doesn't know. */
 export function parseActorTrailer(value: string): Actor | undefined {
   const v = value.trim();
-  if (v === "curator" || v === "human" || v === "bootstrap") return { kind: v };
+  if (v === "curator" || v === "human" || v === "bootstrap" || v === "migration") return { kind: v };
   const agent = /^agent:(.+)$/.exec(v);
   return agent ? { kind: "agent", id: agent[1]!.trim() } : undefined;
 }

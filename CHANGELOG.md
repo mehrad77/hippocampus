@@ -4,9 +4,23 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 
 ## [Unreleased]
 
-**Breaking for self-hosted Workers:** `apps/worker` is now a hosted multi-user app. A single-vault deployment needs a GitHub App, a new D1 registry and new secrets before it starts again, and its agents need new keys. Follow [docs/MIGRATING-WORKER.md](docs/MIGRATING-WORKER.md). The CLI and vaults are not affected: there's no vault format change.
+**Breaking for self-hosted Workers:** `apps/worker` is now a hosted multi-user app. A single-vault deployment needs a GitHub App, a new D1 registry and new secrets before it starts again, and its agents need new keys. Follow [docs/MIGRATING-WORKER.md](docs/MIGRATING-WORKER.md).
+
+**Breaking: vault format v2.** Run `hippo migrate` in each vault (this release's `hippo validate` still passes a v1 vault, with a hint). Older versions of Hippocampus refuse a migrated vault.
 
 ### Added
+- **Generic building blocks** (vault format v2): a vault's entity types and episode kinds are notes in `_hippo/schema/`, and code checks capabilities (`goal`, `actor`, `arc`), never type names.
+  - Types `extend` types; fields are typed and may be `human_only`, `secret`, `confidential`, `identity_key`, `succession`, `recurs: yearly` or owned by a lane `domain`. Validation is advice: shape notes in the morning review and `hippo validate`.
+  - Kinds give an episode a behaviour (observation, fact, decision, question, task, interaction), a text policy (required, optional, gist, forbidden), typed `data`, and whether it counts as contact. A data-only episode is curated without the model.
+  - **Several humans** (`humans:`, each with `domains`, a `github:` login and, for vaults on GitLab, a `gitlab:` username); the one whose domains cover a field outranks the others.
+  - **Fact qualifiers:** scoped keys (`greeting@lang:pt`), `valid_from`/`valid_until`, `confidence`; succession closes an old value into its history instead of disputing it.
+  - **Proposals** for `human_only` fields, and **merge proposals** when an identity key (an email, a repo url) shows two notes are one thing.
+  - **Managed memory:** guidelines (scoped, rumor until corroborated), a decision log, open questions and contact stats on any note; `extends:` and inheritable notes pass on defaults, guidelines and a contact cadence; briefings list overdue contacts.
+  - **Goals** replace quests and clocks: status words per type, owner, counterparty, due, one `progress`, and a repeat rule (every `1w`, or after the last contact). Commitments in episodes become goals.
+- **Presets** (`presets/`, bundled as `PRESETS` in `@hippocampus/template`): people (archetypes with stakes, autonomy and cadence, groups, the human's voice per language, rollup and moment kinds), developer, business, student and household. They are notes, not code: `hippo init --preset <name…>`, the preset picker in Session Zero (local and hosted), or `hippo preset add <name> [--force]` on an existing vault, which copies what's missing, merges `merge: true` type notes into the vault's own, and commits only those files. Presets shape new vaults: adopting a repo that already holds a vault refuses them (`PRESETS_NEW_ONLY`).
+- **MCP:** `update_goal`; `briefing(about)` for a brief on one person or thing; `remember` takes any kind, `data`, `scope` and `confidential`, and `text` is optional for kinds that don't need it; the `goal` scope.
+- **CLI:** `hippo preset list|add`; `init --preset`, a repeatable `--human` and `--name`; `remember -k <kind> --data key=value --confidential`; `fmt --stats` recounts contact stats from the chronicle; `dashboard --as <human>`.
+- **Dashboard:** Goals with progress bars; proposals and possible duplicates in the Council; overdue contacts on the home page; fact qualifiers, guidelines, stats, decisions, questions and inheritance on entity sheets; the vault's humans on the Party page; a preset picker in Session Zero.
 - **Vaults on GitLab** (hosted app): connect a GitLab account (OAuth, scope `api`), pick an empty private project in your personal namespace, and it becomes the vault. Optional: an instance turns it on by setting `GITLAB_CLIENT_ID`, `GITLAB_CLIENT_SECRET` and `HIPPO_TOKEN_KEY` (see docs/USAGE.md). New `GitLabStore` (`packages/store-gitlab`); stored GitLab tokens are sealed in the registry (migration `0003_gitlab.sql`); a Cron Trigger checks GitLab vaults every six hours in place of webhooks; the audit protects `.gitlab-ci.yml` and `.gitlab/`. The nightly curator workflow stays GitHub-only. A GitLab token isn't limited to one project: see SECURITY.md.
 - **The hosted app** (`apps/worker`): one Cloudflare Worker for many people, each with a vault in their own private GitHub repo.
   - A GitHub App (Contents and Workflows read and write, Metadata read) for sign-in and repo access; its settings are in `apps/worker/github-app.manifest.json`.
@@ -55,6 +69,11 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 - `VaultStore.apply()` for atomic batches, and `StoreConflictError` when a batch collides with a concurrent change.
 
 ### Changed
+- Quests are goals (`goals/`) and campaigns are arcs (`arcs/`). `update_quest`, the `quest` scope and `/actions/quest` keep working as aliases, and keys store both scopes so a rollback keeps access.
+- The curator's prompts are neutral and quote each type's description and examples; the Handbook drops the campaign framing and lists the vault's own types and kinds.
+- `hippo migrate` commits exactly the paths it changed in a git vault, as `Hippo-Actor: migration`; the hosted app never migrates on its own: an older vault answers `VAULT_UPGRADE_NEEDED` to agents until its owner clicks Upgrade on the dashboard, which makes the same audited commit.
+- Contact cadence along an `extends:` chain takes the nearest value (a colleague's `1m` over the stranger's `none` it extends); mixins and groups still mesh, with any `none` winning.
+- The search index schema is v3; existing indexes rebuild themselves.
 - Agents are told to use the MCP tools rather than edit vault files. The handbook documents `remember` and `introduce`; the inbox file format remains for local tools without MCP.
 - Agent ids must be exact party slugs: no aliases, never the vault's human, and not `human`, `curator`, `unknown` or `hippocampus`.
 - `remember` refuses memories over 8 KB.
@@ -64,11 +83,17 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 - `wrangler.jsonc` sets `preview_urls: false`, so each uploaded version no longer gets its own workers.dev address. OAuth client registration is limited to 3 a minute per IP (was 10).
 
 ### Removed
+- `SYSTEM_TYPES` and the fixed episode-kind enum: types and kinds come from the vault. `Clock` stays only to read v1 notes.
 - The single-vault Worker's settings and storage: `GITHUB_REPO`, `GITHUB_TOKEN`, `HIPPO_OWNERS`, `GITHUB_OAUTH_CLIENT_ID`/`_SECRET`, the `INDEX` D1 database, the `TOKENS` KV namespace, and the `Scribe` Durable Object (wrangler migration `v2` deletes it).
 - `pnpm agent-token`: keys are minted on the hosted app's setup page.
 - The commented-out nightly `sleep` job in the vault template's CI. Use agent-run sleep or the Actions curator instead.
 
+### Vault format
+- v2: generic building blocks. Entity types and episode kinds are notes in `_hippo/schema/types/` and `_hippo/schema/kinds/` (the config's `types:` move there), and code asks for capabilities (`goal`, `actor`, `arc`) instead of type names. `quest` is now `goal` (`goals/`), `campaign` is now `arc` (`arcs/`); `party` keeps its name. Goals use `due` and one `progress` (`{ done, total }`) instead of `deadline` and `clocks`. The config says `name` and `humans` instead of `campaign` and `human`. `hippo migrate` converts a v1 vault, moving notes out of the default `quests/` and `campaigns/` folders, keeping custom types and folders, turning extra clocks into objectives (it says which), and replacing or patching the v1 templates and dashboards. It never touches the inbox, chronicle, disputes or secrets, and its commit passes the audit as the `migration` actor.
+
 ### Security
+- **Confidential** facts, fields and episodes stay out of search, summaries, the chronicle, titles and aliases, and are masked everywhere except for a bound caller (an OAuth grant's agent, a bound key, `serve --agent`) with authority over them. Identity keys are confidential. The curator consent page says curators see them.
+- The audit refuses an agent's or the curator's change to a `human_only` field without a ruling, goal-scoped writes beyond goal props, confidential leaks, and a migration that does more than move and reformat notes.
 - Hosted commits are audited against the caller's real credentials; a key can't commit as another agent, the curator or the human.
 - Installation tokens are narrowed to one repo, and to Contents and Metadata outside setup.
 - Inbox files, which can hold secrets until sleep, are never cached at rest in the Worker.

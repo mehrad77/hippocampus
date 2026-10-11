@@ -108,7 +108,7 @@ describe("MCP with vault keys", () => {
       grant: { agent: "home-finder", scopes: ["read", "remember"], via: "key", keyKind: "bound" },
       body: expect.stringContaining("tools/list"),
     });
-    expect((await grantFor({ kind: "agent" })).grant).toEqual({ scopes: ["read", "remember", "quest"], via: "key", keyKind: "agent" });
+    expect((await grantFor({ kind: "agent" })).grant).toEqual({ scopes: ["read", "remember", "goal"], via: "key", keyKind: "agent" });
     expect((await grantFor({ kind: "curator" })).grant).toEqual({ scopes: ["read", "curate"], via: "key", keyKind: "curator" });
     // The Durable Object gets the grant, never the key itself.
     expect(h.vaults.to(vault, "mcp").every((c) => c.authorization === null)).toBe(true);
@@ -180,7 +180,7 @@ describe("OAuth endpoints", () => {
     expect(resource).toMatchObject({ resource: `${ORIGIN}/mcp`, authorization_servers: [ORIGIN] });
     const server = (await (await h.send(new Request(`${ORIGIN}/.well-known/oauth-authorization-server`))).json()) as Record<string, unknown>;
     expect(server).toMatchObject({ authorization_endpoint: `${ORIGIN}/authorize`, token_endpoint: `${ORIGIN}/oauth/token`, registration_endpoint: `${ORIGIN}/oauth/register` });
-    expect(server.scopes_supported).toEqual(["read", "remember", "quest", "curate"]);
+    expect(server.scopes_supported).toEqual(["read", "remember", "goal", "curate", "quest"]);
   });
 
   it("rate-limit client registration by IP", async () => {

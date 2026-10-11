@@ -6,7 +6,7 @@ import { emit } from "../lib/events.ts";
 import { plural, shortDate } from "../lib/format.ts";
 import { useTerms, type Voice } from "../lib/prefs.ts";
 import { href, param } from "../lib/routes.ts";
-import type { Catalog, EpisodeView, Overview, PartyMember, Ref, SessionInfo } from "../lib/types.ts";
+import type { Catalog, EpisodeView, KindView, Overview, PartyMember, Ref, SessionInfo } from "../lib/types.ts";
 import { EntityLink, TypeDot } from "../ui/EntityLink.tsx";
 import { Icon } from "../ui/Icon.tsx";
 import { PageGate } from "../ui/PageGate.tsx";
@@ -157,7 +157,7 @@ function Satchel({ session }: { session: SessionInfo }) {
               </button>
               {kinds.map(([k, n]) => (
                 <button key={k} type="button" className="chip" aria-pressed={kind === k} onClick={() => setKind(kind === k ? null : k)}>
-                  {kindLabel(k, look)} <span className="chip__n">{n}</span>
+                  {kindLabel(k, o.schema?.kinds, look)} <span className="chip__n">{n}</span>
                 </button>
               ))}
               {waited > 0 && (
@@ -184,7 +184,7 @@ function Satchel({ session }: { session: SessionInfo }) {
           {shown.length ? (
             <ol className="letters">
               {shown.map((e) => (
-                <Letter key={e.id} e={e} party={o.party} resolve={resolve} />
+                <Letter key={e.id} e={e} party={o.party} resolve={resolve} kinds={o.schema?.kinds} />
               ))}
             </ol>
           ) : (
@@ -231,7 +231,7 @@ function SleepPanel({ o, sealed, voice: { t, v } }: { o: Overview; sealed: numbe
               <li>
                 Hippocampus reads {n === 1 ? "this note" : `these ${n} notes`} and settles each fact by the precedence rules: it becomes confirmed, stays unverified, or goes to <a href={href.page("council")}>{t("council")}</a> for your decision.
               </li>
-              <li>Goals, progress trackers and links they mention are updated.</li>
+              <li>Goals, progress and links they mention are updated.</li>
               {sealed > 0 && (
                 <li>
                   {sealed === 1 ? "The hidden note's secret is" : `The ${sealed} hidden notes' secrets are`} encrypted into <code>secrets/</code>; only a redacted line reaches the timeline.
@@ -245,7 +245,7 @@ function SleepPanel({ o, sealed, voice: { t, v } }: { o: Overview; sealed: numbe
               <li>
                 The curator reads {n === 1 ? "this episode" : `these ${n} episodes`} and settles each fact by precedence: it becomes canon, stays a rumor, or goes to the <a href={href.page("council")}>council</a>.
               </li>
-              <li>Quests, clocks and links they mention are updated.</li>
+              <li>Quests, progress and links they mention are updated.</li>
               {sealed > 0 && (
                 <li>
                   {sealed === 1 ? "The sealed episode's secret is" : `The ${sealed} sealed episodes' secrets are`} encrypted into <code>secrets/</code>; only a redacted line reaches the chronicle.
@@ -265,7 +265,7 @@ function SleepPanel({ o, sealed, voice: { t, v } }: { o: Overview; sealed: numbe
   );
 }
 
-function Letter({ e, party, resolve }: { e: EpisodeView; party: PartyMember[]; resolve: (raw: string) => Ref }) {
+function Letter({ e, party, resolve, kinds }: { e: EpisodeView; party: PartyMember[]; resolve: (raw: string) => Ref; kinds?: KindView[] }) {
   const { v, look } = useTerms();
   const member = party.find((p) => p.slug === e.agent);
   const conf = confidenceLabel(e.confidence);
@@ -282,7 +282,7 @@ function Letter({ e, party, resolve }: { e: EpisodeView; party: PartyMember[]; r
             </a>
           </span>
         )}
-        <span className="chip">{kindLabel(e.kind, look)}</span>
+        <span className="chip">{kindLabel(e.kind, kinds, look)}</span>
         {conf && (
           <span className="small muted" title={v("The agent's own confidence in this note", "The agent's own confidence in this episode")}>
             {conf}
@@ -311,9 +311,16 @@ function Letter({ e, party, resolve }: { e: EpisodeView; party: PartyMember[]; r
             </p>,
           )}
         </div>
+      ) : e.confidential ? (
+        <p className="letter__text small">
+          <span className="conf">
+            <span aria-hidden>◐</span> confidential
+          </span>{" "}
+          {v("Its text stays out of every view; the next nightly update files it without showing it to other agents.", "Kept from the table; the next sleep files it without showing it to other agents.")}
+        </p>
       ) : (
         <div className="letter__text">
-          <RichText text={e.text ?? ""} />
+          {e.text ? <RichText text={e.text} /> : <span className="muted small">{v("No text: only details.", "No words, only particulars.")}</span>}
         </div>
       )}
 

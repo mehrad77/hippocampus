@@ -9,12 +9,21 @@ import {
   HippoService,
   MODEL_TRAILER,
   Vault,
+  actorTrailer,
   applyChanges,
+  applyPreset,
   decryptSecret,
+  fieldUsage,
   isSecretRef,
   migrate,
+  parseConfig,
+  pickPreset,
+  presetCatalog,
+  readChronicle,
+  rebuildStats,
   renderHandbook,
   secretPath,
+  validateShapes,
   vaultVersionStatus,
   withTrailers,
   type SearcherFactory,
@@ -23,6 +32,7 @@ import {
 import { MemoryRunStore, SleepRelay, aiSdkLLM, commitMessage, llmConfigFromEnv, sleep, type SleepReport } from "@hippocampus/curator";
 import { createHippoServer } from "@hippocampus/mcp";
 import { GitHubStore } from "@hippocampus/store-github";
+import { PRESETS } from "@hippocampus/template";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Command } from "commander";
@@ -32,7 +42,8 @@ import { loadEnv } from "./env-file.ts";
 import { Git } from "./git.ts";
 import { assetRoot, expandHome, identityFile, indexKey, userEnvFile } from "./paths.ts";
 import { openIndex, openSearcher as searcherFor, openStore as storeFor } from "./stores.ts";
-import { initVault, keygen } from "./vault-setup.ts";
+import { boundAgent } from "./serve.ts";
+import { initVault, keygen, templateFiles } from "./vault-setup.ts";
 
 // Settings: the shell, then a gitignored .env in the working directory, then the user env file
 // (~/.config/hippocampus/env, written by `hippo dashboard`). Earlier sources win.
@@ -40,7 +51,7 @@ const envOrigins = loadEnv({ userFile: () => userEnvFile() });
 
 const program = new Command()
   .name("hippo")
-  .description("Hippocampus: shared, curated memory for a party of agents (an Obsidian vault run like a TTRPG campaign wiki).")
+  .description("Hippocampus: shared, curated memory for a party of agents, in an Obsidian vault whose types and kinds are notes (see `hippo preset list`).")
   .option("-v, --vault <dir>", "vault directory", process.env.HIPPO_VAULT ?? ".")
   .option("--github <owner/repo[#branch]>", "use the vault repo on GitHub directly, without a checkout (token from HIPPO_GITHUB_TOKEN)", process.env.HIPPO_GITHUB_REPO)
   .option("--no-index", "search in memory instead of the persistent index");
@@ -65,27 +76,73 @@ const localRelay = (store: VaultStore) =>
     runs: new MemoryRunStore(),
   });
 
+/** In a local git vault, commit exactly `paths` (on GitHub the store's own commit already did). */
+async function commitLocal(paths: string[], message: string, opts: { asUser?: boolean } = {}): Promise<void> {
+  if (github()) return;
+  if (await new Git(vaultDir()).commitPaths(paths, message, opts)) err("✓ committed");
+}
+
 function localOnly(command: string): void {
   if (github()) throw new Error(`\`hippo ${command}\` works on a local vault directory; drop --github`);
 }
+
+const repeatable = (value: string, previous: string[] = []) => [...previous, value];
+const commaList = (v: string | undefined) =>
+  v
+    ?.split(",")
+    .map((d) => d.trim())
+    .filter(Boolean);
 
 program
   .command("init")
   .argument("<dir>", "where to create the vault (a new or empty folder)")
   .option("--seed <name-or-path>", "also copy a seed campaign: a bundled name from seeds/ (e.g. example-relocation) or a directory path")
-  .option("--campaign <name>", "campaign name (shown in the Player's Handbook)")
-  .option("--human <id>", "your party id; your word outranks every agent (default: player)")
+  .option("--name <name>", "what the memory is about (shown in the Handbook)")
+  .option("--campaign <name>", "older name of --name")
+  .option("--human <id>", "a human's id; their word outranks every agent. Repeat it for several, the primary first (default: player)", repeatable)
+  .option("--preset <name...>", `add presets: ${Object.keys(PRESETS).sort().join(", ")} (see \`hippo preset list\`)`)
   .option("--timezone <iana>", "IANA timezone for chronicle days, e.g. Europe/Lisbon")
   .option("--domains <list>", "comma-separated lane domains, e.g. residency,housing,career")
-  .description("Create a new vault from the template (and optionally a seed campaign).")
-  .action(async (dir: string, opts: { seed?: string; campaign?: string; human?: string; timezone?: string; domains?: string }) => {
+  .description("Create a new vault from the template (and optionally a seed campaign and presets).")
+  .action(async (dir: string, opts: { seed?: string; name?: string; campaign?: string; human?: string[]; preset?: string[]; timezone?: string; domains?: string }) => {
     localOnly("init");
-    const domains = opts.domains
-      ?.split(",")
-      .map((d) => d.trim())
-      .filter(Boolean);
-    const r = await initVault({ target: dir, seed: opts.seed, assets: assetRoot(), campaign: opts.campaign, human: opts.human, timezone: opts.timezone, domains });
+    const humans = opts.human?.map((id) => ({ id: id.trim() }));
+    const presets = opts.preset?.flatMap((p) => commaList(p) ?? []);
+    const r = await initVault({ target: dir, seed: opts.seed, assets: assetRoot(), campaign: opts.name ?? opts.campaign, humans, presets, timezone: opts.timezone, domains: commaList(opts.domains) });
+    if (presets?.length) err(`✓ presets: ${presets.join(", ")}`);
     err(`✓ vault created at ${r.dir}\n  next: open it in Obsidian, push it to a private GitHub repo, and run \`hippo secrets keygen -v ${dir}\` (or \`hippo dashboard -v ${dir}\`)`);
+  });
+
+const preset = program.command("preset").description("Presets: bundles of types, kinds, templates and starter notes for one way of using Hippocampus.");
+
+preset
+  .command("list")
+  .description("List the presets this version bundles.")
+  .action(() => {
+    for (const p of presetCatalog(PRESETS)) console.log(`${p.name}\n  ${p.description}${p.requires.length ? `\n  needs: ${p.requires.join(", ")}` : ""}`);
+  });
+
+preset
+  .command("add")
+  .argument("<name>", "a preset from `hippo preset list`")
+  .option("--force", "overwrite files the vault already has with the preset's, and let its definitions win in merged notes")
+  .option("--as <human>", "the human whose note gets the preset's sections (default: the first)")
+  .description("Add a preset to the vault: copies what's missing, merges its definitions into yours, commits only those files.")
+  .action(async (name: string, opts: { force?: boolean; as?: string }) => {
+    const store = openStore();
+    const r = await applyPreset(store, pickPreset(PRESETS, name), { force: opts.force, human: opts.as });
+    for (const p of r.added) err(`  + ${p}`);
+    for (const p of r.merged) err(`  ~ ${p}`);
+    for (const p of r.skipped) err(`  = ${p} (kept yours${opts.force ? "" : "; --force to replace it"})`);
+    for (const n of r.notes) err(`⚠ ${n}`);
+    if (!r.changes.length) {
+      err(`✓ the vault already has everything the ${name} preset adds`);
+      return;
+    }
+    const message = withTrailers(`chore: add the ${name} preset`, { [ACTOR_TRAILER]: actorTrailer({ kind: "human" }) });
+    await applyChanges(store, r.changes, { message });
+    await commitLocal(r.changes.map((c) => c.path), message, { asUser: true });
+    err(`✓ added the ${name} preset (${r.changes.length} files)`);
   });
 
 program
@@ -109,8 +166,16 @@ program
         res.writeHead(404).end();
         return;
       }
-      const agent = url.searchParams.get("agent") ?? opts.agent;
-      const server = createHippoServer({ service, agent: agent ?? undefined, relay });
+      const humans = await store
+        .read(CONFIG_PATH)
+        .then((raw) => parseConfig(raw).humans.map((h) => h.id))
+        .catch(() => undefined);
+      const bound = boundAgent(humans, url.searchParams.get("agent"), opts.agent);
+      if ("refused" in bound) {
+        res.writeHead(403, { "content-type": "application/json" }).end(JSON.stringify({ error: bound.refused, code: "NOT_AN_AGENT" }));
+        return;
+      }
+      const server = createHippoServer({ service, agent: bound.agent, relay });
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on("close", () => void transport.close().then(() => server.close()));
       await server.connect(transport);
@@ -148,9 +213,8 @@ program
     printReport(report);
     if (store instanceof GitHubStore && report.changed.length) err(`✓ committed ${(await store.head()).slice(0, 7)} to ${store.repo}#${store.branch}`);
     if (useGit && report.changed.length) {
-      await git.stage(report.changed);
-      if (await git.hasStaged()) {
-        await git.commit(withTrailers(commitMessage(report), { [ACTOR_TRAILER]: "curator", [MODEL_TRAILER]: report.model }));
+      // Only the curator's paths, even when the human has other edits staged.
+      if (await git.commitPaths(report.changed, withTrailers(commitMessage(report), { [ACTOR_TRAILER]: "curator", [MODEL_TRAILER]: report.model }))) {
         err("✓ committed");
         if (opts.push && (await git.hasRemote())) {
           await git.push();
@@ -176,11 +240,18 @@ program
   .action(async () => {
     const vault = await Vault.load(openStore(), { skipVersionCheck: true });
     const status = vaultVersionStatus(vault.config);
-    err(`vault format v${vault.config.version} (tool v${CURRENT_VAULT_VERSION}${status === "current" ? "" : `: ${status}, run \`hippo migrate\``})`);
-    if (status !== "current") process.exitCode = 1;
+    err(`vault format v${vault.config.version} (tool v${CURRENT_VAULT_VERSION}${status === "current" ? "" : `: ${status}`})`);
+    if (status === "newer") process.exitCode = 1;
+    if (status === "older") err(`⚠ run \`hippo migrate\` to upgrade this vault to format v${CURRENT_VAULT_VERSION}`);
     err(`${vault.entities.size} entities · ${vault.episodes.length} pending episodes · ${vault.openDisputes().length} open disputes`);
     for (const w of vault.warnings) err(`⚠ ${w}`);
-    if (vault.warnings.length) process.exitCode = 1;
+    // Advisory only (never the exit code): notes and episodes that don't fit the schema. Paths and fields, never values.
+    if (status === "current") {
+      for (const f of validateShapes(vault)) err(`📐 ${f.path}: ${f.message}`);
+      for (const u of fieldUsage(vault)) err(`📐 ${u.type} notes use undeclared fields: ${u.fields.map((f) => `${f.field} ×${f.count}`).join(", ")}`);
+    }
+    // This release still passes an older vault (only the hint), so pinned vault CI keeps working until someone migrates.
+    if (vault.warnings.length && status !== "older") process.exitCode = 1;
   });
 
 program
@@ -207,39 +278,62 @@ program
   .action(async (opts: { dryRun?: boolean }) => {
     const store = openStore();
     const vault = await Vault.load(store, { skipVersionCheck: true });
-    const r = await migrate(store, vault.config, { dryRun: opts.dryRun });
-    if (store instanceof GitHubStore && !opts.dryRun) await store.commit({ message: `chore: migrate vault format to v${r.to}` });
+    const message = (to: number) => withTrailers(`chore: migrate vault format to v${to}`, { [ACTOR_TRAILER]: actorTrailer({ kind: "migration" }) });
+    const r = await migrate(store, vault.config, { dryRun: opts.dryRun, template: await templateFiles(assetRoot()) });
     if (!r.applied.length) {
       err(`✓ vault format v${r.to} is up to date`);
       return;
     }
     for (const a of r.applied) err(`${opts.dryRun ? "would apply" : "applied"} ${a}`);
-    for (const c of r.changed) err(`  ${c}`);
+    for (const c of r.changes) err(`  ${"remove" in c ? "-" : "~"} ${c.path}`);
+    for (const n of r.notes) err(`⚠ ${n}`);
+    // One commit with exactly the migrated paths (removals included), as `hippo audit` expects of the migration actor.
+    if (!opts.dryRun) await commitLocal(r.changed, message(r.to));
   });
 
 program
   .command("fmt")
-  .description("Re-render every note (normalize frontmatter, regenerate facts/relations/clocks regions).")
-  .action(async () => {
+  .description("Re-render every note (normalize frontmatter, regenerate facts, relations, progress and managed regions).")
+  .option("--stats", "also recount every note's contact stats from the chronicle")
+  .action(async (opts: { stats?: boolean }) => {
     const vault = await Vault.load(openStore());
+    if (opts.stats) err(`✓ recounted stats on ${rebuildStats(vault, await readChronicle(vault, "0000-01-01")).length} notes`);
     for (const e of vault.entities.values()) vault.markDirty(e);
-    const changed = await vault.flush({ message: "style: re-render notes" });
+    const changed = await vault.flush({ message: opts.stats ? "style: re-render notes and recount stats" : "style: re-render notes" });
     err(`✓ rendered ${changed.length} notes`);
   });
 
 program
   .command("remember")
   .description("Write an episode to the inbox from the command line (as the human by default).")
-  .argument("<text...>")
+  .argument("[text...]", "the memory; a kind that takes only data needs none")
   .option("-a, --agent <id>", "agent id")
-  .option("-k, --kind <kind>", "observation | fact | decision | task | beat | question", "fact")
+  .option("-k, --kind <kind>", "one of the vault's kinds (observation, fact, decision, task, question, or one a preset adds)", "fact")
+  .option("--data <key=value>", "a data field of the kind, e.g. --data with=[[migration-agency]]; repeat it, and repeat a key for a list", repeatable)
   .option("--secret", "contains secret values")
-  .action(async (words: string[], opts: { agent?: string; kind: "fact"; secret?: boolean }) => {
+  .option("--confidential", "keep it out of search, summaries and the chronicle")
+  .action(async (words: string[], opts: { agent?: string; kind: string; data?: string[]; secret?: boolean; confidential?: boolean }) => {
     const store = openStore();
     const agent = opts.agent ?? (await Vault.load(store)).config.human;
-    const r = await new HippoService(store).remember(agent, { text: words.join(" "), kind: opts.kind, secret: opts.secret }, { asHuman: !opts.agent });
+    const input = { text: words.join(" "), kind: opts.kind, secret: opts.secret, confidential: opts.confidential, ...(opts.data?.length ? { data: parseData(opts.data) } : {}) };
+    const r = await new HippoService(store).remember(agent, input, { asHuman: !opts.agent });
+    for (const w of r.warnings ?? []) err(`⚠ ${w}`);
     err(`✓ ${r.path}`);
   });
+
+/** `key=value` pairs as episode data; a repeated key becomes a list. The kind types the values. */
+function parseData(pairs: string[]): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {};
+  for (const pair of pairs) {
+    const at = pair.indexOf("=");
+    const key = at > 0 ? pair.slice(0, at).trim() : "";
+    if (!key) throw new Error(`--data takes key=value, not "${pair}"`);
+    const value = pair.slice(at + 1).trim();
+    const prev = out[key];
+    out[key] = prev === undefined ? value : [...(Array.isArray(prev) ? prev : [prev]), value];
+  }
+  return out;
+}
 
 program
   .command("index")
@@ -286,13 +380,14 @@ secrets
 
 program
   .command("dashboard")
-  .description("Open the dashboard in your browser: the campaign at a glance, rulings, quests, and Session Zero setup.")
+  .description("Open the dashboard in your browser: your memory at a glance, rulings, goals, and Session Zero setup.")
   .option("-p, --port <n>", "port on 127.0.0.1 (the next free one if it's taken)", "4747")
   .option("--no-open", "print the sign-in link without opening a browser")
   .option("--demo", "the fictional example campaign, in memory")
   .option("--mcp <url>", "a Hippocampus MCP server (e.g. your Worker's /mcp); token from HIPPO_MCP_TOKEN or --token")
   .option("--token <token>", "bearer token for --mcp")
-  .action(async (opts: { port: string; open: boolean; demo?: boolean; mcp?: string; token?: string }) => {
+  .option("--as <human>", "which of the vault's humans the dashboard acts as (default: the first)")
+  .action(async (opts: { port: string; open: boolean; demo?: boolean; mcp?: string; token?: string; as?: string }) => {
     await runDashboard({ ...opts, vault: program.opts<{ vault: string }>().vault, github: github(), index: useIndex(), origins: envOrigins, log: err });
   });
 

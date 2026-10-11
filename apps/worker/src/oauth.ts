@@ -1,5 +1,5 @@
 import { AuthorizationError, CimdFetchError, type ConsentDescription, type GrantSummary, type OAuthHelpers, type OAuthProviderOptions } from "@cloudflare/workers-oauth-provider";
-import { SCOPES, type Scope } from "@hippocampus/mcp";
+import { LEGACY_GOAL_SCOPE, SCOPES, type CurrentScope, type Scope } from "@hippocampus/mcp";
 import { isScope } from "./auth.ts";
 import type { ConnectedApp, ConnectedApps } from "./hosted/account.ts";
 import { KIND_SCOPES, agentId, type Account, type KeyGrant, type KeyKind, type VaultRecord } from "./hosted/registry.ts";
@@ -104,7 +104,7 @@ export function providerOptions(publicUrl: string, handlers: ProviderHandlers): 
     authorizeEndpoint: AUTHORIZE_PATH,
     tokenEndpoint: TOKEN_PATH,
     clientRegistrationEndpoint: REGISTER_PATH,
-    scopesSupported: [...SCOPES],
+    scopesSupported: [...SCOPES, LEGACY_GOAL_SCOPE],
     requiredScopes: ["read"],
     resourceMetadata: { resource, authorization_servers: [publicUrl], resource_name: "Hippocampus", bearer_methods_supported: ["header"] },
     // Vault keys are ours too, just not issued through OAuth.
@@ -224,7 +224,10 @@ export function authorizePage(deps: AuthorizeDeps): (request: Request) => Promis
     } catch (err) {
       return page(400, "Check the agent id", `<p>${escape((err as Error).message)}. Go back and try again.</p>`);
     }
-    const scope = SCOPES.filter((s) => form.getAll("scope").includes(s));
+    const posted = form.getAll("scope");
+    const scope: Scope[] = SCOPES.filter((s) => posted.includes(s) || (s === "goal" && posted.includes(LEGACY_GOAL_SCOPE)));
+    // Granted under its old name too, so a rolled-back Worker (which knows only `quest`) keeps it.
+    if (scope.includes("goal")) scope.push(LEGACY_GOAL_SCOPE);
     if (!scope.includes("read")) return page(400, "Choose what it may do", "<p>Every app needs read. Go back and tick it.</p>");
 
     if (typed && form.get("add_to_party")) {
@@ -274,11 +277,11 @@ function notReady({ account, vault }: Caller): Response | undefined {
   return undefined;
 }
 
-const SCOPE_LABELS: Record<Scope, string> = {
+const SCOPE_LABELS: Record<CurrentScope, string> = {
   read: "Read the vault: recall, look up notes, briefings",
   remember: "Remember: add new memories to its inbox",
-  quest: "Update quests: objectives, status, clocks",
-  curate: "Curate: run sleep, consolidating the inbox into notes",
+  goal: "Update goals: objectives, status, progress",
+  curate: "Curate: run sleep, consolidating the inbox into notes (it sees confidential details)",
 };
 /** Pre-ticked whatever the app asks for: the rest is the person's call. */
 const DEFAULT_SCOPES = new Set<Scope>(["read", "remember"]);
@@ -293,7 +296,7 @@ function consentPage(o: { details: ConsentDescription; handle: string; account: 
   const scopes = SCOPES.map(
     (s) =>
       `<label><input type="checkbox" name="scope" value="${s}"${DEFAULT_SCOPES.has(s) ? " checked" : ""}> ${escape(SCOPE_LABELS[s])}</label>` +
-      (s === "curate" ? `<p class="warn"><small>Curating shows the app every new memory in full, <strong>secret memories in plain text</strong>. Allow it only for an app you trust with them.</small></p>` : ""),
+      (s === "curate" ? `<p class="warn"><small>Curating shows the app every new memory in full: <strong>secret memories in plain text, and confidential details</strong>. Allow it only for an app you trust with them.</small></p>` : ""),
   ).join("\n");
   return `<h1>Connect ${name} to your vault?</h1>
 <p>${origin} Access will be sent to <strong>${escape(details.redirectHost)}</strong>.</p>

@@ -1,0 +1,3 @@
+description: Freelance or small-business work. Clients (other notes can inherit a client's guidelines), deals and invoices as goals with their own statuses, and a commitment kind that turns a promise into a deal with its counterparty and due date.
+config:
+  domains: [sales]

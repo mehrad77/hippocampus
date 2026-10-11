@@ -6,7 +6,7 @@ import { toast } from "../../lib/events.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import type { SessionInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
-import { ChipsInput, Effects, ErrorCallout, Facts, Field, SnippetBlock, TabPanel, Tabs, useAction } from "./common.tsx";
+import { ChipsInput, Effects, ErrorCallout, Facts, Field, PresetPicker, SnippetBlock, TabPanel, Tabs, useAction } from "./common.tsx";
 import { agentIdProblem, domainProblem, isTimeZone, migrateCommand, normalizeUrl, REPO, type StepProps } from "./model.ts";
 
 type Tab = "create" | "open" | "github" | "mcp";
@@ -172,6 +172,7 @@ function CreateForm({ status, busy, onSubmit }: { status: LocalSetupStatus; busy
   const [timezone, setTimezone] = useState(() => localTimeZone() ?? d.timezone ?? "UTC");
   const [domains, setDomains] = useState<string[]>(() => [...d.domains]);
   const [seed, setSeed] = useState("");
+  const [presets, setPresets] = useState<string[]>([]);
   const [makeDefault, setMakeDefault] = useState(true);
   const [tried, setTried] = useState(false);
   const zones = useMemo(() => (typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : []), []);
@@ -194,7 +195,7 @@ function CreateForm({ status, busy, onSubmit }: { status: LocalSetupStatus; busy
         setTried(true);
         if (!valid) return;
         onSubmit(
-          { action: "create", dir: dir.trim(), campaign: campaign.trim(), human: human.trim(), timezone: timezone.trim(), domains, seed: seed || undefined, makeDefault },
+          { action: "create", dir: dir.trim(), campaign: campaign.trim(), human: human.trim(), timezone: timezone.trim(), domains, seed: seed || undefined, ...(presets.length ? { presets } : {}), makeDefault },
           v(`Created ${campaign.trim()}: the vault is at ${dir.trim()}.`, `${campaign.trim()} begins: the vault is at ${dir.trim()}.`),
         );
       }}
@@ -251,11 +252,12 @@ function CreateForm({ status, busy, onSubmit }: { status: LocalSetupStatus; busy
             )}
           </Field>
         )}
+        <PresetPicker presets={d.presets} value={presets} onChange={setPresets} />
         <MakeDefault checked={makeDefault} onChange={setMakeDefault} envFile={status.envFile} what="HIPPO_VAULT" />
       </div>
       <Effects
         items={[
-          ["writes", <>a new folder at <code>{dir.trim() || "…"}</code> from the vault template (config, Obsidian templates, Dataview dashboards){seed ? <>, plus the <code>{seed}</code> notes</> : null}, with your choices in <code>_hippo/config.yaml</code>.</>],
+          ["writes", <>a new folder at <code>{dir.trim() || "…"}</code> from the vault template (config, Obsidian templates, Dataview dashboards){seed ? <>, plus the <code>{seed}</code> notes</> : null}{presets.length ? <>, plus the {presets.join(", ")} {presets.length === 1 ? "preset" : "presets"}</> : null}, with your choices in <code>_hippo/config.yaml</code>.</>],
           ["runs", <><code>git init</code> in that folder. Nothing is committed or pushed.</>],
           makeDefault && ["writes", <>HIPPO_VAULT to <code>{status.envFile}</code>.</>],
           ["never", "sends anything off this machine."],

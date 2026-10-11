@@ -5,7 +5,7 @@ import { toast } from "../../lib/events.ts";
 import type { IconName } from "../../lib/icons.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
-import type { Job, SetupItem, Snippet } from "../../lib/types.ts";
+import type { Job, PresetInfo, SetupItem, Snippet } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { CopyButton, Dialog, RelTime } from "../../ui/Parts.tsx";
 import { describeError, STATE_META, type BadgeState, type Wording } from "./model.ts";
@@ -286,6 +286,25 @@ export function DomainChips({ domains, value, onChange, label }: { domains: read
         );
       })}
     </div>
+  );
+}
+
+/** Presets to start a vault with: a checkbox each, with what it adds. Renders nothing when there are none. */
+export function PresetPicker({ presets, value, onChange }: { presets: readonly PresetInfo[] | undefined; value: string[]; onChange: (v: string[]) => void }) {
+  if (!presets?.length) return null;
+  return (
+    <fieldset className="sz-fieldset sz-wide">
+      <legend className="label">Presets</legend>
+      <span className="hint">Types, kinds and starter notes for one way of using it. Add more later with <code>hippo preset add</code>.</span>
+      {presets.map((p) => (
+        <label key={p.name} className="check sz-scope">
+          <input type="checkbox" checked={value.includes(p.name)} onChange={(e) => onChange(e.target.checked ? [...value, p.name] : value.filter((x) => x !== p.name))} />
+          <span>
+            <strong>{p.name}</strong> <span className="hint">{p.description}</span>
+          </span>
+        </label>
+      ))}
+    </fieldset>
   );
 }
 

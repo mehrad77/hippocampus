@@ -2,15 +2,19 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { parse } from "yaml";
+import { goalToQuest, questToGoal } from "./api.ts";
 import { HttpError } from "./http.ts";
-import type { DashboardSource, SourceInfo } from "./source.ts";
+import type { DashboardSource, RememberFields, SourceInfo } from "./source.ts";
 
 /** `hippo://dashboard/whoami`, as `@hippocampus/mcp` serves it. */
 interface Whoami {
   agent: string | null;
   scopes: string[];
+  /** Missing on servers from before v2. */
+  name?: string;
   campaign: string;
   human: string;
+  humans?: { id: string }[];
 }
 
 const WHOAMI = "hippo://dashboard/whoami";
@@ -42,7 +46,7 @@ async function upstream<T>(fn: () => Promise<T>): Promise<T> {
 
 /**
  * A dashboard over an agent's MCP connection (`hippo dashboard --mcp`). It sees what that token sees:
- * reads need the `read` scope, and remembering and quest updates are filed under the token's agent.
+ * reads need the `read` scope, and remembering and goal updates are filed under the token's agent.
  * Rulings and new party members stay unavailable: they are the human's, not an agent's.
  * Async because the token's scopes decide which actions exist.
  */
@@ -70,11 +74,28 @@ export async function mcpSource(client: Client, opts: { url?: string } = {}): Pr
   });
   // An unbound connection would need an `agent` argument on every write, and the dashboard can't pick one.
   const can = (scope: string) => !!me?.agent && me.scopes.includes(scope);
+  // Servers from before goals have only `update_quest` (and the `quest` scope).
+  const canGoal = can("goal") || can("quest");
+  const canRemember = can("remember");
+  const listed = canGoal || canRemember ? (await upstream(() => client.listTools())).tools : [];
+  const tools = new Set(listed.map((t) => t.name));
+  const hasGoalTool = tools.has("update_goal");
+  // Servers from before confidential episodes and kinds' data don't take those inputs; say so instead of dropping them.
+  const rememberInputs = listed.find((t) => t.name === "remember")?.inputSchema.properties ?? {};
+  const rememberFields: RememberFields = { confidential: "confidential" in rememberInputs, data: "data" in rememberInputs };
 
   return {
     async info(): Promise<SourceInfo> {
       const w = await read<Whoami>(WHOAMI);
-      return { mode: "mcp", vault: { kind: "mcp", url: opts.url }, campaign: w.campaign, human: w.human, actor: { kind: "agent", id: w.agent ?? "unbound" } };
+      return {
+        mode: "mcp",
+        vault: { kind: "mcp", url: opts.url },
+        name: w.name ?? w.campaign,
+        campaign: w.campaign,
+        human: w.human,
+        humans: w.humans?.map((h) => h.id) ?? [w.human],
+        actor: { kind: "agent", id: w.agent ?? "unbound" },
+      };
     },
     overview: () => read("hippo://dashboard/overview"),
     catalog: () => read("hippo://dashboard/catalog"),
@@ -82,7 +103,28 @@ export async function mcpSource(client: Client, opts: { url?: string } = {}): Pr
     graph: () => read("hippo://dashboard/graph"),
     chronicle: (month) => read(`hippo://dashboard/chronicle/${encodeURIComponent(month || "latest")}`),
     search: (query, limit) => read(`hippo://dashboard/search?q=${encodeURIComponent(query)}${limit ? `&limit=${limit}` : ""}`),
-    remember: can("remember") ? async (input) => (await call<{ stored: { id: string; path: string } }>("remember", { ...input })).stored : undefined,
-    quest: can("quest") ? (ref, update) => call("update_quest", { quest: ref, ...update }) : undefined,
+    remember: canRemember
+      ? async (input) => {
+          const unsupported = (["confidential", "data"] as const).filter((f) => input[f] !== undefined && !rememberFields[f]);
+          if (unsupported.length) throw new HttpError(501, `This MCP server's remember doesn't take ${unsupported.join(" or ")}; upgrade the server`, "UNSUPPORTED");
+          return (await call<{ stored: { id: string; path: string } }>("remember", { ...input })).stored;
+        }
+      : undefined,
+    ...(canRemember ? { rememberFields } : {}),
+    goal: canGoal
+      ? async (ref, update) => {
+          if (hasGoalTool) return call("update_goal", { goal: ref, ...update });
+          const r = await call<{ quest: string; changes: string[] }>("update_quest", { quest: ref, ...goalToQuest(update) });
+          return { goal: r.quest, changes: r.changes };
+        }
+      : undefined,
+    quest: canGoal
+      ? async (ref, update) => {
+          // The server's own alias knows the goal (a new clock's default size); translate only without it.
+          if (tools.has("update_quest") || !hasGoalTool) return call("update_quest", { quest: ref, ...update });
+          const r = await call<{ goal: string; changes: string[] }>("update_goal", { goal: ref, ...questToGoal(update) });
+          return { quest: r.goal, changes: r.changes };
+        }
+      : undefined,
   };
 }

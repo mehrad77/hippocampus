@@ -6,14 +6,14 @@ import { emit, toast } from "../lib/events.ts";
 import { plural, titleCase } from "../lib/format.ts";
 import { useTerms } from "../lib/prefs.ts";
 import { href } from "../lib/routes.ts";
-import type { Catalog, IntroductionDecision, IntroductionResult, IntroductionView, Overview, PartyMember, SessionInfo } from "../lib/types.ts";
+import type { Catalog, HumanView, IntroductionDecision, IntroductionResult, IntroductionView, Overview, PartyMember, SessionInfo } from "../lib/types.ts";
 import { EntityLink } from "../ui/EntityLink.tsx";
 import { Icon } from "../ui/Icon.tsx";
 import { PageGate } from "../ui/PageGate.tsx";
 import { Dialog, Empty, Panel, RelTime, SkeletonPanel } from "../ui/Parts.tsx";
 import { errorMessage, settle, useHashTarget } from "../ui/play/actions.ts";
 import { PageHead } from "../ui/play/Bits.tsx";
-import { agentIdProblem, initials } from "../ui/play/model.ts";
+import { agentIdProblem, goalsOf, initials } from "../ui/play/model.ts";
 import { ConfirmDialog, DomainChips, Field } from "./setup/common.tsx";
 
 export default function PartyView() {
@@ -37,7 +37,11 @@ function Party({ session }: { session: SessionInfo }) {
       </div>
     );
 
-  const human = session.human ?? o.human;
+  // Who "you" are: the human the dashboard acts as. The vault may have several.
+  const human = session.actor?.kind === "human" ? session.actor.id : (session.human ?? o.human);
+  const humans: HumanView[] = o.humans ?? [{ id: o.human, domains: [] }];
+  const people = humans.map((h) => h.id);
+  const name = o.name ?? o.campaign;
   const canAdd = session.capabilities.party;
   const strangers = o.attention.unknownAgents;
   const intros = o.attention.introductions;
@@ -45,11 +49,11 @@ function Party({ session }: { session: SessionInfo }) {
   return (
     <div className="stack play" style={{ ["--gap" as string]: "28px" }}>
       <PageHead
-        kicker={v<React.ReactNode>(o.campaign, <>The party · {o.campaign}</>)}
+        kicker={v<React.ReactNode>(name, <>The party · {name}</>)}
         title={v(t("party"), "Character Sheets")}
         lede={v(
           <>
-            {o.party.length ? `${plural(o.party.length, "agent")}, and you.` : "No agents yet, only you."} Each card shows what an agent is responsible for, when it last sent a note, and how many of its notes wait for the next nightly update.
+            {o.party.length ? `${plural(o.party.length, "agent")}, and ${humans.length > 1 ? plural(humans.length, "person", "people") : "you"}.` : humans.length > 1 ? `No agents yet, only ${plural(humans.length, "person", "people")}.` : "No agents yet, only you."} Each card shows what an agent is responsible for, when it last sent a note, and how many of its notes wait for the next nightly update.
           </>,
           <>
             {o.party.length ? `${plural(o.party.length, "agent")} at the table, and you.` : "Only you at the table so far."} Each sheet says what an agent is trusted with, when you last heard from it, and what it's carrying for the next sleep.
@@ -65,7 +69,11 @@ function Party({ session }: { session: SessionInfo }) {
       />
 
       <ul className="sheets" aria-label={v("Agents", "Party members")}>
-        <PlayerSheet o={o} human={human} session={session} />
+        {[...humans]
+          .sort((a, b) => (a.id === human ? -1 : b.id === human ? 1 : 0))
+          .map((h) => (
+            <PlayerSheet key={h.id} o={o} h={h} me={h.id.toLowerCase() === human.toLowerCase()} several={humans.length > 1} session={session} />
+          ))}
         {members.map((p) => (
           <MemberSheet key={p.slug} p={p} />
         ))}
@@ -85,7 +93,7 @@ function Party({ session }: { session: SessionInfo }) {
 
       {strangers.length > 0 && <Strangers ids={strangers} canAdd={canAdd} onAdd={(id) => setAdding({ id })} />}
 
-      {canAdd && <AddMemberDialog open={!!adding} initialId={adding?.id ?? ""} party={o.party} human={human} onClose={() => setAdding(null)} />}
+      {canAdd && <AddMemberDialog open={!!adding} initialId={adding?.id ?? ""} party={o.party} human={human} humans={people} onClose={() => setAdding(null)} />}
       {session.capabilities.introductions && (
         <>
           <ApproveDialog intro={approving} human={human} onClose={() => setApproving(null)} />
@@ -98,26 +106,48 @@ function Party({ session }: { session: SessionInfo }) {
 
 // ── Sheets ─────────────────────────────────────────────────────────────────
 
-function PlayerSheet({ o, human, session }: { o: Overview; human: string; session: SessionInfo }) {
+/** One of the vault's people: the one the dashboard acts as ("you"), or another human. */
+function PlayerSheet({ o, h, me, several, session }: { o: Overview; h: HumanView; me: boolean; several: boolean; session: SessionInfo }) {
   const { t, v } = useTerms();
-  const owned = o.quests.filter((q) => q.owner && q.owner.slug.toLowerCase() === human.toLowerCase());
+  const human = h.id;
+  const owned = goalsOf(o).filter((q) => q.owner && q.owner.slug.toLowerCase() === human.toLowerCase());
   return (
-    <li className="sheet sheet--player" id="player">
+    <li className="sheet sheet--player" id={me ? "player" : `human-${h.id}`}>
       <header className="sheet__head">
         <span className="sheet__sigil sheet__sigil--player" aria-hidden>
           <Icon name="d20" size={28} />
         </span>
         <div>
-          <div className="sheet__class">{v("You", "The Player")}</div>
+          <div className="sheet__class">{me ? v("You", "The Player") : v("Person", "Player")}</div>
           <h2 className="sheet__name">{human}</h2>
-          <div className="mono small muted">{v("a person, not an agent", "human · you")}</div>
+          <div className="mono small muted">
+            {me ? v("a person, not an agent", "human · you") : v("a person, not an agent", "human")}
+            {h.github && <> · @{h.github}</>}
+          </div>
         </div>
       </header>
-      <p className="sheet__lane">{v("What you write outranks every agent. Anything you write, add or decide becomes confirmed, and no agent can replace it.", "Your word outranks every agent. What you write, scribe or rule becomes canon, and no agent can replace it.")}</p>
+      <p className="sheet__lane">
+        {several
+          ? v(
+              "A person's word outranks every agent. Between people, whoever's domain it is wins; otherwise their disagreement comes to the Disputes page.",
+              "A player's word outranks every agent. Between players, whoever holds the domain wins; otherwise the council decides.",
+            )
+          : v("What you write outranks every agent. Anything you write, add or decide becomes confirmed, and no agent can replace it.", "Your word outranks every agent. What you write, scribe or rule becomes canon, and no agent can replace it.")}
+      </p>
       <dl className="sheet__rows">
         <dt>{v("Responsible for", "Authority")}</dt>
         <dd>
-          <span className="chip chip--gold">{v("everything", "every domain")}</span>
+          {h.domains.length ? (
+            <span className="chips">
+              {h.domains.map((d) => (
+                <span key={d} className="chip chip--gold">
+                  {d}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span className="chip chip--gold">{several ? v("everything, shared", "every domain, shared") : v("everything", "every domain")}</span>
+          )}
         </dd>
         <dt>{v("Decisions", "Rulings")}</dt>
         <dd>
@@ -138,7 +168,7 @@ function PlayerSheet({ o, human, session }: { o: Overview; human: string; sessio
           </>
         )}
       </dl>
-      {session.capabilities.remember && (
+      {me && session.capabilities.remember && (
         <button type="button" className="btn btn--sm sheet__action" onClick={() => emit("scribe:open", {})}>
           <Icon name="quill" size={16} /> {t("scribe")}
         </button>
@@ -451,7 +481,7 @@ function DismissDialog({ intro, onClose }: { intro: IntroductionView | null; onC
 
 // ── Add a member ───────────────────────────────────────────────────────────
 
-function AddMemberDialog({ open, initialId, party, human, onClose }: { open: boolean; initialId: string; party: PartyMember[]; human: string; onClose: () => void }) {
+function AddMemberDialog({ open, initialId, party, human, humans, onClose }: { open: boolean; initialId: string; party: PartyMember[]; human: string; humans: string[]; onClose: () => void }) {
   const { v, look } = useTerms();
   const catalog = useResource<Catalog>(open ? "/catalog" : null);
   const [seed, setSeed] = useState<string | null>(null);
@@ -478,7 +508,7 @@ function AddMemberDialog({ open, initialId, party, human, onClose }: { open: boo
     }
   }
 
-  const idProblem = agentIdProblem(id, party.map((p) => p.slug), human, look);
+  const idProblem = agentIdProblem(id, party.map((p) => p.slug), humans, look);
   const titleProblem = title.trim() ? undefined : v("Enter a display name.", "Give it a name for the sheet.");
   const domains = catalog.data?.domains ?? [];
   const slug = id.trim().toLowerCase();

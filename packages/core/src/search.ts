@@ -1,7 +1,12 @@
 import MiniSearch from "minisearch";
 import { displayName, getSummary, type Entity } from "./entity.ts";
+import type { Episode } from "./episode.ts";
+import { gistMax } from "./kinds.ts";
 import { humanText } from "./markdown.ts";
-import { fold } from "./text.ts";
+import type { Fact } from "./schema.ts";
+import type { SchemaRegistry } from "./schema-registry.ts";
+import { isSecretRef } from "./secrets.ts";
+import { fold, truncate } from "./text.ts";
 import type { Vault } from "./vault.ts";
 
 /** What search indexes: entities and pending (non-secret) episodes. */
@@ -35,23 +40,42 @@ export interface Searcher {
 /** Builds a searcher that reflects `vault` as it is now (including unsaved changes). */
 export type SearcherFactory = (vault: Vault) => Searcher | Promise<Searcher>;
 
-/** Searchable text of an entity. Secret facts never appear here. */
-export function entityText(e: Entity): string {
+/**
+ * Whether a fact stays out of search, prompts and summaries: secret refs, facts marked confidential,
+ * and fields the schema declares confidential or as identity keys.
+ */
+export function isHiddenFact(schema: SchemaRegistry | undefined, type: string, field: string, f: Pick<Fact, "value" | "confidential">): boolean {
+  if (isSecretRef(f.value) || f.confidential) return true;
+  const def = schema?.fieldDef(type, field);
+  return !!(def?.confidential || def?.identity_key || def?.secret);
+}
+
+/** Searchable text of an entity. Secret and confidential facts never appear here. */
+export function entityText(e: Entity, schema?: SchemaRegistry): string {
   const facts = Object.entries(e.fm.facts)
-    .filter(([, f]) => !String(f.value).startsWith("secret://"))
+    .filter(([k, f]) => !isHiddenFact(schema, e.fm.type, k, f))
     .map(([k, f]) => `${k.replace(/_/g, " ")} ${f.value}`)
     .join(" ");
   return [getSummary(e), facts, e.fm.tags.join(" "), e.fm.lane ?? "", humanText(e.body)].join("\n");
 }
 
+/** What of an episode search may see: nothing if secret or confidential, only the gist for gist kinds, none for text-less kinds. */
+export function searchableEpisodeText(schema: SchemaRegistry, ep: Episode): string | undefined {
+  if (ep.secret || ep.confidential) return undefined;
+  const { def } = schema.kind(ep.kind);
+  if (def.text === "forbidden") return "";
+  return def.text === "gist" ? truncate(ep.text, gistMax(def)) : ep.text;
+}
+
 export function searchDocs(vault: Vault): SearchDoc[] {
   const docs: SearchDoc[] = [];
   for (const e of vault.entities.values()) {
-    docs.push({ id: e.slug, kind: "entity", type: e.fm.type, title: displayName(e), aliases: [e.slug, ...e.fm.aliases].join(" "), text: entityText(e) });
+    docs.push({ id: e.slug, kind: "entity", type: e.fm.type, title: displayName(e), aliases: [e.slug, ...e.fm.aliases].join(" "), text: entityText(e, vault.schema) });
   }
   for (const ep of vault.episodes) {
-    if (ep.secret) continue;
-    docs.push({ id: ep.id, kind: "episode", type: ep.kind, title: "", aliases: ep.about.join(" "), text: ep.text });
+    const text = searchableEpisodeText(vault.schema, ep);
+    if (text === undefined) continue;
+    docs.push({ id: ep.id, kind: "episode", type: ep.kind, title: "", aliases: ep.about.join(" "), text });
   }
   return docs;
 }

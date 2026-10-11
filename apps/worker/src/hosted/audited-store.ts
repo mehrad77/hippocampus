@@ -20,8 +20,8 @@ import { checkInbox, type Quotas } from "./quotas.ts";
 // `Hippo-Actor` trailer; the runtime knows who is really asking (the principal), so a claim the
 // principal can't make is refused, and the change set is audited as the claimed actor.
 
-/** Who is really behind a store: the signed-in human, the relay's curator, or an MCP key. */
-export type Principal = { kind: "human" } | { kind: "curator" } | { kind: "agent"; agent?: string; scopes: readonly string[] };
+/** Who is really behind a store: the signed-in human, the relay's curator, an MCP key, or the runtime's own format migration. */
+export type Principal = { kind: "human" } | { kind: "curator" } | { kind: "migration" } | { kind: "agent"; agent?: string; scopes: readonly string[] };
 
 /** Reads pinned to one commit, which is the base its writes are computed from. */
 export interface PinnedStore extends VaultStore {

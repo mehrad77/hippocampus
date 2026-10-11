@@ -1,6 +1,7 @@
 import { AGENT_ID, RESERVED_AGENT_IDS } from "@hippocampus/core";
 import { HttpError } from "@hippocampus/dashboard";
 import type { SqlDriver, SqlValue } from "@hippocampus/index";
+import { LEGACY_GOAL_SCOPE, isScope, normalizeScopes } from "@hippocampus/mcp";
 import { hashToken, newToken } from "../auth.ts";
 import { storedQuotas, type Quotas } from "./quotas.ts";
 
@@ -52,16 +53,26 @@ export interface VaultRecord {
 export const KEY_KINDS = ["agent", "curator", "bound"] as const;
 export type KeyKind = (typeof KEY_KINDS)[number];
 
-/** MCP's scopes, plus `curate` for the curator's own key. */
-export const KEY_SCOPES = ["read", "remember", "quest", "curate"] as const;
+/**
+ * MCP's scopes, plus `curate` for the curator's own key. `quest` is `goal`'s old name: keys that may
+ * update goals store both, so a rolled-back Worker (which knows only `quest`) keeps honoring them,
+ * and stored scopes are read back under their current names.
+ */
+export const KEY_SCOPES = ["read", "remember", "goal", "quest", "curate"] as const;
 export type KeyScope = (typeof KEY_SCOPES)[number];
 
-/** What each kind of key may do. Only `bound` keys choose (from `read`, `remember`, `quest`). */
+/** What each kind of key may do. Only `bound` keys choose (from `read`, `remember`, `goal`). */
 export const KIND_SCOPES: Record<KeyKind, readonly KeyScope[]> = {
-  agent: ["read", "remember", "quest"],
+  agent: ["read", "remember", "goal"],
   curator: ["read", "curate"],
-  bound: ["read", "remember", "quest"],
+  bound: ["read", "remember", "goal"],
 };
+
+/** Scopes as stored: `goal` with its old name `quest` beside it. */
+const stored = (scopes: readonly KeyScope[]): KeyScope[] => scopes.flatMap((s): KeyScope[] => (s === "goal" ? ["goal", LEGACY_GOAL_SCOPE] : s === LEGACY_GOAL_SCOPE ? [] : [s]));
+
+/** Stored scopes under their current names (`quest` → `goal`), once each. */
+export const currentScopes = (scopes: readonly unknown[]): KeyScope[] => normalizeScopes(scopes.filter(isScope));
 
 export interface KeyRecord {
   /** SHA-256 of the key, hex. The key itself is never stored. */
@@ -125,8 +136,10 @@ export function keyRequest(body: unknown): KeyRequest {
   }
   const agent = agentId(b.agent);
   const allowed = KIND_SCOPES.bound;
-  const asked = b.scopes === undefined ? allowed : b.scopes;
-  if (!Array.isArray(asked)) throw new HttpError(400, `scopes: expected a list from ${allowed.join(", ")}`, "INVALID");
+  const raw = b.scopes === undefined ? allowed : b.scopes;
+  if (!Array.isArray(raw)) throw new HttpError(400, `scopes: expected a list from ${allowed.join(", ")}`, "INVALID");
+  // `quest` is still accepted, as `goal`.
+  const asked = (raw as unknown[]).map((s) => (s === LEGACY_GOAL_SCOPE ? "goal" : s));
   const unknown = asked.filter((s) => !allowed.includes(s as KeyScope));
   if (unknown.length) throw new HttpError(400, `scopes: unknown ${unknown.map(String).join(", ")}; choose from ${allowed.join(", ")}`, "INVALID");
   if (!asked.includes("read")) throw new HttpError(400, "scopes: every key needs read", "INVALID");
@@ -234,7 +247,7 @@ const toVault = (r: VaultRow): VaultRecord => {
 function toKey(r: KeyRow): KeyRecord {
   const scopes = (() => {
     try {
-      return (JSON.parse(r.scopes) as unknown[]).filter(isKeyScope);
+      return currentScopes(JSON.parse(r.scopes) as unknown[]);
     } catch {
       return [];
     }
@@ -518,7 +531,7 @@ export class Registry {
       `INSERT INTO keys (hash, vault_id, kind, agent, scopes, label, created)
        SELECT ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM keys WHERE vault_id = ?) < ?
        RETURNING *`,
-      [hash, vaultId, req.kind, req.agent ?? null, JSON.stringify(req.scopes), req.label, this.stamp(), vaultId, MAX_KEYS_PER_VAULT],
+      [hash, vaultId, req.kind, req.agent ?? null, JSON.stringify(stored(req.scopes)), req.label, this.stamp(), vaultId, MAX_KEYS_PER_VAULT],
     );
     if (!row) throw new HttpError(409, `A vault can have ${MAX_KEYS_PER_VAULT} keys; revoke some first.`, "TOO_MANY_KEYS");
     return { token, key: toKey(row) };

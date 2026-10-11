@@ -1,12 +1,17 @@
 import { CONFIG_PATH, parseConfig } from "./config.ts";
+import { VaultError } from "./errors.ts";
 import { assertVaultVersion } from "./migrations.ts";
-import { basename, displayName, parseEntity, renderEntity, type Entity } from "./entity.ts";
+import { basename, displayName, formatValue, parseEntity, renderEntity, type Entity } from "./entity.ts";
 import { parseEpisode, renderEpisode, type Episode } from "./episode.ts";
 import { isIntroductionPath, parseIntroduction, renderIntroduction, type Introduction } from "./introduction.ts";
 import { parseDoc, renderDoc } from "./markdown.ts";
-import { DisputeFrontmatter, type Claim, type HippoConfig } from "./schema.ts";
+import { DisputeFrontmatter, EntityFrontmatter, type Capability, type Claim, type HippoConfig, type HumanDef } from "./schema.ts";
+import { sameValue } from "./reconcile.ts";
+import { loadSchema, type SchemaRegistry } from "./schema-registry.ts";
+import { isSecretRef } from "./secrets.ts";
 import { applyChanges, type Change, type CommitMeta, type VaultStore } from "./store.ts";
-import { localParts, normalizeName, slugify } from "./text.ts";
+import { channelOf, dataLine, gistMax } from "./kinds.ts";
+import { hash, localParts, normalizeName, parseFactKey, slugify, truncate } from "./text.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
 export interface Dispute {
@@ -16,7 +21,11 @@ export interface Dispute {
   body: string;
 }
 
-export type Authority = "human" | "authority" | "none";
+/**
+ * How much weight a source's word carries about one entity or field, highest first: a human whose
+ * domains cover it, any other human, an agent with lane authority, anyone else. See reconcile.ts.
+ */
+export type Authority = "human_domain" | "human" | "authority" | "none";
 
 export interface VaultOptions {
   now?: () => Date;
@@ -24,7 +33,8 @@ export interface VaultOptions {
   skipVersionCheck?: boolean;
 }
 
-export class VaultError extends Error {}
+// Its own module, so modules vault.ts imports can throw it without an import cycle.
+export { VaultError };
 
 /** Everything a curator step can change, deep-copied (see `Vault.snapshot`). */
 export interface VaultSnapshot {
@@ -58,10 +68,14 @@ export class Vault {
   private readonly pendingFiles = new Map<string, string>();
   private readonly removals = new Set<string>();
   private readonly now: () => Date;
+  /** Template notes by type name, read once at load (`createEntity` stays synchronous). */
+  private readonly templates = new Map<string, string>();
 
   private constructor(
     readonly store: VaultStore,
     readonly config: HippoConfig,
+    /** Types and kinds; code asks it for capabilities instead of naming types. */
+    readonly schema: SchemaRegistry,
     opts: VaultOptions,
   ) {
     this.now = opts.now ?? (() => new Date());
@@ -70,7 +84,15 @@ export class Vault {
   static async load(store: VaultStore, opts: VaultOptions = {}): Promise<Vault> {
     const config = parseConfig(await store.read(CONFIG_PATH));
     if (!opts.skipVersionCheck) assertVaultVersion(config);
-    const vault = new Vault(store, config, opts);
+    const schema = await loadSchema(store, config);
+    const vault = new Vault(store, config, schema, opts);
+    vault.warnings.push(...schema.warnings);
+    for (const t of schema.types()) {
+      if (!t.template) continue;
+      const raw = await store.read(t.template);
+      if (raw === undefined) vault.warnings.push(`type "${t.name}": template ${t.template} not found; new notes start blank`);
+      else vault.templates.set(t.name, raw);
+    }
     await vault.reload();
     return vault;
   }
@@ -81,8 +103,8 @@ export class Vault {
     this.aliasIndex.clear();
     this.idIndex.clear();
     const { folders } = this.config;
-    for (const [type, def] of Object.entries(this.config.types)) {
-      for (const path of await this.store.list(def.folder)) {
+    for (const { type, folder } of this.schema.folders()) {
+      for (const path of await this.store.list(folder)) {
         if (!path.endsWith(".md")) continue;
         const raw = await this.store.read(path);
         if (raw === undefined) continue;
@@ -166,28 +188,61 @@ export class Vault {
     return [...this.entities.values()].filter((e) => e.fm.type === type);
   }
 
-  /** A party note found by any name (for display). Identity and authority use `partyMember`. */
-  party(agent: string): Entity | undefined {
+  /** Entities whose type has `cap` (own or inherited). */
+  withCapability(cap: Capability): Entity[] {
+    return [...this.entities.values()].filter((e) => this.schema.has(e.fm.type, cap));
+  }
+
+  /** An agent's note found by any name (for display). Identity and authority use `actorMember`. */
+  actor(agent: string): Entity | undefined {
     const e = this.resolve(agent);
-    return e?.fm.type === "party" ? e : undefined;
+    return e && this.schema.has(e.fm.type, "actor") ? e : undefined;
   }
 
-  /** The party member whose slug is exactly `id`: an agent's title or alias never grants its authority. */
-  partyMember(id: string): Entity | undefined {
+  /** The agent whose slug is exactly `id`: an agent's title or alias never grants its authority. */
+  actorMember(id: string): Entity | undefined {
     const e = this.entities.get(id);
-    return e?.fm.type === "party" ? e : undefined;
+    return e && this.schema.has(e.fm.type, "actor") ? e : undefined;
   }
 
+  /** @deprecated Use `actor`. */
+  party(agent: string): Entity | undefined {
+    return this.actor(agent);
+  }
+
+  /** @deprecated Use `actorMember`. */
+  partyMember(id: string): Entity | undefined {
+    return this.actorMember(id);
+  }
+
+  /** Whether `agent` is one of the vault's humans. A missing author, or the generic `human`, is the primary human. */
   isHuman(agent: string | undefined): boolean {
-    return agent === undefined || agent === "human" || agent.toLowerCase() === this.config.human.toLowerCase();
+    return agent === undefined || agent === "human" || !!this.human(agent);
   }
 
-  /** How much weight `agent`'s word carries about `entity` (lane authority matches entity tags/type). */
-  authorityOf(agent: string | undefined, entity: Entity): Authority {
-    if (this.isHuman(agent)) return "human";
-    const domains = this.partyMember(agent!)?.fm.authority ?? [];
-    const scope = new Set([...entity.fm.tags.map((t) => t.toLowerCase()), entity.fm.type]);
-    return domains.some((d) => scope.has(d.toLowerCase())) ? "authority" : "none";
+  /** The human `id` names (case-insensitive), or the primary human when `id` is missing or the generic `human`. */
+  human(id?: string): HumanDef | undefined {
+    const humans = this.config.humans;
+    if (id === undefined || id === "human") return humans[0];
+    const key = id.toLowerCase();
+    return humans.find((h) => h.id.toLowerCase() === key);
+  }
+
+  /** The human a login on `host` belongs to (their `github:` or `gitlab:`), else the primary human. */
+  humanFor(login: string | undefined, host: "github" | "gitlab" = "github"): HumanDef {
+    return humanByLogin(this.config.humans, login, host) ?? this.config.humans[0]!;
+  }
+
+  /**
+   * How much weight `agent`'s word carries about `entity` (and `field`, a `facts:` key): domains
+   * (a human's, or an agent's lane authority) match the entity's tags or type, or the field's `domain`.
+   */
+  authorityOf(agent: string | undefined, entity: Entity, field?: string): Authority {
+    const scope = new Set([...entity.fm.tags.map((t) => t.toLowerCase()), entity.fm.type.toLowerCase()]);
+    const fieldDomain = field === undefined ? undefined : this.schema.fieldDef(entity.fm.type, parseFactKey(field).field)?.domain?.toLowerCase();
+    const covers = (domains: string[]) => domains.some((d) => scope.has(d.toLowerCase()) || d.toLowerCase() === fieldDomain);
+    if (this.isHuman(agent)) return covers(this.human(agent)?.domains ?? []) ? "human_domain" : "human";
+    return covers(this.actorMember(agent!)?.fm.authority ?? []) ? "authority" : "none";
   }
 
   /** Entities linked from or to `slug`. */
@@ -209,8 +264,8 @@ export class Vault {
   // ── Mutation ────────────────────────────────────────────────────────────────
 
   folderFor(type: string): string {
-    const def = this.config.types[type];
-    if (!def) throw new VaultError(`unknown entity type "${type}"; known: ${Object.keys(this.config.types).join(", ")}`);
+    const def = this.schema.type(type);
+    if (!def) throw new VaultError(`unknown entity type "${type}"; known: ${this.schema.types().map((t) => t.name).join(", ")}`);
     return def.folder;
   }
 
@@ -221,27 +276,51 @@ export class Vault {
     return slug;
   }
 
+  /**
+   * A new note of `type`. It starts from the type's template when it has one: the template's
+   * frontmatter fills in defaults, and its body (`{{title}}` and `{{date}}` filled in) becomes the
+   * note's. Otherwise the body is a `## Notes` heading.
+   */
   createEntity(input: { type: string; title: string; aliases?: string[]; tags?: string[]; by?: string; slug?: string }): Entity {
     const slug = input.slug && !this.entities.has(input.slug) ? input.slug : this.uniqueSlug(input.title);
     const aliases = [...new Set([input.title, ...(input.aliases ?? [])])].filter((a) => a && a !== slug);
-    const e: Entity = {
-      slug,
-      path: `${this.folderFor(input.type)}/${slug}.md`,
-      fm: {
-        id: undefined,
-        type: input.type,
-        title: input.title,
-        aliases,
-        tags: [...new Set(input.tags ?? [])],
-        relations: [],
-        facts: {},
-      },
-      body: "\n## Notes\n",
-    };
+    const path = `${this.folderFor(input.type)}/${slug}.md`;
+    const own = { type: input.type, title: input.title, aliases, tags: [...new Set(input.tags ?? [])] };
+    const e: Entity = { slug, path, fm: { id: undefined, ...own, relations: [], facts: {} }, body: "\n## Notes\n" };
+    const template = this.templates.get(input.type);
+    if (template !== undefined) {
+      const fill = (text: string) => text.replace(/\{\{\s*title\s*\}\}/g, input.title).replace(/\{\{\s*date\s*\}\}/g, localParts(this.nowIso(), this.config.timezone).date);
+      const { data, body } = parseDoc(template);
+      const defaults: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(data)) {
+        if (v === null || v === "" || (Array.isArray(v) && !v.length) || k === "id") continue;
+        defaults[k] = typeof v === "string" ? fill(v) : v;
+      }
+      const tags = [...new Set([...own.tags, ...(Array.isArray(defaults.tags) ? defaults.tags.map(String) : [])])];
+      const parsed = EntityFrontmatter.safeParse({ ...defaults, ...own, tags });
+      if (parsed.success) e.fm = { ...parsed.data, id: undefined };
+      else this.warnings.push(`template for "${input.type}" has invalid frontmatter; ${slug} starts without its defaults`);
+      e.body = fill(body).trim() ? `\n${fill(body).replace(/^\n+/, "")}` : e.body;
+    }
     this.entities.set(slug, e);
     this.indexEntity(e);
     this.touch(e, input.by);
     return e;
+  }
+
+  /**
+   * Drop a note created in this batch and never written (the curator found it was an existing one
+   * after all). A note already in the store is never discarded this way.
+   */
+  discardEntity(e: Entity): void {
+    if (this.entities.get(e.slug) !== e) return;
+    this.entities.delete(e.slug);
+    for (const [key, slugs] of this.aliasIndex) {
+      slugs.delete(e.slug);
+      if (!slugs.size) this.aliasIndex.delete(key);
+    }
+    if (e.fm.id && this.idIndex.get(e.fm.id) === e.slug) this.idIndex.delete(e.fm.id);
+    this.dirty.delete(e.path);
   }
 
   addAliases(e: Entity, aliases: string[]): void {
@@ -259,13 +338,56 @@ export class Vault {
     this.dirty.add(e.path);
   }
 
+  /**
+   * Dispute note name for a `facts:` key. A scoped key adds its scope and a short hash of the whole
+   * key (`dispute-x-greeting-lang-pt-1a2b3c`): slugs fold `lang:pt`, `lang-pt` and `lang.pt` (and the
+   * unscoped `greeting_lang_pt`) together, and each key needs a note of its own.
+   */
   disputeSlug(entity: string, field: string): string {
-    return `dispute-${entity}-${field}`.replace(/_/g, "-");
+    const { field: base, scope } = parseFactKey(field);
+    return `dispute-${entity}-${base}${scope ? `-${slugify(scope)}-${hash(field).slice(0, 6)}` : ""}`.replace(/_/g, "-");
+  }
+
+  /** Proposal note name for a `facts:` key (`proposal-x-greeting-lang-pt-1a2b3c`). */
+  proposalSlug(entity: string, field: string): string {
+    return this.disputeSlug(entity, field).replace(/^dispute-/, "proposal-");
+  }
+
+  /** Where a key's dispute (or proposal) note may live: its slug, that slug with a hash when taken by another key, and the slug older versions gave it. */
+  private noteSlugs(entity: string, field: string, kind: "dispute" | "proposal"): string[] {
+    const { field: base, scope } = parseFactKey(field);
+    const primary = this.disputeSlug(entity, field);
+    const legacy = `dispute-${entity}-${base}${scope ? `-${slugify(scope)}` : ""}`.replace(/_/g, "-");
+    return [primary, `${primary}-${hash(field).slice(0, 6)}`, legacy].map((s) => s.replace(/^dispute-/, `${kind}-`));
+  }
+
+  /** The dispute (or proposal) note about `field` of `entity`, if there is one: always one about that exact key. */
+  disputeFor(entity: string, field: string, kind: "dispute" | "proposal" = "dispute"): Dispute | undefined {
+    for (const slug of this.noteSlugs(entity, field, kind)) {
+      const d = this.disputes.get(slug);
+      if (d && d.fm.field === field && unwrapLink(d.fm.entity) === entity) return d;
+    }
+    return undefined;
+  }
+
+  /** The slug for a new note about `field`: the first candidate no other key's note holds. */
+  private freeSlug(entity: string, field: string, kind: "dispute" | "proposal"): string {
+    const [primary, hashed] = this.noteSlugs(entity, field, kind);
+    return this.disputes.has(primary!) ? hashed! : primary!;
+  }
+
+  /** Whether a dispute's claims or the fact it's about are confidential: then no value of it is shown. */
+  disputeHidden(d: Dispute, entity: Entity | undefined = this.resolve(d.fm.entity)): boolean {
+    if (d.fm.claims.some((c) => c.confidential)) return true;
+    if (!entity) return false;
+    const f = entity.fm.facts[d.fm.field];
+    const def = this.schema.fieldDef(entity.fm.type, d.fm.field);
+    return !!(f?.confidential || def?.confidential || def?.identity_key);
   }
 
   openDispute(entity: Entity, field: string, claims: Claim[]): Dispute {
-    const slug = this.disputeSlug(entity.slug, field);
-    let d = this.disputes.get(slug);
+    let d = this.disputeFor(entity.slug, field);
+    const slug = d?.slug ?? this.freeSlug(entity.slug, field, "dispute");
     const now = this.nowIso();
     if (!d) {
       d = {
@@ -284,10 +406,82 @@ export class Vault {
     }
     for (const c of claims) {
       const same = d.fm.claims.find((x) => String(x.value) === String(c.value) && x.by === c.by);
-      if (same) same.src = [...new Set([...same.src, ...c.src])];
-      else d.fm.claims.push(c);
+      if (same) {
+        same.src = [...new Set([...same.src, ...c.src])];
+        if (c.confidential) same.confidential = true;
+      } else d.fm.claims.push(c);
     }
-    d.body = renderDisputeBody(d, displayName(entity));
+    d.body = renderDisputeBody(d, displayName(entity), this.disputeHidden(d, entity));
+    this.dirty.add(d.path);
+    return d;
+  }
+
+  /**
+   * Someone suggests a value for a field only a human sets. The note waits for the human (`ruling:`
+   * applies it, `state: declined` turns it down). A value the human already holds closes it at once
+   * as `already_present`; one the human declined before isn't raised again.
+   */
+  openProposal(entity: Entity, field: string, claim: Claim, evidence?: string): Dispute {
+    let d = this.disputeFor(entity.slug, field, "proposal");
+    const slug = d?.slug ?? this.freeSlug(entity.slug, field, "proposal");
+    const now = this.nowIso();
+    if (!d) {
+      d = {
+        slug,
+        path: `${this.config.folders.disputes}/${slug}.md`,
+        fm: { type: "dispute", kind: "proposal", entity: link(entity.slug), field, status: "open", state: "pending", claims: [], opened: now },
+        body: "",
+      };
+      this.disputes.set(slug, d);
+    }
+    const declined = d.fm.status === "resolved" && d.fm.state === "declined" && d.fm.claims.some((c) => String(c.value) === String(claim.value));
+    if (declined) return d;
+    const current = entity.fm.facts[field];
+    const present = !!current && current.status !== "retconned" && this.isHuman(current.by) && !isSecretRef(claim.value) && sameValue(current.value, claim.value);
+    if (d.fm.status === "resolved" || present) {
+      d.fm.ruling = undefined;
+      d.fm.resolved = undefined;
+      d.fm.opened = d.fm.status === "resolved" ? now : d.fm.opened;
+      d.fm.status = "open";
+      d.fm.state = "pending";
+    }
+    const same = d.fm.claims.find((x) => String(x.value) === String(claim.value) && x.by === claim.by);
+    if (same) {
+      same.src = [...new Set([...same.src, ...claim.src])];
+      if (claim.confidential) same.confidential = true;
+    } else d.fm.claims.push(claim);
+    if (evidence?.trim()) d.fm.evidence = evidence.trim();
+    if (claim.confidence !== undefined) d.fm.confidence = claim.confidence;
+    if (present) {
+      d.fm.state = "already_present";
+      d.fm.status = "resolved";
+      d.fm.resolved = now;
+    }
+    d.body = renderDisputeBody(d, displayName(entity), this.disputeHidden(d, entity));
+    this.dirty.add(d.path);
+    return d;
+  }
+
+  /**
+   * Two notes that look like one thing (an identity key says so, their names don't). The human merges
+   * them by hand or declines; a declined pair isn't raised again.
+   */
+  openMerge(a: Entity, b: Entity, field: string, evidence: string): Dispute {
+    const [x, y] = [a.slug, b.slug].sort();
+    const slug = `merge-${x}-${y}`;
+    let d = this.disputes.get(slug);
+    if (d?.fm.status === "resolved") return d;
+    if (!d) {
+      d = {
+        slug,
+        path: `${this.config.folders.disputes}/${slug}.md`,
+        fm: { type: "dispute", kind: "merge", entity: link(a.slug), field, status: "open", state: "pending", claims: [], targets: [link(x!), link(y!)], opened: this.nowIso() },
+        body: "",
+      };
+      this.disputes.set(slug, d);
+    }
+    d.fm.evidence = evidence;
+    d.body = renderDisputeBody(d, displayName(a));
     this.dirty.add(d.path);
     return d;
   }
@@ -295,6 +489,11 @@ export class Vault {
   resolveDispute(d: Dispute): void {
     d.fm.status = "resolved";
     d.fm.resolved = this.nowIso();
+    // A proposal's or merge's note says where it stands; a conflict's body stays as it was.
+    if (d.fm.kind === "proposal" || d.fm.kind === "merge") {
+      const e = this.resolve(d.fm.entity);
+      d.body = renderDisputeBody(d, e ? displayName(e) : unwrapLink(d.fm.entity), this.disputeHidden(d, e));
+    }
     this.dirty.add(d.path);
   }
 
@@ -344,19 +543,25 @@ export class Vault {
     return `${this.config.folders.chronicle}/${day.slice(0, 4)}/${day.slice(5, 7)}/${day}.md`;
   }
 
-  /** Append an episode to its day's chronicle as a callout with a block id, so facts can cite it. */
+  /**
+   * Append an episode to its day's chronicle as a callout with a block id, so facts can cite it.
+   * A confidential episode shows only a placeholder, a gist kind its gist, and a kind without text
+   * (or an episode that has none) a line built from its data. The header names the kind, and its
+   * channel when the data has one (`interaction/call`).
+   */
   async appendChronicle(ep: Episode, touched: string[], text = ep.text): Promise<void> {
     const path = this.chroniclePath(ep.at);
     let content = this.pendingFiles.get(path) ?? (await this.store.read(path));
     const { date: day, time } = localParts(ep.at, this.config.timezone);
     if (!content) content = renderDoc({ type: "chronicle", date: day }, `# ${day}\n`);
     if (content.includes(`^${ep.id}\n`) || content.endsWith(`^${ep.id}`)) return;
-    const quoted = text
+    const { kind, body } = chronicleEntry(this.schema, ep, text);
+    const quoted = body
       .split("\n")
       .map((l) => `> ${l}`.trimEnd())
       .join("\n");
     const links = touched.length ? `\n>\n> ↳ ${touched.map((s) => link(s)).join(" · ")}` : "";
-    content = `${content.trimEnd()}\n\n> [!episode] ${time} · ${link(ep.agent)} · ${ep.kind}\n${quoted}${links}\n\n^${ep.id}\n`;
+    content = `${content.trimEnd()}\n\n> [!episode] ${time} · ${link(ep.agent)} · ${kind}\n${quoted}${links}\n\n^${ep.id}\n`;
     this.pendingFiles.set(path, content);
   }
 
@@ -423,7 +628,7 @@ export class Vault {
     for (const path of this.dirty) {
       const e = byPath.get(path);
       if (e) {
-        out.push({ path, content: renderEntity(e) });
+        out.push({ path, content: renderEntity(e, { goal: this.schema.has(e.fm.type, "goal") }) });
         continue;
       }
       const d = disputesByPath.get(path);
@@ -448,17 +653,65 @@ export class Vault {
   }
 }
 
-function renderDisputeBody(d: Dispute, entityName: string): string {
-  const claims = d.fm.claims
-    .map((c) => `- **${c.value}** — ${c.by ? link(c.by) : "human"}${c.at ? ` on ${c.at.slice(0, 10)}` : ""}${c.src.length ? ` (${c.src.join(", ")})` : ""}`)
+/** What the chronicle shows of an episode: its header kind (`kind` or `kind/channel`) and its body. */
+export function chronicleEntry(schema: SchemaRegistry, ep: Episode, text = ep.text): { kind: string; body: string } {
+  const resolved = schema.kind(ep.kind);
+  const name = resolved.unknown ? slugify(ep.kind) : resolved.name;
+  const channel = channelOf(ep.data);
+  const kind = channel ? `${name}/${channel}` : name;
+  const def = resolved.def;
+  if (ep.confidential) return { kind, body: "(confidential)" };
+  if (def.text === "forbidden" || !text.trim()) return { kind, body: dataLine(def, ep.data) };
+  return { kind, body: def.text === "gist" ? truncate(text, gistMax(def)) : text };
+}
+
+function claimLines(d: Dispute, show: (v: Claim["value"]) => string): string {
+  return d.fm.claims
+    .map((c) => `- **${show(c.value)}** — ${c.by ? link(c.by) : "human"}${c.at ? ` on ${c.at.slice(0, 10)}` : ""}${c.src.length ? ` (${c.src.join(", ")})` : ""}`)
     .join("\n");
+}
+
+/** A dispute note's body. `hidden` (a confidential claim or fact) masks every value, so the note shows none of them. */
+function renderDisputeBody(d: Dispute, entityName: string, hidden = false): string {
+  const show = (v: Claim["value"]) => formatValue(v, { confidential: hidden });
+  const evidence = d.fm.evidence ? `\n> ${d.fm.evidence.replace(/\n/g, "\n> ")}\n` : "";
+  if (d.fm.kind === "proposal") {
+    const footer =
+      d.fm.state === "already_present"
+        ? `> [!check] Already present\n> ${entityName} already has this value, set by a human. Nothing to do.`
+        : `> [!question] Your call\n> Only a human sets **${d.fm.field}**. Set \`ruling:\` in this note's properties to the value to apply (or pick one above), or set \`state: declined\` to turn it down. The next sleep applies it.`;
+    return `# ✎ ${entityName} · ${d.fm.field}
+
+Proposed value for **${d.fm.field}** of ${d.fm.entity}:
+
+${claimLines(d, show)}
+${evidence}
+${footer}
+`;
+  }
+  if (d.fm.kind === "merge") {
+    const [a = d.fm.entity, b = ""] = d.fm.targets ?? [];
+    return `# ⇄ ${a} · ${b}
+
+${a} and ${b} may be the same ${d.fm.field ? `(same **${d.fm.field}**)` : "thing"}.
+${evidence}
+> [!question] Same or different?
+> If they're one, merge the notes by hand and delete this note. If not, set \`state: declined\` and they won't be raised again.
+`;
+  }
   return `# ⚖ ${entityName} · ${d.fm.field}
 
 Sources disagree about **${d.fm.field}** of ${d.fm.entity}.
 
-${claims}
+${claimLines(d, show)}
 
 > [!question] Ruling needed
 > Set \`ruling:\` in this note's properties to the correct value, and the next sleep will make it canon.
 `;
+}
+
+/** The human whose `github:` (or `gitlab:`) is `login`, ignoring case; logins are case-insensitive on both hosts. */
+export function humanByLogin(humans: readonly HumanDef[], login: string | undefined, host: "github" | "gitlab"): HumanDef | undefined {
+  const key = login?.trim().toLowerCase();
+  return key ? humans.find((h) => h[host]?.toLowerCase() === key) : undefined;
 }

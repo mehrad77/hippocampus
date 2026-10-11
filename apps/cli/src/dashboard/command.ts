@@ -16,6 +16,8 @@ export interface DashboardCommandOptions {
   demo?: boolean;
   mcp?: string;
   token?: string;
+  /** Which of the vault's humans the dashboard acts as (`--as`); default the first. */
+  as?: string;
   /** Global options: the vault directory and `--github` (both may come from the env). */
   vault: string;
   github?: string;
@@ -53,7 +55,7 @@ export async function runDashboard(o: DashboardCommandOptions): Promise<void> {
   const port = Number(o.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`--port ${o.port} is not a port number`);
   const assets = assetRoot();
-  const runtime = new DashboardRuntime({ env: process.env, index: o.index, assets, log: o.log });
+  const runtime = new DashboardRuntime({ env: process.env, index: o.index, assets, log: o.log, human: o.as });
 
   const target = startTarget(o);
   let setup: SetupPort;
@@ -74,6 +76,13 @@ export async function runDashboard(o: DashboardCommandOptions): Promise<void> {
     }
   }
 
+  // A mistyped --as would only show up as an error page: say so here.
+  const opened = runtime.vault;
+  if (o.as && opened?.service) {
+    const vault = await opened.service.vault();
+    if (!vault.human(o.as)) throw new Error(`--as ${o.as}: not one of this vault's humans (${vault.config.humans.map((h) => h.id).join(", ")})`);
+  }
+
   const token = await launchToken(join(configDir(), "dashboard-token"));
   const root = dashboardRoot();
   const srv = await startDashboardServer({ port, token, runtime, setup, staticRoot: root });
@@ -85,7 +94,7 @@ export async function runDashboard(o: DashboardCommandOptions): Promise<void> {
         ? `${a.mode} · ${a.vault.dir ?? (a.vault.repo ? `${a.vault.repo}#${a.vault.branch}` : a.vault.url)}`
         : "setup: no vault yet";
   o.log(`✦ Hippocampus dashboard (${what}) on ${srv.origin}${srv.port !== port && port !== 0 ? ` (port ${port} was taken)` : ""}`);
-  if (a?.mode === "demo") o.log("  This is the fictional example campaign (seeds/example-relocation), in memory: nothing you do is saved.");
+  if (a?.mode === "demo") o.log("  This is the fictional example vault (seeds/example-relocation), in memory: nothing you do is saved.");
   if (!root) o.log("  ⚠ The UI isn't built: run `pnpm --filter @hippocampus/dashboard-ui build` (the API still works).");
   o.log(`\n  Open: ${srv.signInUrl}\n\n  That link signs a browser in; keep it to yourself. Ctrl-C stops the dashboard.`);
   if (o.open) openBrowser(srv.signInUrl);

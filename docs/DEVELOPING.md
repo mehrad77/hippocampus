@@ -100,8 +100,10 @@ If your coding agent is also connected to your Hippocampus MCP server or your va
 
 If a change alters files in existing vaults (frontmatter keys, folder layout, region names):
 1. Bump `CURRENT_VAULT_VERSION` in `packages/core/src/migrations.ts`.
-2. Add a `Migration` that rewrites old vaults, with a test.
+2. Add a `Migration` that rewrites old vaults (`packages/core/src/migrations/`, registered in `MIGRATIONS`), with a test over a frozen inline fixture of the old format.
 3. Note it under "Vault format" in [CHANGELOG.md](../CHANGELOG.md).
+
+The hosted app never migrates a vault by itself. Once a Worker with the new version is deployed, an older vault answers `VAULT_UPGRADE_NEEDED` to agents, and its owner gets an Upgrade button on the dashboard (`POST actions/upgrade-vault`), which makes the audited `Hippo-Actor: migration` commit. So rolling the Worker back right after a deploy is safe: no vault has moved to a format the previous Worker can't read until an owner clicks. Once an owner has upgraded, a rollback leaves that vault refusing the old Worker (`VERSION`) until it's deployed again.
 
 ## Tests and CI
 

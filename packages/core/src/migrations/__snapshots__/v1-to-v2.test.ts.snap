@@ -1,0 +1,199 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`v1 → v2 migration > rewrites the vault into the v2 format 1`] = `
+{
+  "_hippo/config.yaml": "# Hippocampus vault configuration.
+version: 2
+
+# Name of the campaign (shown in the Player's Handbook).
+name: lisbon-arc
+
+# IANA timezone for chronicle days/times.
+timezone: Europe/Lisbon
+
+# Party id of the human player. Their word outranks every agent; \`ruling:\` in disputes is theirs.
+humans:
+  - {id: player}
+
+# Domains are the tags that define lanes.
+domains: [residency, housing, university, story]
+
+# Entity types are notes in _hippo/schema/types/, one per type (folder, fields, description).
+
+# Relation vocabulary the curator may use between entities.
+relations: [part_of, involves, located_in, requires]
+
+curator:
+  canon_threshold: 2 # distinct agents needed to promote a rumor to canon
+  batch_size: 25 # max episodes per sleep
+
+secrets:
+  # age public key; set by \`hippo secrets keygen\`.
+  recipient: null
+",
+  "_hippo/dashboards/goal-board.md": "# 🎯 Goals
+
+\`\`\`dataview
+TABLE WITHOUT ID file.link AS Goal, status AS Status, owner AS Owner, due AS Due
+FROM "goals"
+WHERE status != "done" AND status != "failed"
+SORT due ASC
+\`\`\`
+",
+  "_hippo/dashboards/quest-board.md": null,
+  "_hippo/schema/kinds/beat.md": "---
+alias_of: observation
+---
+A story beat.
+",
+  "_hippo/schema/kinds/observation.md": "---
+behaviour: observation
+---
+Something noticed or learned.
+",
+  "_hippo/schema/types/arc.md": "---
+folder: arcs
+capabilities: [arc]
+template: _hippo/templates/arc.md
+codex_label: campaign
+---
+A long stretch of life that groups goals.
+",
+  "_hippo/schema/types/character.md": "---
+folder: characters
+template: _hippo/templates/character.md
+---
+People: the humans and everyone they deal with.
+
+## Is
+- A landlord
+
+## Is not
+- An organization
+",
+  "_hippo/schema/types/course.md": "---
+folder: studies/courses
+fields:
+  portal_pin:
+    kind: text
+    secret: true
+---
+Courses at Harbor University.
+",
+  "_hippo/schema/types/goal.md": "---
+folder: goals
+capabilities: [goal]
+template: _hippo/templates/goal.md
+codex_label: quest
+---
+Something to get done, with an owner and a status.
+",
+  "_hippo/schema/types/item.md": "---
+folder: items
+fields:
+  number:
+    kind: text
+    secret: true
+  iban:
+    kind: text
+    secret: true
+---
+Documents, cards, contracts, accounts, things.
+",
+  "_hippo/schema/types/lore.md": "---
+folder: lore
+description: How things work at Harbor University.
+---
+How things work: procedures, rules, topic knowledge.
+",
+  "_hippo/schema/types/party.md": "---
+folder: party
+capabilities: [actor]
+label: agent
+---
+The agents themselves.
+",
+  "_hippo/templates/arc.md": "---
+type: arc
+title: "{{title}}"
+aliases: []
+tags: []
+---
+
+## Notes
+",
+  "_hippo/templates/campaign.md": null,
+  "_hippo/templates/goal.md": "---
+type: goal
+title: "{{title}}"
+aliases: []
+tags: []
+status: active
+owner: ""
+due:
+---
+
+%% hippo:begin objectives %%
+- [ ] First objective
+%% hippo:end objectives %%
+
+## Notes
+",
+  "_hippo/templates/quest.md": null,
+  "arcs/lisbon-arc.md": "---
+type: arc
+title: The Lisbon Arc
+aliases:
+  - Lisbon arc
+tags:
+  - story
+relations:
+  - rel: involves
+    target: "[[player]]"
+---
+%% hippo:begin relations %%
+- involves:: [[player]]
+%% hippo:end relations %%
+
+## Notes
+Moving to Lisbon to study at [[harbor-university]].
+",
+  "campaigns/.gitkeep": null,
+  "campaigns/lisbon-arc.md": null,
+  "goals/residence-permit.md": "---
+type: goal
+title: Residence permit
+aliases: []
+tags:
+  - residency
+status: active
+owner: "[[residency-agent]]"
+due: 2026-11-30
+progress:
+  done: 2
+  total: 6
+relations:
+  - rel: part_of
+    target: "[[lisbon-arc]]"
+---
+%% hippo:begin objectives %%
+- [x] Address proof
+- [ ] Agency appointment
+- [ ] ⏱ Savings 1/4 · due 2026-10-31
+%% hippo:end objectives %%
+
+%% hippo:begin relations %%
+- part_of:: [[lisbon-arc]]
+%% hippo:end relations %%
+
+%% hippo:begin progress %%
+▰▰▱▱▱▱ 2/6 · due 2026-11-30
+%% hippo:end progress %%
+
+## Notes
+Bring two biometric photos to the [[migration-agency]].
+",
+  "quests/.gitkeep": null,
+  "quests/residence-permit.md": null,
+}
+`;

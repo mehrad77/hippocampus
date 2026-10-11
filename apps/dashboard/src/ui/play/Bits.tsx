@@ -1,10 +1,10 @@
 import type { IconName } from "../../lib/icons.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { Icon } from "../Icon.tsx";
-import { questStatusWord, type Authority, type QuestStatus } from "./model.ts";
+import { goalStateWord, isGoalState, type Authority, type GoalState } from "./model.ts";
 
-const QUEST_GLYPH: Record<QuestStatus, string> = { active: "→", blocked: "!", dormant: "z", done: "✓", failed: "✕" };
-const QUEST_HELP: Record<QuestStatus, [plain: string, codex: string]> = {
+const GOAL_GLYPH: Record<GoalState, string> = { active: "→", blocked: "!", dormant: "z", done: "✓", failed: "✕" };
+const GOAL_HELP: Record<GoalState, [plain: string, codex: string]> = {
   active: ["Active: in progress", "Active: in motion"],
   blocked: ["Blocked: waiting on something before it can move forward", "Blocked: waiting on something before it can move"],
   dormant: ["On hold: paused for now", "Dormant: set aside for now"],
@@ -12,19 +12,26 @@ const QUEST_HELP: Record<QuestStatus, [plain: string, codex: string]> = {
   failed: ["Failed: it didn't work out", "Failed: it didn't work out"],
 };
 
-/** A quest's status as a seal: glyph + word, like fact seals, never color alone. */
-export function QuestSeal({ status }: { status?: string }) {
+/**
+ * A goal's status as a seal: glyph + word, like fact seals, never color alone. The color and glyph
+ * follow the core state; the word is the type's own when it has one (`won` for a deal that's done).
+ */
+export function GoalSeal({ status, word }: { status?: string; word?: string }) {
   const { look, v } = useTerms();
-  const s = (status && status in QUEST_GLYPH ? status : "active") as QuestStatus;
+  const s: GoalState = isGoalState(status) ? status : "active";
+  const own = word && word.toLowerCase() !== s ? word : undefined;
   return (
-    <span className={`seal qseal qseal--${s}`} title={v(...QUEST_HELP[s])}>
+    <span className={`seal qseal qseal--${s}`} title={own ? `${own}: ${v(...GOAL_HELP[s])}` : v(...GOAL_HELP[s])}>
       <span className="seal__glyph" aria-hidden>
-        {QUEST_GLYPH[s]}
+        {GOAL_GLYPH[s]}
       </span>
-      {questStatusWord(s, look)}
+      {own ?? goalStateWord(s, look)}
     </span>
   );
 }
+
+/** @deprecated Same as `GoalSeal`. */
+export const QuestSeal = GoalSeal;
 
 const AUTH: Record<Authority, { label: [plain: string, codex: string]; icon: IconName; help: [plain: string, codex: string] }> = {
   human: {
@@ -44,13 +51,18 @@ const AUTH: Record<Authority, { label: [plain: string, codex: string]; icon: Ico
   },
 };
 
-export function AuthorityBadge({ authority }: { authority: Authority }) {
+/**
+ * Whose word it is. With several humans, `by` and `me` (the human the dashboard acts as) tell "you"
+ * from another person; both outrank every agent.
+ */
+export function AuthorityBadge({ authority, by, me }: { authority: Authority; by?: string; me?: string }) {
   const { v } = useTerms();
   const a = AUTH[authority];
+  const other = authority === "human" && by && me && by.toLowerCase() !== me.toLowerCase() ? by : undefined;
   return (
-    <span className={`auth auth--${authority}`} title={v(...a.help)}>
+    <span className={`auth auth--${authority}`} title={other ? v(`Written by ${other}. A person's word outranks every agent.`, `Written by ${other}. Human authority outranks every agent.`) : v(...a.help)}>
       <Icon name={a.icon} size={14} />
-      {v(...a.label)}
+      {other ?? v(...a.label)}
     </span>
   );
 }

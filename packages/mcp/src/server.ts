@@ -21,15 +21,28 @@ export interface HippoServerOptions {
 }
 
 /**
- * `read`: every read tool and resource. `remember`: write episodes. `quest`: update quests.
+ * `read`: every read tool and resource. `remember`: write episodes. `goal`: update goals.
  * `curate`: run sleep, which shows the agent every episode in full, secret values included.
  */
-export const SCOPES = ["read", "remember", "quest", "curate"] as const;
-export type Scope = (typeof SCOPES)[number];
+export const SCOPES = ["read", "remember", "goal", "curate"] as const;
+/** The old name of the `goal` scope. Keys and grants made before goals carry it; new ones carry both. */
+export const LEGACY_GOAL_SCOPE = "quest";
+/** A scope after `normalizeScopes`. */
+export type CurrentScope = (typeof SCOPES)[number];
+/** A scope as granted. */
+export type Scope = CurrentScope | typeof LEGACY_GOAL_SCOPE;
 
-const INSTRUCTIONS = `Hippocampus is the party's shared, curated memory (an Obsidian vault run like a TTRPG campaign wiki).
-Call \`onboard\` at the start of a session. Use \`recall\`, \`get\`, and \`ask_canon\` before acting on facts. Use \`remember\` for anything worth keeping. You never edit canon directly: episodes are consolidated nightly, and conflicts go to the human.
-Fact status: canon = trust it, rumor = verify first, disputed = do not act without checking.`;
+export const isScope = (s: unknown): s is Scope => s === LEGACY_GOAL_SCOPE || (SCOPES as readonly unknown[]).includes(s);
+
+/** Granted scopes under their current names (`quest` → `goal`), once each, in `SCOPES` order. */
+export function normalizeScopes(scopes: readonly Scope[]): CurrentScope[] {
+  const have = new Set(scopes.map((s) => (s === LEGACY_GOAL_SCOPE ? "goal" : s)));
+  return SCOPES.filter((s) => have.has(s));
+}
+
+const INSTRUCTIONS = `Hippocampus is shared, curated memory for the person's AI agents: an Obsidian vault of notes about the people, places, goals and things in their life.
+Call \`onboard\` at the start of a session. Use \`recall\`, \`get\`, and \`ask_canon\` before acting on facts, and \`briefing\` with \`about\` before talking to someone. Use \`remember\` for anything worth keeping. You never edit notes directly: memories are consolidated nightly, and conflicts go to the human.
+Fact status: canon = trust it, rumor = verify first, disputed = do not act without checking. A "◐ confidential" value is hidden from you: don't guess it.`;
 
 const CURATE_INSTRUCTIONS = `
 You may also run the nightly consolidation yourself: the \`sleep\` prompt explains how, starting with \`sleep_start\`.`;
@@ -52,9 +65,16 @@ async function guard(fn: () => Promise<ToolResult>): Promise<ToolResult> {
 export interface DashboardWhoami {
   /** `null` when the connection isn't bound to an agent. */
   agent: string | null;
+  /** Current names, plus `quest` next to `goal` for dashboards that predate goals. */
   scopes: Scope[];
+  /** The vault's name. */
+  name: string;
+  /** @deprecated Same as `name`. */
   campaign: string;
+  /** The primary human's id. */
   human: string;
+  /** Without GitHub logins: an agent's connection has no business knowing the human's accounts. */
+  humans: { id: string; domains: string[] }[];
 }
 
 /** Vault errors become InvalidParams with a stable `data.code`, so the dashboard can answer 400 or 409 like it does locally. */
@@ -79,17 +99,21 @@ function param(v: string | string[] | undefined, form = false): string {
 }
 
 export function createHippoServer({ service, agent, scopes, version = "0.1.0", jsonSchemaValidator, relay }: HippoServerOptions): McpServer {
-  const curates = !!relay && (!scopes || scopes.includes("curate"));
+  const granted = scopes ? normalizeScopes(scopes) : undefined;
+  const curates = !!relay && (!granted || granted.includes("curate"));
   const server = new McpServer({ name: "hippocampus", version }, { instructions: curates ? INSTRUCTIONS + CURATE_INSTRUCTIONS : INSTRUCTIONS, jsonSchemaValidator });
   // Out-of-scope tools are removed outright, so clients never see them.
-  const scoped = (scope: Scope, registered: { remove(): void }) => {
-    if (scopes && !scopes.includes(scope)) registered.remove();
+  const scoped = (scope: CurrentScope, registered: { remove(): void }) => {
+    if (granted && !granted.includes(scope)) registered.remove();
   };
+  // Confidential values are shown only to a bound caller (and only where it has authority); an
+  // `agent` argument is a claim anyone can make, so it never unmasks anything.
+  const caller = agent?.toLowerCase();
   const agentArg = {
     agent: z
       .string()
       .optional()
-      .describe(agent ? `Ignored: this connection is bound to "${agent}"` : "Your agent id (party/<id>.md), e.g. residency-agent. Required."),
+      .describe(agent ? `Ignored: this connection is bound to "${agent}"` : "Your agent id, e.g. residency-agent. Required."),
   };
   const who = (args: { agent?: string }) => {
     const id = agent ?? args.agent;
@@ -103,7 +127,7 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
       "onboard",
       {
         title: "Onboard",
-        description: "Your briefing: who you are in the party, your lane and authority, your quests, and the vault's conventions. Call at session start.",
+        description: "Your briefing: who you are among the agents, your lane and authority, your goals, and the vault's conventions. Call at session start.",
         inputSchema: { ...agentArg },
         annotations: { readOnlyHint: true },
       },
@@ -121,18 +145,28 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
           "Submit one memory (episode) to the inbox. Hippocampus consolidates it into canon later, so this returns immediately. One concrete memory per call. Include exact values: ISO dates, amounts with currency, and IDs.",
         inputSchema: {
           ...agentArg,
-          text: z.string().min(1).describe("The memory, in plain language, self-contained"),
-          kind: z.enum(["observation", "fact", "decision", "task", "beat", "question"]).optional(),
-          about: z.array(z.string()).optional().describe('Hints: entity names or [[links]], e.g. ["[[residence-permit]]", "Agência de Migração"]'),
+          text: z.string().optional().describe("The memory, in plain language, self-contained. Required unless the kind makes it optional or forbids it"),
+          kind: z
+            .string()
+            .max(60)
+            .optional()
+            .describe("One of this vault's kinds (the Handbook lists them), e.g. observation (default), fact, decision, task, question, interaction. An unknown kind is filed as an observation"),
+          data: z
+            .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number(), z.boolean()]))]))
+            .optional()
+            .describe('Typed fields the kind declares, e.g. { "with": "[[migration-agency]]", "channel": "call" }'),
+          confidential: z.boolean().optional().describe("true to keep it out of search, prompts and the chronicle"),
+          scope: z.string().max(100).optional().describe("Context it holds in, e.g. lang:pt or org:harbor-university"),
+          about: z.array(z.string().max(200)).max(20).optional().describe('Hints: entity names or [[links]], e.g. ["[[residence-permit]]", "Agência de Migração"]'),
           confidence: z.number().min(0).max(1).optional(),
           secret: z.boolean().optional().describe("true if it contains ID/passport/bank numbers or credentials"),
-          at: z.string().optional().describe("When it happened (ISO 8601); defaults to now"),
+          at: z.string().max(40).optional().describe("When it happened (ISO 8601); defaults to now"),
         },
       },
       (args) =>
         guard(async () => {
-          const { text: body, kind, about, confidence, secret, at } = args;
-          const r = await service.remember(who(args), { text: body, kind, about, confidence, secret, at });
+          const { text: body, kind, about, confidence, secret, at, data, confidential, scope } = args;
+          const r = await service.remember(who(args), { text: body, kind, about, confidence, secret, at, data, confidential, scope });
           return yaml({ stored: r, note: "Queued for consolidation. It shows up under `pending` in recall until then." });
         }),
     ),
@@ -144,7 +178,7 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
       "introduce",
       {
         title: "Introduce yourself",
-        description: `Ask to join the party, when \`onboard\` says you're unknown. The human approves you and decides your authority; until then your memories count as rumors. Calling it again replaces your earlier introduction.`,
+        description: `Ask to join the vault's agents, when \`onboard\` says you're unknown. The human approves you and decides your authority; until then your memories count as rumors. Calling it again replaces your earlier introduction.`,
         inputSchema: {
           ...agentArg,
           title: z.string().min(1).max(120).describe('Your display name, e.g. "Job Scout"'),
@@ -172,12 +206,12 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
         description: "Search memory. Returns matching entities (summary + key facts with status), related entities via the graph, and matching not-yet-consolidated episodes.",
         inputSchema: {
           query: z.string().min(1),
-          types: z.array(z.string()).optional().describe("Filter entity types, e.g. [quest, faction]"),
+          types: z.array(z.string()).optional().describe("Filter entity types, e.g. [goal, character]"),
           limit: z.number().int().min(1).max(20).optional(),
         },
         annotations: { readOnlyHint: true },
       },
-      (args) => guard(async () => yaml(await service.recall(args.query, { types: args.types, limit: args.limit }))),
+      (args) => guard(async () => yaml(await service.recall(args.query, { types: args.types, limit: args.limit, caller }))),
     ),
   );
 
@@ -187,11 +221,12 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
       "get",
       {
         title: "Get entity",
-        description: "Full note for one entity: all facts with status and provenance, relations, quest objectives/clocks, open disputes, human notes.",
+        description:
+          "Full note for one entity: facts with status, provenance, scope and validity; relations; goal state, progress and objectives; guidelines (own and inherited); contact stats and cadence; decisions and open questions; open disputes; human notes.",
         inputSchema: { entity: z.string().describe("Slug, [[link]], title, or alias") },
         annotations: { readOnlyHint: true },
       },
-      (args) => guard(async () => yaml(await service.get(args.entity))),
+      (args) => guard(async () => yaml(await service.get(args.entity, { caller }))),
     ),
   );
 
@@ -223,7 +258,7 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
         inputSchema: { question: z.string().min(1) },
         annotations: { readOnlyHint: true },
       },
-      (args) => guard(async () => yaml(await service.askCanon(args.question))),
+      (args) => guard(async () => yaml(await service.askCanon(args.question, { caller }))),
     ),
   );
 
@@ -233,42 +268,93 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
       "briefing",
       {
         title: "Briefing",
-        description: '"Previously on…": the chronicle since a date, recently updated entities, upcoming deadlines and clocks, and open disputes.',
+        description:
+          "What happened and what's next: the chronicle since a date, recently updated entities, upcoming due dates and anniversaries, overdue contacts, and open disputes. With `about`, a brief on one person or thing instead: canon facts, guidelines, recent interactions, open goals with them, open proposals, and contact stats.",
         inputSchema: {
           since: z.string().optional().describe("ISO date; default 7 days ago"),
-          horizon_days: z.number().int().min(1).max(365).optional().describe("How far ahead to look for deadlines (default 30)"),
+          horizon_days: z.number().int().min(1).max(365).optional().describe("How far ahead to look for due dates (default 30)"),
+          about: z.string().optional().describe("Slug, [[link]], title, or alias: brief on this one instead, e.g. before contacting them"),
         },
         annotations: { readOnlyHint: true },
       },
-      (args) => guard(async () => yaml(await service.briefing({ since: args.since, horizonDays: args.horizon_days }))),
+      (args) =>
+        guard(async () =>
+          yaml(args.about ? await service.personBrief(args.about, { caller }) : await service.briefing({ since: args.since, horizonDays: args.horizon_days })),
+        ),
+    ),
+  );
+
+  // One checklist line: long enough for a step, short enough that it can't carry a document.
+  const objective = z.string().max(300);
+  const progressArg = z
+    .object({
+      done: z.number().int().min(0).optional(),
+      total: z.number().int().min(1).optional().describe("Steps that make it done"),
+      tick: z.number().int().optional().describe("Steps to add (+) or take back (−)"),
+    })
+    .optional();
+  scoped(
+    "goal",
+    server.registerTool(
+      "update_goal",
+      {
+        title: "Update goal",
+        description:
+          "Record goal progress directly: status, completed, reopened or new objectives, progress steps, due date, owner, counterparty, or how it repeats. A repeating goal marked done comes back with its next due date.",
+        inputSchema: {
+          ...agentArg,
+          goal: z.string().describe("Slug, [[link]], title, or alias"),
+          status: z.string().max(40).optional().describe("active, blocked, done, failed, dormant, or a word of the goal type's own statuses"),
+          complete: z.array(objective).max(50).optional().describe("Objectives now done (fuzzy-matched)"),
+          reopen: z.array(objective).max(50).optional().describe("Objectives to mark not done again (fuzzy-matched)"),
+          add: z.array(objective).max(50).optional().describe("New objectives"),
+          progress: progressArg,
+          due: z.string().max(40).nullable().optional().describe("ISO date (YYYY-MM-DD); null clears it"),
+          owner: z.string().max(200).optional().describe("The agent or person who drives it"),
+          counterparty: z.string().max(200).optional().describe("Who it's with or for, e.g. [[landlord]]"),
+          repeat: z
+            .object({
+              every: z.string().max(40).optional().describe("Interval: 1w, 2w, 1m, 1y"),
+              after_last: z.string().max(200).optional().describe("Count from the last episode of this kind with the counterparty, e.g. interaction"),
+            })
+            .nullable()
+            .optional()
+            .describe("How it comes back once done; null stops it repeating"),
+        },
+      },
+      (args) =>
+        guard(async () => {
+          const { goal, status, complete, reopen, add, progress, due, owner, counterparty, repeat } = args;
+          return yaml(await service.updateGoal(who(args), goal, { status, complete, reopen, add, progress, due, owner, counterparty, repeat }));
+        }),
     ),
   );
 
   scoped(
-    "quest",
+    "goal",
     server.registerTool(
       "update_quest",
       {
-        title: "Update quest",
-        description: "Record quest progress directly: status, completed or new objectives, a progress clock, deadline, or owner.",
+        title: "Update quest (old name of update_goal)",
+        description: "The old name of update_goal, kept for agents set up before goals: a clock becomes the goal's progress, a deadline its due date. Prefer update_goal.",
         inputSchema: {
           ...agentArg,
           quest: z.string(),
           status: z.enum(["active", "blocked", "done", "failed", "dormant"]).optional(),
-          complete: z.array(z.string()).optional().describe("Objectives now done (fuzzy-matched)"),
-          reopen: z.array(z.string()).optional().describe("Objectives to mark not done again (fuzzy-matched)"),
-          add: z.array(z.string()).optional().describe("New objectives"),
+          complete: z.array(objective).max(50).optional().describe("Objectives now done (fuzzy-matched)"),
+          reopen: z.array(objective).max(50).optional().describe("Objectives to mark not done again (fuzzy-matched)"),
+          add: z.array(objective).max(50).optional().describe("New objectives"),
           clock: z
             .object({
-              name: z.string(),
+              name: z.string().max(120),
               segments: z.number().int().min(2).max(12).optional(),
               tick: z.number().int().optional().describe("Segments to fill (+) or clear (−)"),
               filled: z.number().int().min(0).optional(),
-              deadline: z.string().optional(),
+              deadline: z.string().max(40).optional(),
             })
             .optional(),
-          deadline: z.string().optional(),
-          owner: z.string().optional(),
+          deadline: z.string().max(40).optional(),
+          owner: z.string().max(200).optional(),
         },
       },
       (args) =>
@@ -284,7 +370,7 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
     server.registerResource(
       "handbook",
       "hippo://handbook",
-      { title: "Player's Handbook", description: "Vault conventions, party, active quests", mimeType: "text/markdown" },
+      { title: "Handbook", description: "Vault conventions, types and kinds, agents, active goals", mimeType: "text/markdown" },
       async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: await service.handbook() }] }),
     ),
   );
@@ -296,7 +382,7 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
       new ResourceTemplate("hippo://entity/{slug}", { list: undefined }),
       { title: "Entity", description: "One entity note as structured data", mimeType: "application/yaml" },
       async (uri, { slug }) => ({
-        contents: [{ uri: uri.href, mimeType: "application/yaml", text: stringify(await service.get(String(slug))) }],
+        contents: [{ uri: uri.href, mimeType: "application/yaml", text: stringify(await service.get(String(slug), { caller })) }],
       }),
     ),
   );
@@ -326,7 +412,15 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
     switch (param(view)) {
       case "whoami": {
         const { config } = await service.vault();
-        return { agent: agent?.toLowerCase() ?? null, scopes: [...(scopes ?? SCOPES)], campaign: config.campaign, human: config.human } satisfies DashboardWhoami;
+        const current = granted ?? [...SCOPES];
+        return {
+          agent: caller ?? null,
+          scopes: current.flatMap((s): Scope[] => (s === "goal" ? ["goal", LEGACY_GOAL_SCOPE] : [s])),
+          name: config.name,
+          campaign: config.name,
+          human: config.human,
+          humans: config.humans.map((h) => ({ id: h.id, domains: h.domains })),
+        } satisfies DashboardWhoami;
       }
       case "overview":
         return service.overview();
@@ -345,7 +439,7 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
 
 // Sleep run by the connected agent: the relay turns each curator step into a question for it, and
 // replays the step with its answers. Results are compact JSON, since questions carry JSON Schemas.
-function registerSleep(server: McpServer, relay: () => SleepRelay, agent: string | undefined, scoped: (scope: Scope, registered: { remove(): void }) => void): void {
+function registerSleep(server: McpServer, relay: () => SleepRelay, agent: string | undefined, scoped: (scope: CurrentScope, registered: { remove(): void }) => void): void {
   const json = (value: unknown): ToolResult => text(JSON.stringify(value));
   // One run at a time: a second start gets the open run's status, so the agent can pick it up or wait.
   const run = (fn: () => Promise<unknown>) =>

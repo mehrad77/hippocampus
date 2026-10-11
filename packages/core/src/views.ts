@@ -1,13 +1,21 @@
-import { basename, displayName, getObjectives, getSummary, type Entity } from "./entity.ts";
+import { actorProps } from "./actor.ts";
+import { basename, displayName, getHumanGuidelines, getSummary, type Entity } from "./entity.ts";
+import { addDuration, getObjectives, goalProps, goalState, legacyClocks, nextDue, type Clock, type GoalState, type Progress, type Repeat } from "./goal.ts";
 import type { Episode } from "./episode.ts";
+import { resolveInheritance } from "./inherit.ts";
 import { humanText, parseDoc } from "./markdown.ts";
 import { CURRENT_VAULT_VERSION, vaultVersionStatus } from "./migrations.ts";
 import { isSecretField } from "./ops.ts";
-import { FactStatus, type Clock, type EpisodeKind, type Fact, type FactValue } from "./schema.ts";
+import { FactStatus, type Behaviour, type Capability, type DecisionEntry, type DisputeKind, type EpisodeKind, type Fact, type FactValue, type FieldDef, type Guideline, type ProposalState, type QuestionEntry, type Stats } from "./schema.ts";
+import type { ResolvedKind, ResolvedType } from "./schema-registry.ts";
 import { isSecretRef } from "./secrets.ts";
-import { fromLocal, localParts } from "./text.ts";
+import { fromLocal, localParts, parseFactKey } from "./text.ts";
 import type { Authority, Dispute, Vault } from "./vault.ts";
-import { parseLinks, unwrapLink } from "./wikilink.ts";
+
+/** Authority as the dashboard shows it: any human is "human", whether or not the domain is theirs. */
+export type ShownAuthority = "human" | "authority" | "none";
+const shownAuthority = (a: Authority): ShownAuthority => (a === "human_domain" ? "human" : a);
+import { link, parseLinks, unwrapLink } from "./wikilink.ts";
 
 // Read models for humans (the dashboard). Agent-facing views stay in service.ts, sized for context windows;
 // these are complete, structured, and mask every secret in one place.
@@ -20,10 +28,11 @@ export interface Ref {
   type: string;
 }
 
-/** A value as shown to a human: secrets become `null` with `secret: true`. */
+/** A value as shown to a human: secrets become `null` with `secret: true`, confidential values `null` with `confidential: true`. */
 export interface Shown {
   value: string | null;
   secret: boolean;
+  confidential?: boolean;
 }
 
 export interface FactDetail extends Shown {
@@ -31,14 +40,24 @@ export interface FactDetail extends Shown {
   status: FactStatus;
   by: string;
   byHuman: boolean;
-  authority: Authority;
+  authority: ShownAuthority;
   at?: string;
   stale: boolean;
   src: string[];
   seenBy: string[];
   /** Slug of the open dispute about this field. */
   dispute?: string;
-  was: (Shown & { by?: string; at?: string })[];
+  was: (Shown & { by?: string; at?: string; why?: string })[];
+  /** The field without its scope (`greeting` for `greeting@lang:pt`). */
+  name?: string;
+  /** The context it holds in (`lang:pt`), when the key has one. */
+  scope?: string;
+  validFrom?: string;
+  validUntil?: string;
+  /** The reporter's own confidence, 0–1. */
+  confidence?: number;
+  /** Only a human may set it; an agent's report becomes a proposal. */
+  humanOnly?: boolean;
 }
 
 export interface EntityCard extends Ref {
@@ -52,6 +71,7 @@ export interface EntityCard extends Ref {
   status?: string;
 }
 
+/** @deprecated A v1 clock, or a goal's progress drawn as one, until the dashboard shows progress. */
 export interface ClockView {
   name: string;
   segments: number;
@@ -60,25 +80,53 @@ export interface ClockView {
   daysLeft?: number;
 }
 
-export interface QuestCard extends EntityCard {
+/** A goal as the dashboard shows it. New fields are optional while older cards (and clients) lack them. */
+export interface GoalCard extends EntityCard {
+  /** The core state (`status` says the same, for older clients). */
+  state?: GoalState;
+  /** The status as written: a core state or a word of the type's vocabulary. */
+  word?: string;
   owner?: Ref;
-  deadline?: string;
+  counterparty?: Ref;
+  /** ISO date (v1: `deadline`). */
+  due?: string;
+  /** When it's next due: `due`, or for a repeat after the last contact, that contact plus the interval. */
+  nextDue?: string;
+  /** Days from today to `nextDue`. */
   daysLeft?: number;
+  progress?: Progress;
+  repeat?: Repeat;
+  lastDone?: string;
   objectives: { text: string; done: boolean }[];
+  /** @deprecated Same as `due`. */
+  deadline?: string;
+  /** @deprecated The goal's progress as a clock, then any other v1 clocks. */
   clocks: ClockView[];
+  /** The arc it belongs to. */
   campaign?: Ref;
 }
+
+/** @deprecated v1 name of `GoalCard`. */
+export type QuestCard = GoalCard;
 
 export interface ClaimView extends Shown {
   by: string;
   byHuman: boolean;
-  authority: Authority;
+  authority: ShownAuthority;
   at?: string;
   src: string[];
 }
 
 export interface DisputeView {
   slug: string;
+  /** conflict: sources disagree; proposal: a value only a human sets; merge: two notes may be one. */
+  kind: DisputeKind;
+  /** Proposals and merges: pending, applied, already_present or declined. */
+  state?: ProposalState;
+  /** Why a proposal or merge was raised. */
+  evidence?: string;
+  /** Merges: the two notes that may be one. */
+  targets?: Ref[];
   entity: Ref;
   field: string;
   status: "open" | "resolved";
@@ -98,9 +146,10 @@ export interface EpisodeView {
   kind: EpisodeKind;
   at: string;
   path: string;
-  /** `null` for secret-bearing episodes: their plain text waits in the inbox until sleep encrypts it. */
+  /** `null` for secret-bearing episodes (their plain text waits in the inbox until sleep encrypts it) and confidential ones. */
   text: string | null;
   secret: boolean;
+  confidential?: boolean;
   about: string[];
   confidence?: number;
   /** Older than the last sleep: it failed or didn't fit the batch. */
@@ -119,6 +168,106 @@ export interface ChronicleEntryView {
   text: string;
   /** Slugs of the entities this episode touched. */
   touched: string[];
+}
+
+/** One of the vault's humans. */
+export interface HumanView {
+  id: string;
+  domains: string[];
+  github?: string;
+  gitlab?: string;
+}
+
+/** A field of a type or of a kind's `data:`, as the dashboard needs it (forms, badges). */
+export interface FieldView {
+  kind: FieldDef["kind"];
+  many?: boolean;
+  values?: string[];
+  required?: boolean;
+  humanOnly?: boolean;
+  secret?: boolean;
+  confidential?: boolean;
+  description?: string;
+}
+
+export interface TypeView {
+  name: string;
+  folder: string;
+  description: string;
+  /** Plain-language name (type note `label`), and the codex one (`codex_label`). */
+  label?: string;
+  codexLabel?: string;
+  capabilities: Capability[];
+  /** Status words mapped to core states (goal types). */
+  statuses?: Record<string, string>;
+  inheritable: boolean;
+  /** Fields only a human may set. */
+  humanOnly: string[];
+}
+
+export interface KindView {
+  name: string;
+  behaviour: Behaviour;
+  aliasOf?: string;
+  /** Whether the episode text is required, optional, kept only as a gist, or forbidden. */
+  text: ResolvedKind["text"];
+  gistMax?: number;
+  data: Record<string, FieldView>;
+  description: string;
+}
+
+/** The vault's types and kinds, for labels, forms and status words. */
+export interface SchemaView {
+  types: TypeView[];
+  kinds: KindView[];
+}
+
+/** How often to be in touch, and how late the next contact is. */
+export interface CadenceView {
+  /** `2w`, `1m`, or `none`. */
+  every: string;
+  /** When the next contact is due (the last contact plus `every`). */
+  due?: string;
+  /** Days past `due`, when it is past. */
+  overdueDays?: number;
+}
+
+export interface OverdueContact {
+  ref: string;
+  title: string;
+  last_contact: string;
+  cadence: string;
+  due: string;
+  days_overdue: number;
+  /** The group it's a `member_of`, if any. */
+  group?: string;
+}
+
+/** An overdue contact as the dashboard shows it. */
+export interface OverdueView {
+  ref: Ref;
+  lastContact: string;
+  cadence: string;
+  due: string;
+  daysOverdue: number;
+  group?: Ref;
+}
+
+export interface GuidelineView {
+  rule: string;
+  scope?: string;
+  status: Guideline["status"];
+  by: string;
+  byHuman: boolean;
+  at?: string;
+}
+
+export interface GuidelinesDetail {
+  /** The human's own guidelines: the prose under the note's `## Guidelines` heading (markdown). */
+  human: string;
+  items: GuidelineView[];
+  /** Inherited from `extends:` ancestors and inheritable tags, with the note each comes from. */
+  inherited: (GuidelineView & { source: Ref })[];
 }
 
 export interface PartyMember extends Ref {
@@ -149,6 +298,8 @@ export interface Attention {
   unknownAgents: string[];
   /** Agents asking to join the party, oldest first. Their text is their own: show it as plain text. */
   introductions: IntroductionView[];
+  /** People whose cadence says contact is overdue, most overdue first. */
+  overdue?: OverdueView[];
 }
 
 export interface IntroductionView {
@@ -176,8 +327,14 @@ export interface ActivityDay {
 }
 
 export interface Overview {
+  /** The vault's name. */
+  name?: string;
+  /** @deprecated Same as `name`. */
   campaign: string;
+  /** The primary human. */
   human: string;
+  humans?: HumanView[];
+  schema?: SchemaView;
   timezone: string;
   now: string;
   today: string;
@@ -189,10 +346,15 @@ export interface Overview {
     facts: Record<FactStatus, number>;
     inbox: number;
     disputes: number;
+    /** Goals by core state. */
+    goals?: Record<string, number>;
+    /** @deprecated Same as `goals`. */
     quests: Record<string, number>;
   };
   attention: Attention;
-  quests: QuestCard[];
+  goals?: GoalCard[];
+  /** @deprecated Same as `goals`. */
+  quests: GoalCard[];
   upcoming: Upcoming[];
   party: PartyMember[];
   inbox: EpisodeView[];
@@ -203,9 +365,13 @@ export interface Overview {
 }
 
 export interface Catalog {
+  name?: string;
+  /** @deprecated Same as `name`. */
   campaign: string;
   human: string;
-  types: { name: string; folder: string; description: string; count: number }[];
+  humans?: HumanView[];
+  types: (Partial<TypeView> & { name: string; folder: string; description: string; count: number })[];
+  kinds?: KindView[];
   domains: string[];
   relations: string[];
   entities: EntityCard[];
@@ -220,10 +386,19 @@ export interface EntityDetail {
   facts: FactDetail[];
   relations: { rel: string; dir: "out" | "in"; ref: Ref }[];
   disputes: DisputeView[];
-  quest?: QuestCard;
+  goal?: GoalCard;
+  /** @deprecated Same as `goal`. */
+  quest?: GoalCard;
   party?: PartyMember;
   mentions: ChronicleEntryView[];
   pending: EpisodeView[];
+  guidelines?: GuidelinesDetail;
+  stats?: Stats;
+  cadence?: CadenceView;
+  decisions?: DecisionEntry[];
+  questions?: QuestionEntry[];
+  /** Notes it inherits from: its `extends:` chain (nearest first), then inheritable notes its tags name. */
+  inherits?: Ref[];
 }
 
 export interface Graph {
@@ -249,16 +424,47 @@ const DAY = 86400_000;
 const DATEISH = /(date|deadline|expir|appointment|due|until|start|end)/;
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}/;
 
-export function shown(v: FactValue | undefined | null): Shown {
+export function shown(v: FactValue | undefined | null, opts: { confidential?: boolean; reveal?: boolean } = {}): Shown {
   if (isSecretRef(v)) return { value: null, secret: true };
+  // Revealed to the human, a confidential value still says it is one.
+  if (opts.confidential && opts.reveal) return { value: v === undefined || v === null ? null : String(v), secret: false, confidential: true };
+  if (opts.confidential) return { value: null, secret: false, confidential: true };
   return { value: v === undefined || v === null ? null : String(v), secret: false };
+}
+
+/** Whether `field` of `e` is confidential: the fact says so, or its field is confidential or an identity key. */
+export function isConfidentialField(vault: Vault, e: Entity, field: string, f?: Pick<Fact, "confidential">): boolean {
+  if (f?.confidential) return true;
+  const def = vault.schema.fieldDef(e.fm.type, field);
+  return !!(def?.confidential || def?.identity_key);
+}
+
+/**
+ * Whether the agent `caller` may see confidential values of `e` (`field`, a `facts:` key): only an
+ * agent bound to an identity (a bound key, an OAuth grant, local `--agent`) with lane authority there.
+ * A caller naming a human is refused: a bound key can't claim to be the human. The human's own reads
+ * (the dashboard) say so explicitly with `ReadAs.human`.
+ */
+export function seesConfidential(vault: Vault, caller: string | undefined, e: Entity, field?: string): boolean {
+  return !!caller && !vault.isHuman(caller) && vault.authorityOf(caller, e, field) === "authority";
+}
+
+/**
+ * Who reads a view. `human` is the vault's own human reading through their dashboard: they see
+ * confidential values. Everyone else sees them masked (agents see them only through `seesConfidential`).
+ */
+export interface ReadAs {
+  /** The agent the connection is bound to; absent for unbound callers, who see confidential values masked. */
+  caller?: string;
+  /** The vault's human reads (the dashboard's own backend, never an agent's connection). */
+  human?: boolean;
 }
 
 export function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to.slice(0, 10)}T00:00:00Z`) - Date.parse(`${from.slice(0, 10)}T00:00:00Z`)) / DAY);
 }
 
-function addDays(day: string, n: number): string {
+export function addDays(day: string, n: number): string {
   return new Date(Date.parse(`${day}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
 }
 
@@ -290,12 +496,15 @@ export interface ViewContext {
   today: string;
   staleBefore: string;
   rel: RelationIndex;
+  /** The human reads: confidential values are shown (secrets never are). */
+  human?: boolean;
 }
 
-export function viewContext(vault: Vault): ViewContext {
+export function viewContext(vault: Vault, read: ReadAs = {}): ViewContext {
   const now = vault.nowIso();
   return {
     vault,
+    ...(read.human ? { human: true } : {}),
     now,
     today: localParts(now, vault.config.timezone).date,
     staleBefore: new Date(Date.parse(now) - vault.config.curator.stale_after_days * DAY).toISOString(),
@@ -307,9 +516,9 @@ export function refOf(e: Entity): Ref {
   return { slug: e.slug, title: displayName(e), type: e.fm.type };
 }
 
-function refFor(vault: Vault, target: string, fallbackType = "unknown"): Ref {
+function refFor(vault: Vault, target: string, fallbackType?: string): Ref {
   const e = vault.resolve(target);
-  return e ? refOf(e) : { slug: unwrapLink(target), title: unwrapLink(target), type: fallbackType };
+  return e ? refOf(e) : { slug: unwrapLink(target), title: unwrapLink(target), type: fallbackType ?? "unknown" };
 }
 
 function emptyStatusCounts(): Record<FactStatus, number> {
@@ -332,62 +541,99 @@ export function entityCard(ctx: ViewContext, e: Entity): EntityCard {
   };
 }
 
+const daysTo = (ctx: ViewContext, day: string | undefined) => (day && ISO_DAY.test(day) ? daysBetween(ctx.today, day) : undefined);
+
 function clockView(ctx: ViewContext, c: Clock): ClockView {
-  return { name: c.name, segments: c.segments, filled: Math.min(c.filled, c.segments), deadline: c.deadline, daysLeft: c.deadline && ISO_DAY.test(c.deadline) ? daysBetween(ctx.today, c.deadline) : undefined };
+  return { name: c.name, segments: c.segments, filled: Math.min(c.filled, c.segments), deadline: c.deadline, daysLeft: daysTo(ctx, c.deadline) };
 }
 
-export function questCard(ctx: ViewContext, q: Entity): QuestCard {
-  const campaign = (ctx.rel.out.get(q.slug) ?? []).map((r) => ctx.vault.entities.get(r.slug)!).find((e) => e?.fm.type === "campaign");
+export function goalCard(ctx: ViewContext, q: Entity): GoalCard {
+  const { vault } = ctx;
+  const p = goalProps(q);
+  const campaign = (ctx.rel.out.get(q.slug) ?? []).map((r) => vault.entities.get(r.slug)!).find((e) => e && vault.schema.has(e.fm.type, "arc"));
+  const state = goalState(p.status, vault.schema.type(q.fm.type)?.statuses);
+  const next = nextDue(q, vault);
+  // Until the dashboard draws progress, it shows as the goal's first clock (named after a v1 clock it came from).
+  const [first, ...rest] = legacyClocks(q);
+  const progressClock = p.progress ? [{ name: first?.name ?? "Progress", segments: p.progress.total, filled: Math.min(p.progress.done, p.progress.total) }] : [];
   return {
     ...entityCard(ctx, q),
-    status: q.fm.status ?? "active",
-    owner: q.fm.owner ? refFor(ctx.vault, q.fm.owner, "party") : undefined,
-    deadline: q.fm.deadline,
-    daysLeft: q.fm.deadline && ISO_DAY.test(q.fm.deadline) ? daysBetween(ctx.today, q.fm.deadline) : undefined,
+    status: state,
+    state,
+    word: p.status ?? "active",
+    owner: p.owner ? refFor(vault, p.owner, vault.schema.defaultTypeFor("actor")) : undefined,
+    counterparty: p.counterparty ? refFor(vault, p.counterparty) : undefined,
+    due: p.due,
+    nextDue: next,
+    daysLeft: daysTo(ctx, next),
+    progress: p.progress,
+    repeat: p.repeat,
+    lastDone: p.last_done,
     objectives: getObjectives(q),
-    clocks: (q.fm.clocks ?? []).map((c) => clockView(ctx, c)),
+    deadline: p.due,
+    clocks: [...progressClock, ...(p.progress && first ? rest : [first, ...rest].filter((c): c is Clock => !!c))].map((c) => clockView(ctx, c)),
     campaign: campaign ? refOf(campaign) : undefined,
   };
 }
 
+/** @deprecated Use `goalCard`. */
+export const questCard = goalCard;
+
 export function factDetail(ctx: ViewContext, e: Entity, field: string, f: Fact): FactDetail {
-  const dispute = ctx.vault.disputes.get(ctx.vault.disputeSlug(e.slug, field));
+  const dispute = ctx.vault.disputeFor(e.slug, field);
+  const confidential = isConfidentialField(ctx.vault, e, field, f);
+  const reveal = !!ctx.human;
+  const { field: name, scope } = parseFactKey(field);
+  const def = ctx.vault.schema.fieldDef(e.fm.type, field);
   return {
     field,
-    ...shown(f.value),
+    name,
+    ...(scope ? { scope } : {}),
+    ...(f.valid_from ? { validFrom: f.valid_from } : {}),
+    ...(f.valid_until ? { validUntil: f.valid_until } : {}),
+    ...(f.confidence !== undefined ? { confidence: f.confidence } : {}),
+    ...(def?.human_only ? { humanOnly: true } : {}),
+    ...shown(f.value, { confidential, reveal }),
     status: f.status,
     by: f.by ?? ctx.vault.config.human,
     byHuman: ctx.vault.isHuman(f.by),
-    authority: ctx.vault.authorityOf(f.by, e),
+    authority: shownAuthority(ctx.vault.authorityOf(f.by, e, field)),
     at: f.at,
     stale: f.status === "canon" && !!f.at && f.at < ctx.staleBefore,
     src: f.src,
     seenBy: f.seen_by ?? [],
     dispute: dispute?.fm.status === "open" ? dispute.slug : undefined,
-    was: (f.was ?? []).map((w) => ({ ...shown(w.value), by: w.by, at: w.at })),
+    was: (f.was ?? []).map((w) => ({ ...shown(w.value, { confidential, reveal }), by: w.by, at: w.at, ...(w.why ? { why: w.why } : {}) })),
   };
 }
 
 export function disputeView(ctx: ViewContext, d: Dispute): DisputeView {
   const e = ctx.vault.resolve(d.fm.entity);
   const current = e?.fm.facts[d.fm.field];
+  // Any confidential claim (or a confidential fact) masks every value: showing the others would tell which one it is.
+  const confidential = ctx.vault.disputeHidden(d, e);
+  const reveal = !!ctx.human;
   return {
     slug: d.slug,
+    kind: d.fm.kind ?? "conflict",
+    ...(d.fm.state ? { state: d.fm.state } : {}),
+    ...(d.fm.evidence ? { evidence: d.fm.evidence } : {}),
+    ...(d.fm.targets?.length ? { targets: d.fm.targets.map((t) => refFor(ctx.vault, t)) } : {}),
     entity: refFor(ctx.vault, d.fm.entity),
     field: d.fm.field,
     status: d.fm.status,
     opened: d.fm.opened,
     resolved: d.fm.resolved,
     claims: d.fm.claims.map((c) => ({
-      ...shown(c.value),
+      ...shown(c.value, { confidential, reveal }),
       by: c.by ?? ctx.vault.config.human,
       byHuman: ctx.vault.isHuman(c.by),
-      authority: e ? ctx.vault.authorityOf(c.by, e) : "none",
+      authority: e ? shownAuthority(ctx.vault.authorityOf(c.by, e, d.fm.field)) : "none",
       at: c.at,
       src: c.src,
     })),
     current: e && current ? factDetail(ctx, e, d.fm.field, current) : undefined,
-    ruling: d.fm.ruling === undefined || d.fm.ruling === "" ? undefined : shown(d.fm.ruling),
+    ruling: d.fm.ruling === undefined || d.fm.ruling === "" ? undefined : shown(d.fm.ruling, { confidential, reveal }),
     secretField: e ? isSecretField(ctx.vault, e, d.fm.field) : false,
   };
 }
@@ -399,9 +645,10 @@ export function episodeView(ep: Episode, lastSleep?: string): EpisodeView {
     kind: ep.kind,
     at: ep.at,
     path: ep.path,
-    text: ep.secret ? null : ep.text,
+    text: ep.secret || ep.confidential ? null : ep.text,
     secret: !!ep.secret,
-    about: ep.secret ? [] : ep.about,
+    ...(ep.confidential ? { confidential: true } : {}),
+    about: ep.secret || ep.confidential ? [] : ep.about,
     confidence: ep.confidence,
     waitedThroughSleep: !!lastSleep && ep.at < lastSleep,
   };
@@ -409,7 +656,7 @@ export function episodeView(ep: Episode, lastSleep?: string): EpisodeView {
 
 // ── Chronicle ───────────────────────────────────────────────────────────────────
 
-const ENTRY_RE = /> \[!episode\] (\d\d:\d\d) · \[\[([^\]|]+)[^\]]*\]\] · (\w+)\n((?:>.*\n?)*)\n*\^(ep-[\w-]+)/g;
+const ENTRY_RE = /> \[!episode\] (\d\d:\d\d) · \[\[([^\]|]+)[^\]]*\]\] · ([\w/-]+)\n((?:>.*\n?)*)\n*\^(ep-[\w-]+)/g;
 
 /** One chronicle day file → its entries, with full text and the entities each episode touched. */
 export function parseChronicleDay(day: string, content: string, timeZone = "UTC"): ChronicleEntryView[] {
@@ -460,32 +707,166 @@ export function findings(ctx: ViewContext): Pick<Attention, "disputes" | "rumors
   const stale: FactFinding[] = [];
   for (const e of ctx.vault.entities.values()) {
     for (const [field, f] of Object.entries(e.fm.facts)) {
-      const finding = { ref: refOf(e), field, ...shown(f.value), by: f.by ?? ctx.vault.config.human, at: f.at };
+      const finding = { ref: refOf(e), field, ...shown(f.value, { confidential: isConfidentialField(ctx.vault, e, field, f), reveal: !!ctx.human }), by: f.by ?? ctx.vault.config.human, at: f.at };
       if (f.status === "rumor") rumors.push(finding);
       if (f.status === "canon" && f.at && f.at < ctx.staleBefore) stale.push(finding);
     }
   }
   const orphans = [...ctx.vault.entities.values()]
-    .filter((e) => e.fm.type !== "party" && !e.fm.relations.length && !ctx.rel.in.get(e.slug)?.length)
+    .filter((e) => !ctx.vault.schema.has(e.fm.type, "actor") && !e.fm.relations.length && !ctx.rel.in.get(e.slug)?.length)
     .map(refOf);
   return { disputes: ctx.vault.openDisputes().map((d) => disputeView(ctx, d)), rumors, stale, orphans };
 }
 
-/** Deadlines, clock deadlines and date-like facts between `today` and `horizon` (inclusive), soonest first. */
+/** The next time a yearly date (a birthday) comes round, on or after `today`. Feb 29 falls on Feb 28 in other years. */
+export function nextYearly(date: string, today: string): string {
+  const [, m, d] = date.slice(0, 10).split("-");
+  const on = (year: number) => {
+    const last = new Date(Date.UTC(year, Number(m), 0)).getUTCDate();
+    return `${year}-${m}-${String(Math.min(Number(d), last)).padStart(2, "0")}`;
+  };
+  const year = Number(today.slice(0, 4));
+  const thisYear = on(year);
+  return thisYear >= today.slice(0, 10) ? thisYear : on(year + 1);
+}
+
+/**
+ * What's due between `today` and `horizon` (inclusive), soonest first: open goals (their next due
+ * date), v1 clock deadlines, and date facts. A fact counts when its field is declared a `date` (a
+ * `recurs: yearly` one at its next occurrence); an undeclared field only when its name looks like a date.
+ */
 export function upcomingDates(vault: Vault, today: string, horizon: string): { what: string; date: string; slug: string }[] {
   const out: { what: string; date: string; slug: string }[] = [];
+  const within = (d: string) => ISO_DAY.test(d) && d.slice(0, 10) >= today && d.slice(0, 10) <= horizon;
   for (const e of vault.entities.values()) {
-    if (e.fm.deadline && e.fm.deadline >= today && e.fm.deadline <= horizon) out.push({ what: "deadline", date: e.fm.deadline, slug: e.slug });
-    for (const c of e.fm.clocks ?? []) if (c.deadline && c.deadline >= today && c.deadline <= horizon) out.push({ what: `clock ${c.name} ${c.filled}/${c.segments}`, date: c.deadline, slug: e.slug });
+    if (vault.schema.has(e.fm.type, "goal")) {
+      const state = goalState(e.fm.status, vault.schema.type(e.fm.type)?.statuses);
+      const due = nextDue(e, vault);
+      if (due && state !== "done" && state !== "failed" && within(due)) out.push({ what: "due", date: due.slice(0, 10), slug: e.slug });
+      for (const c of legacyClocks(e)) if (c.deadline && within(c.deadline)) out.push({ what: `clock ${c.name} ${c.filled}/${c.segments}`, date: c.deadline, slug: e.slug });
+    }
     for (const [field, f] of Object.entries(e.fm.facts)) {
+      if (f.status === "retconned" || isConfidentialField(vault, e, field, f)) continue;
       const v = String(f.value);
-      if (DATEISH.test(field) && ISO_DAY.test(v) && v.slice(0, 10) >= today && v.slice(0, 10) <= horizon) out.push({ what: `${field} (${f.status})`, date: v, slug: e.slug });
+      if (!ISO_DAY.test(v)) continue;
+      const def = vault.schema.fieldDef(e.fm.type, field);
+      if (def ? def.kind !== "date" : !DATEISH.test(parseFactKey(field).field)) continue;
+      const date = def?.recurs === "yearly" ? nextYearly(v, today) : v.slice(0, 10);
+      if (within(date)) out.push({ what: `${field} (${f.status})`, date, slug: e.slug });
     }
   }
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// ── Schema, humans, contacts ────────────────────────────────────────────────────
+
+function fieldView(def: FieldDef): FieldView {
+  return {
+    kind: def.kind,
+    ...(def.many ? { many: true } : {}),
+    ...(def.values?.length ? { values: def.values } : {}),
+    ...(def.required ? { required: true } : {}),
+    ...(def.human_only ? { humanOnly: true } : {}),
+    ...(def.secret ? { secret: true } : {}),
+    ...(def.confidential || def.identity_key ? { confidential: true } : {}),
+    ...(def.description ? { description: def.description } : {}),
+  };
+}
+
+export function typeView(t: ResolvedType): TypeView {
+  return {
+    name: t.name,
+    folder: t.folder,
+    description: t.description,
+    ...(t.label ? { label: t.label } : {}),
+    ...(t.codexLabel ? { codexLabel: t.codexLabel } : {}),
+    capabilities: t.capabilities,
+    ...(t.statuses ? { statuses: t.statuses } : {}),
+    inheritable: t.inheritable,
+    humanOnly: Object.entries(t.fields)
+      .filter(([, d]) => d.human_only)
+      .map(([f]) => f),
+  };
+}
+
+export function kindView(k: ResolvedKind): KindView {
+  return {
+    name: k.name,
+    behaviour: k.behaviour,
+    ...(k.aliasOf ? { aliasOf: k.aliasOf } : {}),
+    text: k.text,
+    ...(k.gistMax ? { gistMax: k.gistMax } : {}),
+    data: Object.fromEntries(Object.entries(k.data).map(([name, d]) => [name, fieldView(d)])),
+    description: k.description,
+  };
+}
+
+export function schemaView(vault: Vault): SchemaView {
+  return { types: vault.schema.types().map(typeView), kinds: vault.schema.kinds().map(kindView) };
+}
+
+export function humansView(vault: Vault): HumanView[] {
+  return vault.config.humans.map((h) => ({ id: h.id, domains: h.domains, ...(h.github ? { github: h.github } : {}), ...(h.gitlab ? { gitlab: h.gitlab } : {}) }));
+}
+
+/** The effective cadence of `e` (own, else inherited or from its groups) and how overdue contact is on `today`. */
+export function cadenceOf(vault: Vault, e: Entity, today: string): CadenceView | undefined {
+  const every = resolveInheritance(vault, e).cadence;
+  if (!every) return undefined;
+  const last = e.fm.stats?.last_contact;
+  const due = every !== "none" && last ? addDuration(last, every) : undefined;
+  const late = due ? daysBetween(due, today) : 0;
+  return { every, ...(due ? { due } : {}), ...(late > 0 ? { overdueDays: late } : {}) };
+}
+
+/**
+ * Up to `cap` overdue contacts, most overdue first, spread across groups: each group's most overdue
+ * comes before anyone's second, so one big group doesn't fill the list.
+ */
+export function overdueContacts(vault: Vault, today: string, cap: number): OverdueContact[] {
+  const all: OverdueContact[] = [];
+  for (const e of vault.entities.values()) {
+    if (vault.schema.has(e.fm.type, "actor") || !e.fm.stats?.last_contact) continue;
+    const c = cadenceOf(vault, e, today);
+    if (!c?.overdueDays || !c.due) continue;
+    const group = e.fm.relations.filter((r) => r.rel === "member_of").map((r) => vault.resolve(r.target)?.slug).find(Boolean);
+    all.push({ ref: link(e.slug), title: displayName(e), last_contact: e.fm.stats.last_contact, cadence: c.every, due: c.due, days_overdue: c.overdueDays, ...(group ? { group: link(group) } : {}) });
+  }
+  all.sort((a, b) => b.days_overdue - a.days_overdue || a.ref.localeCompare(b.ref));
+  const picked: OverdueContact[] = [];
+  const rounds = new Map<string, number>();
+  for (const o of all) rounds.set(o.group ?? o.ref, 0);
+  // Round r takes the r-th most overdue of each group, in overall order.
+  for (let round = 0; picked.length < cap && picked.length < all.length; round++) {
+    for (const o of all) {
+      if (picked.length >= cap) break;
+      const key = o.group ?? o.ref;
+      if (picked.includes(o) || rounds.get(key)! > round) continue;
+      picked.push(o);
+      rounds.set(key, rounds.get(key)! + 1);
+    }
+  }
+  return picked.sort((a, b) => b.days_overdue - a.days_overdue || a.ref.localeCompare(b.ref));
+}
+
+function overdueView(vault: Vault, o: OverdueContact): OverdueView {
+  return {
+    ref: refFor(vault, o.ref),
+    lastContact: o.last_contact,
+    cadence: o.cadence,
+    due: o.due,
+    daysOverdue: o.days_overdue,
+    ...(o.group ? { group: refFor(vault, o.group) } : {}),
+  };
+}
+
+function guidelineView(vault: Vault, g: Guideline): GuidelineView {
+  return { rule: g.rule, ...(g.scope ? { scope: g.scope } : {}), status: g.status, by: g.by ?? vault.config.human, byHuman: vault.isHuman(g.by), ...(g.at ? { at: g.at } : {}) };
+}
+
 // ── Party ────────────────────────────────────────────────────────────────────────
+
+const actorFields = ({ lane, authority, host }: ReturnType<typeof actorProps>) => ({ lane, authority, host });
 
 function partyMembers(ctx: ViewContext, chronicle30d: ChronicleEntryView[]): PartyMember[] {
   const { vault } = ctx;
@@ -498,37 +879,39 @@ function partyMembers(ctx: ViewContext, chronicle30d: ChronicleEntryView[]): Par
   for (const ep of vault.episodes) seen(ep.agent, ep.at);
   for (const c of chronicle30d) seen(c.agent, c.at);
   for (const e of vault.entities.values()) for (const f of Object.values(e.fm.facts)) seen(f.by, f.at);
-  const quests = vault.ofType("quest");
-  return vault.ofType("party").map((p) => ({
+  const quests = vault.withCapability("goal");
+  const owned = (q: Entity) => {
+    const owner = goalProps(q).owner;
+    return owner ? vault.resolve(owner)?.slug : undefined;
+  };
+  return vault.withCapability("actor").map((p) => ({
     ...refOf(p),
-    lane: p.fm.lane,
-    authority: p.fm.authority ?? [],
-    host: p.fm.host,
+    ...actorFields(actorProps(p)),
     lastSeen: lastSeen.get(p.slug),
     pending: vault.episodes.filter((ep) => ep.agent === p.slug).length,
     chronicled30d: chronicle30d.filter((c) => c.agent === p.slug).length,
-    owns: quests.filter((q) => q.fm.owner && vault.resolve(q.fm.owner)?.slug === p.slug).map(refOf),
+    owns: quests.filter((q) => owned(q) === p.slug).map(refOf),
   }));
 }
 
 function unknownAgents(vault: Vault, chronicle: ChronicleEntryView[]): string[] {
   const agents = new Set([...vault.episodes.map((e) => e.agent), ...chronicle.map((c) => c.agent)]);
-  return [...agents].filter((a) => !vault.isHuman(a) && !vault.party(a) && !vault.introductionOf(a)).sort();
+  return [...agents].filter((a) => !vault.isHuman(a) && !vault.actor(a) && !vault.introductionOf(a)).sort();
 }
 
 /** One per agent outside the party: a member's leftover introduction has nothing left to approve. */
 export function introductions(vault: Vault): IntroductionView[] {
   const latest = new Map(vault.introductions.map((i) => [i.agent, i]));
   return [...latest.values()]
-    .filter((i) => !vault.partyMember(i.agent))
+    .filter((i) => !vault.actorMember(i.agent))
     .sort((a, b) => a.at.localeCompare(b.at))
     .map(({ agent, title, lane, host, model, at, about }) => ({ agent, title, lane, host, model, at, about }));
 }
 
 // ── Views ────────────────────────────────────────────────────────────────────────
 
-export async function overview(vault: Vault): Promise<Overview> {
-  const ctx = viewContext(vault);
+export async function overview(vault: Vault, read: ReadAs = {}): Promise<Overview> {
+  const ctx = viewContext(vault, read);
   const { config } = vault;
   const lastSleep = await lastSleepAt(vault);
   const from30 = addDays(ctx.today, -29);
@@ -541,7 +924,10 @@ export async function overview(vault: Vault): Promise<Overview> {
   for (const e of vault.entities.values()) {
     byType[e.fm.type] = (byType[e.fm.type] ?? 0) + 1;
     for (const f of Object.values(e.fm.facts)) facts[f.status]++;
-    if (e.fm.type === "quest") questCounts[e.fm.status ?? "active"] = (questCounts[e.fm.status ?? "active"] ?? 0) + 1;
+    if (vault.schema.has(e.fm.type, "goal")) {
+      const state = goalState(e.fm.status, vault.schema.type(e.fm.type)?.statuses);
+      questCounts[state] = (questCounts[state] ?? 0) + 1;
+    }
   }
 
   const activity: ActivityDay[] = [];
@@ -557,17 +943,28 @@ export async function overview(vault: Vault): Promise<Overview> {
   const from7 = addDays(ctx.today, -6);
   const horizon = addDays(ctx.today, 90);
   const unknown = unknownAgents(vault, chronicle30d);
+  const goals = vault.withCapability("goal").map((q) => goalCard(ctx, q));
   return {
+    name: config.name,
     campaign: config.campaign,
     human: config.human,
+    humans: humansView(vault),
+    schema: schemaView(vault),
     timezone: config.timezone,
     now: ctx.now,
     today: ctx.today,
     lastSleep,
     version: { vault: config.version, tool: CURRENT_VAULT_VERSION, status: vaultVersionStatus(config) },
-    counts: { entities: vault.entities.size, byType, facts, inbox: vault.episodes.length, disputes: vault.openDisputes().length, quests: questCounts },
-    attention: { ...findings(ctx), waiting: inbox.filter((e) => e.waitedThroughSleep), unknownAgents: unknown, introductions: introductions(vault) },
-    quests: vault.ofType("quest").map((q) => questCard(ctx, q)),
+    counts: { entities: vault.entities.size, byType, facts, inbox: vault.episodes.length, disputes: vault.openDisputes().length, goals: questCounts, quests: questCounts },
+    attention: {
+      ...findings(ctx),
+      waiting: inbox.filter((e) => e.waitedThroughSleep),
+      unknownAgents: unknown,
+      introductions: introductions(vault),
+      overdue: overdueContacts(vault, ctx.today, 20).map((o) => overdueView(vault, o)),
+    },
+    goals,
+    quests: goals,
     upcoming: upcomingDates(vault, ctx.today, horizon).map((u) => ({ what: u.what, date: u.date, daysLeft: daysBetween(ctx.today, u.date), ref: refOf(vault.entities.get(u.slug)!) })),
     party: partyMembers(ctx, chronicle30d),
     inbox: [...inbox].reverse().slice(0, 200),
@@ -582,28 +979,38 @@ export async function overview(vault: Vault): Promise<Overview> {
   };
 }
 
-export function catalog(vault: Vault): Catalog {
-  const ctx = viewContext(vault);
+export function catalog(vault: Vault, read: ReadAs = {}): Catalog {
+  const ctx = viewContext(vault, read);
   const entities = [...vault.entities.values()].map((e) => entityCard(ctx, e)).sort((a, b) => a.title.localeCompare(b.title));
   return {
+    name: vault.config.name,
     campaign: vault.config.campaign,
     human: vault.config.human,
-    types: Object.entries(vault.config.types).map(([name, def]) => ({ name, folder: def.folder, description: def.description, count: entities.filter((e) => e.type === name).length })),
+    humans: humansView(vault),
+    types: vault.schema.types().map((t) => ({ ...typeView(t), count: entities.filter((e) => e.type === t.name).length })),
+    kinds: vault.schema.kinds().map(kindView),
     domains: vault.config.domains,
     relations: vault.config.relations,
     entities,
   };
 }
 
-export async function entityDetail(vault: Vault, e: Entity): Promise<EntityDetail> {
-  const ctx = viewContext(vault);
+export async function entityDetail(vault: Vault, e: Entity, read: ReadAs = {}): Promise<EntityDetail> {
+  const ctx = viewContext(vault, read);
   const lastSleep = await lastSleepAt(vault);
   const chronicle = await readChronicle(vault, addDays(ctx.today, -89), ctx.today);
-  const isParty = e.fm.type === "party";
+  const isParty = vault.schema.has(e.fm.type, "actor");
   const relations = [
     ...(ctx.rel.out.get(e.slug) ?? []).map((r) => ({ rel: r.rel, dir: "out" as const, ref: refOf(vault.entities.get(r.slug)!) })),
     ...(ctx.rel.in.get(e.slug) ?? []).map((r) => ({ rel: r.rel, dir: "in" as const, ref: refOf(vault.entities.get(r.slug)!) })),
   ];
+  const inheritance = resolveInheritance(vault, e);
+  const inherited = inheritance.guidelines.filter((g) => g.source !== e.slug);
+  const human = getHumanGuidelines(e);
+  const own = e.fm.guidelines ?? [];
+  const cadence = cadenceOf(vault, e, ctx.today);
+  const inherits = [...inheritance.chain, ...inheritance.mixins].map(refOf);
+  const goal = vault.schema.has(e.fm.type, "goal") ? goalCard(ctx, e) : undefined;
   const aboutMe = (ep: Episode) => ep.about.some((a) => vault.resolve(a)?.slug === e.slug) || (isParty && ep.agent === e.slug);
   return {
     card: entityCard(ctx, e),
@@ -613,30 +1020,47 @@ export async function entityDetail(vault: Vault, e: Entity): Promise<EntityDetai
     facts: Object.entries(e.fm.facts).map(([field, f]) => factDetail(ctx, e, field, f)),
     relations,
     disputes: [...vault.disputes.values()].filter((d) => vault.resolve(d.fm.entity)?.slug === e.slug).map((d) => disputeView(ctx, d)),
-    quest: e.fm.type === "quest" ? questCard(ctx, e) : undefined,
+    goal,
+    quest: goal,
     party: isParty ? partyMembers(ctx, chronicle.filter((c) => c.day >= addDays(ctx.today, -29))).find((p) => p.slug === e.slug) : undefined,
     mentions: chronicle.filter((c) => c.touched.includes(e.slug) || (isParty && c.agent === e.slug)).reverse().slice(0, 50),
     pending: vault.episodes.filter(aboutMe).map((ep) => episodeView(ep, lastSleep)),
+    ...(human || own.length || inherited.length
+      ? {
+          guidelines: {
+            human,
+            items: own.map((g) => guidelineView(vault, g)),
+            inherited: inherited.map((g) => ({ ...guidelineView(vault, g), source: refFor(vault, g.source) })),
+          },
+        }
+      : {}),
+    ...(e.fm.stats ? { stats: e.fm.stats } : {}),
+    ...(cadence ? { cadence } : {}),
+    ...(e.fm.decisions?.length ? { decisions: e.fm.decisions } : {}),
+    ...(e.fm.questions?.length ? { questions: e.fm.questions } : {}),
+    ...(inherits.length ? { inherits } : {}),
   };
 }
 
-export function graph(vault: Vault): Graph {
-  const ctx = viewContext(vault);
+export function graph(vault: Vault, read: ReadAs = {}): Graph {
+  const ctx = viewContext(vault, read);
   const nodes = [...vault.entities.values()].map((e) => {
     const c = entityCard(ctx, e);
     return { slug: c.slug, title: c.title, type: c.type, tags: c.tags, degree: c.degree, status: c.status };
   });
   const edges = [...ctx.rel.out.entries()].flatMap(([from, rs]) => rs.map((r) => ({ from, rel: r.rel, to: r.slug })));
   // Quest ownership isn't a relation in the notes, but it's how the party connects to the story.
-  for (const q of vault.ofType("quest")) {
-    const owner = q.fm.owner ? vault.resolve(q.fm.owner) : undefined;
+  for (const q of vault.withCapability("goal")) {
+    const ref = goalProps(q).owner;
+    const owner = ref ? vault.resolve(ref) : undefined;
     if (owner && owner.slug !== q.slug) edges.push({ from: owner.slug, rel: "leads", to: q.slug });
   }
   return { nodes, edges };
 }
 
 /** One month (`YYYY-MM`) of the chronicle, newest day first; `latest` (or no month) picks the newest month on record. */
-export async function chroniclePage(vault: Vault, month?: string): Promise<ChroniclePage> {
+/** `read` is accepted like every view's; the chronicle holds no confidential value to reveal (the curator redacts it). */
+export async function chroniclePage(vault: Vault, month?: string, _read: ReadAs = {}): Promise<ChroniclePage> {
   const days = await chronicleDays(vault);
   const months = [...new Set(days.map(([d]) => d.slice(0, 7)))].sort().reverse();
   const pick = month && /^\d{4}-\d{2}$/.test(month) ? month : (months[0] ?? localParts(vault.nowIso(), vault.config.timezone).date.slice(0, 7));

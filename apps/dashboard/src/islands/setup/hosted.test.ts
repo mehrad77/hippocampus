@@ -102,7 +102,7 @@ describe("hosted onboarding on GitLab", () => {
 
   it("asks for the provider only when it is GitLab", () => {
     const draft = { ...newDraft("Europe/Lisbon"), campaign: "Lisbon Arc", secrets: "skip" as const };
-    expect(initRequest(draft, 555, "gitlab")).toMatchObject({ provider: "gitlab", repoId: 555 });
+    expect(initRequest(draft, 555, { provider: "gitlab" })).toMatchObject({ provider: "gitlab", repoId: 555 });
     expect(initRequest(draft, 1)).not.toHaveProperty("provider");
   });
 
@@ -142,6 +142,9 @@ describe("campaign draft", () => {
     const d = { ...newDraft("Europe/Lisbon"), campaign: " Lisbon Arc ", recipient: "age1example", saved: true };
     expect(initRequest(d, 1)).toEqual({ repoId: 1, campaign: "Lisbon Arc", human: "player", timezone: "Europe/Lisbon", domains: ["admin", "housing", "career", "finance", "health", "story"], recipient: "age1example" });
     expect(initRequest({ ...d, seed: true, secrets: "skip" }, 1)).toMatchObject({ seed: "example-relocation" });
+    expect(initRequest({ ...d, presets: ["people", "student"] }, 1)).toMatchObject({ presets: ["people", "student"] });
+    // An existing vault is adopted as it is.
+    expect(initRequest({ ...d, presets: ["people"] }, 1, { adopt: true })).not.toHaveProperty("presets");
     expect(initRequest({ ...d, secrets: "skip" }, 1)).not.toHaveProperty("recipient");
   });
 

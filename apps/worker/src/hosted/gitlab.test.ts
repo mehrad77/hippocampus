@@ -23,7 +23,7 @@ async function setup() {
 }
 
 const status = async (h: HostedHarness, visit: Visit) => (await (await h.api(visit, "setup/status")).json()) as HostedSetupStatus;
-const init = (h: HostedHarness, visit: Visit, body: Record<string, unknown>) => h.post(visit, "setup/init", { provider: "gitlab", ...SETTINGS, ...body });
+const init = (h: HostedHarness, visit: Visit, body: Record<string, unknown>) => h.post(visit, "setup/init", { provider: "gitlab", ...SETTINGS, humans: [{ id: "player" }], ...body });
 
 describe("GitLab is optional", () => {
   it("is not offered, and its routes are closed, when the instance has no GitLab set up", async () => {
@@ -140,6 +140,20 @@ describe("a vault on GitLab", () => {
     expect(log).toHaveLength(1);
     expect(log[0]!.message).toMatch(/^chore: initialize Hippocampus vault \[skip ci\]/);
     expect(log[0]!.message).toContain("Hippo-Actor: bootstrap");
+  });
+
+  it("links the person's GitLab username to the primary human, and tells the dashboard who they are on GitLab", async () => {
+    const ctx = await setup();
+    // Their GitLab username differs from their GitHub login, so the project lives in their own GitLab namespace.
+    ctx.gl.addUser("player-gl", 4600);
+    await ctx.gl.addProject({ fullName: "player-gl/vault", id: 600, empty: true });
+    await ctx.h.connectGitLab(ctx.visit, "player-gl");
+    expect((await init(ctx.h, ctx.visit, { repoId: 600 })).status).toBe(200);
+    const config = ctx.gl.files("main", ctx.gl.projects.get(600)!)["_hippo/config.yaml"]!;
+    expect(config).toMatch(/- \{ ?id: player, github: player, gitlab: player-gl ?\}/);
+    await ctx.h.api(ctx.visit, "overview");
+    const call = ctx.h.vaults.calls.filter((c) => c.method === "dashboard").at(-1);
+    expect(call?.user).toMatchObject({ login: "player", gitlab: "player-gl" });
   });
 
   it("registers the project id under its provider, and configures the vault's object for GitLab", async () => {

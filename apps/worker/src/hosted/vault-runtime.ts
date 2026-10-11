@@ -1,15 +1,16 @@
-import { HippoService, Vault, displayName, type SearcherFactory } from "@hippocampus/core";
+import { AuditError, CONFIG_PATH, CURRENT_VAULT_VERSION, HippoService, humanByLogin, StoreConflictError, Vault, displayName, migrate, parseConfig, vaultVersionStatus, type HippoConfig, type SearcherFactory } from "@hippocampus/core";
 import { SleepRelay, type RunStore } from "@hippocampus/curator/relay";
-import { createDashboardApi, errorResponse, json, serviceSource, type DashboardSource, type ErrorReport } from "@hippocampus/dashboard";
+import { HttpError, createDashboardApi, errorResponse, json, serviceSource, type DashboardSource, type ErrorReport, type SourceInfo, type VaultUpgrade } from "@hippocampus/dashboard";
 import { HippoIndex, doSql, type DurableSqlLike, type SqlStorageLike } from "@hippocampus/index";
 import { createHippoServer, type Scope } from "@hippocampus/mcp";
 import { GitHubStore, SnapshotCache, SqliteBlobCache, type BlobCache } from "@hippocampus/store-github";
 import { GitLabStore } from "@hippocampus/store-gitlab";
+import { TEMPLATE } from "@hippocampus/template";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { jsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/types.js";
 import { ScribeQueue } from "../scribe.ts";
 import { AuditedStore, type Principal } from "./audited-store.ts";
-import { VAULT_PERMISSIONS } from "./bootstrap.ts";
+import { VAULT_PERMISSIONS, migrationCommit } from "./bootstrap.ts";
 import { cappedEmbedder, type HostedEmbedding } from "./embed-cap.ts";
 import type { InstallationToken, Narrowing, Permissions } from "./github-app.ts";
 import { logEvent } from "./limits.ts";
@@ -47,7 +48,10 @@ export interface VaultGrant {
 
 /** The signed-in owner on the dashboard. */
 export interface DashboardUser {
+  /** The GitHub login the person signed in with. */
   login: string;
+  /** Their connected GitLab username, for a vault on GitLab. */
+  gitlab?: string;
   account: { status: "waitlisted" | "approved"; admin: boolean };
 }
 
@@ -91,6 +95,8 @@ export interface VaultRuntimeDeps {
   jsonSchemaValidator?: jsonSchemaValidator;
   quotas?: Partial<Quotas>;
   log?: (line: string) => void;
+  /** The format migration; tests swap it to make it misbehave. */
+  migrate?: typeof migrate;
 }
 
 export const DASHBOARD_API = "/dashboard/api";
@@ -107,6 +113,20 @@ export const RUNTIME_PERMISSIONS: Permissions = Object.fromEntries(Object.entrie
 
 const HUMAN: Principal = { kind: "human" };
 const CURATOR: Principal = { kind: "curator" };
+const MIGRATION: Principal = { kind: "migration" };
+
+/**
+ * The vault is older than this Worker's format. Nothing here migrates it until its owner clicks
+ * Upgrade on the dashboard, so a Worker rolled back right after a deploy never meets a vault it can't read.
+ * Says nothing about the vault's content.
+ */
+export const upgradeNeeded = () =>
+  new HttpError(409, "This vault uses an older format. Its owner can upgrade it on the Hippocampus dashboard.", "VAULT_UPGRADE_NEEDED");
+/** Someone pushed while the upgrade was computed: clicking again redoes it against the new head. */
+const upgradeRaced = () => new HttpError(409, "The vault changed while it was being upgraded. Try again.", "CONFLICT");
+/** The upgrade can't be done here (the audit refused it): only the owner, locally, can. Says nothing about the vault's content. */
+const upgradeRefused = () =>
+  new HttpError(409, "This vault's upgrade can't be applied here. The owner can run `hippo migrate` in a local clone and push.", "VAULT_UPGRADE_REFUSED");
 
 export const grantPrincipal = (grant: VaultGrant): Principal => ({ kind: "agent", agent: grant.agent, scopes: grant.scopes });
 
@@ -194,6 +214,13 @@ export class VaultRuntime {
   private readonly clock: () => Date;
   private index?: Promise<HippoIndex>;
   private gcScheduled = false;
+  /** Where the vault keeps unconsolidated episodes (`folders.inbox`); they stay out of storage at rest. */
+  private inboxPrefix = "inbox/";
+  private inboxKnown?: Promise<void>;
+  /** The vault is known to be in the current format (see `format`). */
+  private current = false;
+  private upgrading?: Promise<VaultUpgrade>;
+  private readonly runs: RunStore;
 
   constructor(private readonly d: VaultRuntimeDeps) {
     this.meta = d.meta;
@@ -209,12 +236,14 @@ export class VaultRuntime {
       this.token = d.gitlab.tokenFor(d.meta.accountId);
     } else this.token = storedToken(d.storage.sql, () => d.app.installationToken(installationId, { repositoryIds: [repoId], permissions: RUNTIME_PERMISSIONS }), now);
     this.writer = new ScribeQueue(this.reads());
+    this.runs = this.leased(limitRuns(new SqlRunStore(d.storage.sql), this.counter, this.quotas.sleepRunsPerDay));
     this.relay = new SleepRelay({
       open: async (at) => {
+        await this.ready();
         const store = this.store(CURATOR);
         return { vault: await Vault.load(store, { now: () => at }), store };
       },
-      runs: this.leased(limitRuns(new SqlRunStore(d.storage.sql), this.counter, this.quotas.sleepRunsPerDay)),
+      runs: this.runs,
       clock: this.clock,
     });
   }
@@ -227,7 +256,7 @@ export class VaultRuntime {
       fetch: this.d.fetch,
       cache: this.blobs,
       // Episodes can hold secrets in plain text until sleep encrypts them: they stay out of storage at rest.
-      persist: (path: string) => !path.startsWith("inbox/"),
+      persist: (path: string) => !path.startsWith(this.inboxPrefix),
       transientCache: this.transient,
       snapshots: this.snapshots,
     };
@@ -253,6 +282,96 @@ export class VaultRuntime {
       throw err;
     });
     return this.index;
+  }
+
+  /**
+   * Learns the vault's inbox folder before any request reads from it. Memoized; a failed read
+   * (a missing or broken config) keeps the default and is retried by the next request.
+   */
+  private learnInbox(): Promise<void> {
+    this.inboxKnown ??= this.reads()
+      .read(CONFIG_PATH)
+      .then((raw) => {
+        this.inboxPrefix = `${parseConfig(raw ?? undefined).folders.inbox.replace(/\/+$/, "")}/`;
+      })
+      .catch(() => {
+        this.inboxKnown = undefined;
+      });
+    return this.inboxKnown;
+  }
+
+  /** What every request waits for: the inbox folder known, and the vault in the current format. */
+  private async ready(): Promise<void> {
+    await this.learnInbox();
+    if ((await this.format()).status === "older") throw upgradeNeeded();
+  }
+
+  /**
+   * The vault's config and how its format compares to this Worker's. Only "current" is remembered:
+   * an older vault is read again on every request, so an upgrade pushed from a local clone counts at once.
+   * A missing or broken config isn't decided here: loading the vault explains it.
+   */
+  private async format(): Promise<{ status: "current" | "older" | "newer" | "unknown"; config?: HippoConfig }> {
+    if (this.current) return { status: "current" };
+    let config: HippoConfig | undefined;
+    try {
+      const raw = await this.reads().read(CONFIG_PATH);
+      config = raw === undefined ? undefined : parseConfig(raw);
+    } catch {
+      config = undefined;
+    }
+    if (!config) return { status: "unknown" };
+    const status = vaultVersionStatus(config);
+    if (status === "current") this.current = true;
+    return { status, config };
+  }
+
+  /**
+   * The owner's Upgrade button: brings an older vault to the current format as one audited commit by
+   * the `migration` actor, and aborts a sleep run that was asked about the old tree. Clicks that
+   * arrive together share one upgrade; a click on a current vault changes nothing.
+   */
+  upgrade(): Promise<VaultUpgrade> {
+    this.upgrading ??= this.migrateIfOlder().finally(() => {
+      this.upgrading = undefined;
+    });
+    return this.upgrading;
+  }
+
+  private async migrateIfOlder(): Promise<VaultUpgrade> {
+    const started = Date.now();
+    const { status, config } = await this.format();
+    if (status !== "older" || !config) {
+      const version = config?.version ?? CURRENT_VAULT_VERSION;
+      return { upgraded: false, from: version, to: version, changed: 0, notes: [] };
+    }
+    const reads = this.reads();
+    const result = await (this.d.migrate ?? migrate)(reads, config, { dryRun: true, template: TEMPLATE });
+    const done = (code?: string, status = 200) =>
+      logEvent({ route: "vault/upgrade", vault: this.meta.vaultId, status, ...(code ? { code } : {}), ms: Date.now() - started }, this.d.log).catch(() => undefined);
+    if (result.changes.length) {
+      // Audited like any hosted write: as the migration actor, against the commit it was computed from.
+      const store = new AuditedStore({ reads, writer: this.writer, principal: MIGRATION, quotas: this.quotas });
+      try {
+        await store.apply(result.changes, migrationCommit(result.to));
+      } catch (err) {
+        if (err instanceof AuditError) {
+          await done("VAULT_UPGRADE_REFUSED", 409);
+          throw upgradeRefused();
+        }
+        if (err instanceof StoreConflictError) {
+          await done("CONFLICT", 409);
+          throw upgradeRaced();
+        }
+        throw err;
+      }
+    }
+    this.current = true;
+    await done();
+    // A run open across the upgrade asked about the old tree.
+    const run = await this.runs.get();
+    if (run) await this.relay.abort(run.id).catch(() => undefined);
+    return { upgraded: true, from: result.from, to: result.to, changed: result.changed.length, notes: result.notes };
   }
 
   private serviceOver(store: SizeGuarded): HippoService {
@@ -299,6 +418,7 @@ export class VaultRuntime {
     if (request.method !== "POST") return json(405, { error: "Method not allowed", code: "METHOD" }, { allow: "POST" });
     try {
       await this.keepAlarm();
+      await this.ready();
       const store = this.store(grantPrincipal(grant));
       const server = createHippoServer({
         service: this.serviceOver(store),
@@ -321,15 +441,26 @@ export class VaultRuntime {
     }
   }
 
-  /** The dashboard's API (`/dashboard/api/...`) for the vault's signed-in owner, who acts as the human. */
+  /**
+   * The dashboard's API (`/dashboard/api/...`) for the vault's signed-in owner, who acts as the human.
+   * An older vault still answers the session and the Upgrade button; everything else says VAULT_UPGRADE_NEEDED.
+   */
   async dashboard(request: Request, user: DashboardUser): Promise<Response> {
     const started = Date.now();
     try {
       await this.keepAlarm();
+      await this.learnInbox();
+      const { status, config } = await this.format();
       const repo = this.meta.fullName;
       const gitlab = this.meta.provider === "gitlab";
       const url = `${(gitlab ? this.d.gitlab!.webUrl : (this.d.webUrl ?? "https://github.com")).replace(/\/$/, "")}/${repo}`;
-      const source = serviceSource(this.service(), { mode: "worker", vault: { kind: gitlab ? "gitlab" : "github", repo, branch: this.meta.branch, url } }, { curator: this.curator });
+      const vault = { kind: gitlab ? ("gitlab" as const) : ("github" as const), repo, branch: this.meta.branch, url };
+      const human = await this.humanOf(user);
+      const upgradeVault = () => this.upgrade();
+      const source: DashboardSource =
+        status === "older" && config
+          ? awaitingUpgrade(config, { mode: "worker", vault }, human, upgradeVault)
+          : { ...serviceSource(this.service(), { mode: "worker", vault }, { curator: this.curator, ...(human ? { human } : {}) }), upgradeVault };
       const api = createDashboardApi({
         basePath: DASHBOARD_API,
         source: () => source,
@@ -343,17 +474,34 @@ export class VaultRuntime {
     }
   }
 
+  /**
+   * Which human the signed-in person is: on a GitLab vault, the one whose `gitlab:` is their connected
+   * GitLab username; else the one whose `github:` is their GitHub login; else the primary human.
+   * Undefined when the config doesn't load.
+   */
+  private async humanOf(user: DashboardUser): Promise<string | undefined> {
+    try {
+      const { humans } = parseConfig(await this.reads().read(CONFIG_PATH));
+      const onGitLab = this.meta.provider === "gitlab" ? humanByLogin(humans, user.gitlab, "gitlab") : undefined;
+      return (onGitLab ?? humanByLogin(humans, user.login, "github") ?? humans[0])?.id;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The party's agents, for the OAuth consent page. */
   async party(): Promise<{ id: string; title: string }[]> {
+    await this.ready();
     const vault = await this.service().vault();
-    return [...vault.entities.values()]
-      .filter((e) => e.fm.type === "party")
+    return vault
+      .withCapability("actor")
       .map((e) => ({ id: e.slug, title: displayName(e) }))
       .sort((a, b) => a.id.localeCompare(b.id));
   }
 
   /** Seats an agent, as the human (the consent page's "new agent"). */
   async addParty(input: { id: string; title: string; lane?: string; authority?: string[] }, via: string): Promise<{ slug: string }> {
+    await this.ready();
     const { slug } = await this.service().addPartyMember({ id: input.id, title: input.title, lane: input.lane, authority: input.authority }, { via });
     return { slug };
   }
@@ -369,6 +517,33 @@ export class VaultRuntime {
     const { run } = await this.relay.status();
     if (run) await this.d.storage.setAlarm?.(Date.parse(run.leaseUntil) + 1000);
   }
+}
+
+/**
+ * The dashboard over a vault in an older format: who's signed in, read from the config alone, and the
+ * Upgrade button. Every read answers VAULT_UPGRADE_NEEDED, which is what the UI's banner looks for.
+ */
+function awaitingUpgrade(config: HippoConfig, info: Pick<SourceInfo, "mode" | "vault">, human: string | undefined, upgradeVault: () => Promise<VaultUpgrade>): DashboardSource {
+  const refuse = async (): Promise<never> => {
+    throw upgradeNeeded();
+  };
+  return {
+    info: async () => ({
+      ...info,
+      name: config.name,
+      campaign: config.campaign,
+      human: config.human,
+      humans: config.humans.map((h) => h.id),
+      actor: { kind: "human", id: human ?? config.human },
+    }),
+    overview: refuse,
+    catalog: refuse,
+    entity: refuse,
+    graph: refuse,
+    chronicle: refuse,
+    search: refuse,
+    upgradeVault,
+  };
 }
 
 // ── The Durable Object's state ────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import { demoPresets } from "./demo-setup.ts";
 import { HttpError, errorResponse, json, readJson, securityHeaders } from "./http.ts";
 import type { HostedConnectedApp, HostedCuratorActionsResult, HostedInitResult, HostedKeyInfo, HostedMintedKey, HostedRepo, HostedSessionInfo, HostedSetupStatus, HostedVault, SetupItem, Snippet } from "./setup.ts";
 import { capabilities, type CuratorStatus, type DashboardSource, type SessionInfo } from "./source.ts";
@@ -180,6 +181,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       ...(state.vault ? { vault: state.vault, keys: state.keys, curatorActions: state.curatorActions } : {}),
       publicUrl,
       mcpUrl: `${publicUrl}/mcp`,
+      presets: demoPresets(),
       items: [],
     };
     s.items = items(s);
@@ -201,7 +203,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     if (kind !== "agent" && kind !== "curator" && kind !== "bound") throw new HttpError(400, "kind: expected one of agent, curator, bound", "INVALID");
     const label = typeof b.label === "string" ? b.label.trim().slice(0, 80) : "";
     let agent: string | undefined;
-    let scopes = kind === "curator" ? ["read", "curate"] : ["read", "remember", "quest"];
+    let scopes = kind === "curator" ? ["read", "curate"] : ["read", "remember", "goal", "quest"];
     if (kind === "bound") {
       agent = typeof b.agent === "string" ? b.agent.trim().toLowerCase() : "";
       if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(agent)) throw new HttpError(400, "agent: use lowercase letters, digits and dashes, like home-finder", "INVALID");
@@ -259,10 +261,11 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     if (sub === "init" && method === "POST") {
       if (ready()) throw new HttpError(409, `You already have a vault: ${state.vault!.fullName}.`, "HAS_VAULT");
       if (!state.installation) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
-      const b = (body ?? {}) as { repoId?: unknown; campaign?: unknown };
+      const b = (body ?? {}) as { repoId?: unknown; name?: unknown; campaign?: unknown };
+      const name = b.name ?? b.campaign;
       const repo = REPOS.find((r) => r.id === b.repoId);
       if (!repo) throw new HttpError(404, "That repo isn't one the app was installed on. Add it to the installation on GitHub, or pick another.", "NOT_FOUND");
-      if (typeof b.campaign !== "string" || !b.campaign.trim()) throw new HttpError(400, "campaign: a name, up to 120 characters", "INVALID");
+      if (typeof name !== "string" || !name.trim()) throw new HttpError(400, "name: a name, up to 120 characters", "INVALID");
       if (!repo.private) throw new HttpError(400, `${repo.fullName} is public: anyone could read this memory. Make it private on GitHub (Settings → Danger Zone → Change visibility), then try again.`, "PUBLIC_REPO");
       if (repo.empty === false && !repo.adoptable) throw new HttpError(409, `${repo.fullName} already has files; pick an empty repo (or one with only a README, LICENSE or .gitignore).`, "NOT_EMPTY");
       await new Promise((r) => setTimeout(r, opts.initDelay ?? 1200));

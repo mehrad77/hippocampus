@@ -9,7 +9,7 @@ import type { HostedInitResult, HostedMintedKey, HostedRepoView, HostedStatus, S
 import { Icon } from "../../ui/Icon.tsx";
 import { SkeletonPanel } from "../../ui/Parts.tsx";
 import { Personalization } from "../../ui/Personalization.tsx";
-import { ChipsInput, CopyLine, Effects, ErrorCallout, Facts, Field, refreshSetup, Snippets, StateBadge, ToneTag, useAction, useHash, useScrollToHash } from "./common.tsx";
+import { ChipsInput, CopyLine, Effects, ErrorCallout, Facts, Field, PresetPicker, refreshSetup, Snippets, StateBadge, ToneTag, useAction, useHash, useScrollToHash } from "./common.tsx";
 import { CuratorRecipes, mintedReveal } from "./HostedKeys.tsx";
 import {
   agentPluginSnippets,
@@ -677,6 +677,7 @@ function CampaignStep({ status, draft, setDraft, identity, setIdentity, session 
             "Domains are the lanes an agent can hold authority over, like housing or career. You choose who holds which when you seat each agent.",
           )}
         </p>
+        <PresetPicker presets={status.presets} value={draft.presets} onChange={(p) => set("presets", p)} />
       </div>
 
       <SecretsKey draft={draft} set={set} identity={identity} setIdentity={setIdentity} problem={show(problems.secrets)} />
@@ -822,7 +823,7 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
   const { v } = useTerms();
   const action = useAction();
   const vault = status.vault;
-  const repo = hostedRepos(ctx).find((r) => r.id === picked);
+  const repo: HostedRepoView | undefined = hostedRepos(ctx).find((r) => r.id === picked);
   if (vault?.status === "ready")
     return (
       <div className="callout callout--ok" role="status">
@@ -844,7 +845,7 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
 
   const go = async () => {
     if (picked === undefined) return;
-    const res = await action.run(() => postJson<HostedInitResult>("/setup/init", initRequest(draft, picked, host)));
+    const res = await action.run(() => postJson<HostedInitResult>("/setup/init", initRequest(draft, picked, { adopt: !!repo?.adoptable, provider: host })));
     if (!res) return;
     toast(res.mode === "adopted" ? `Adopted ${res.vault.fullName}: your existing vault is connected.` : v(`${res.vault.fullName} is your vault now.`, `${res.vault.fullName} holds the campaign now.`), "ok");
     setIdentity(undefined);
@@ -872,6 +873,7 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
           ["Time zone", draft.timezone],
           ["Domains", draft.domains.length ? draft.domains.join(", ") : <span className="muted">none</span>],
           ["Start from", draft.seed ? v("The template and the fictional example", "The template and the example campaign") : "The empty template"],
+          ["Presets", repo?.adoptable && draft.presets.length ? <span className="muted">none: presets apply only to new vaults</span> : draft.presets.length ? draft.presets.join(", ") : <span className="muted">none</span>],
           ["Secrets key", draft.secrets === "create" && draft.recipient ? <span className="mono">{truncateKey(draft.recipient)}</span> : <span className="muted">None for now</span>],
         ]}
       />
@@ -883,7 +885,7 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
           [
             "writes",
             <>
-              one commit into <code>{repo?.fullName ?? "the repo"}</code>: the vault template (folders for notes, <code>_hippo/config.yaml</code> with your choices, Obsidian templates, rules for agents and a validation workflow){draft.seed ? ", plus the example notes" : ""}. An existing vault gets only the rule files it's missing.
+              one commit into <code>{repo?.fullName ?? "the repo"}</code>: the vault template (folders for notes, <code>_hippo/config.yaml</code> with your choices, Obsidian templates, rules for agents and a validation workflow){draft.seed ? ", plus the example notes" : ""}{draft.presets.length && !repo?.adoptable ? `, plus the ${draft.presets.join(", ")} ${draft.presets.length === 1 ? "preset" : "presets"}` : ""}. An existing vault gets only the rule files it's missing.
             </>,
           ],
           ["contacts", "GitHub, through the app installed on that repository."],

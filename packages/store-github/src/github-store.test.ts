@@ -1,4 +1,4 @@
-import { HippoService, StoreConflictError, Vault, VaultError } from "@hippocampus/core";
+import { CURRENT_VAULT_VERSION, HippoService, StoreConflictError, Vault, VaultError } from "@hippocampus/core";
 import { describe, expect, it } from "vitest";
 import { storeContract } from "../../core/src/store.contract.ts";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
@@ -26,8 +26,8 @@ describe("GitHubStore", () => {
 
   it("serves repeated reads from the blob cache", async () => {
     const { gh, store } = await setup();
-    await store.read("quests/residence-permit.md");
-    await new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch, cache: (store as unknown as { cache: MemoryBlobCache }).cache }).read("quests/residence-permit.md");
+    await store.read("goals/residence-permit.md");
+    await new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch, cache: (store as unknown as { cache: MemoryBlobCache }).cache }).read("goals/residence-permit.md");
     expect(gh.calls.filter((c) => c.startsWith("GET git/blobs/"))).toHaveLength(1);
   });
 
@@ -42,9 +42,9 @@ describe("GitHubStore", () => {
     await service.updateQuest("residency-agent", "residence-permit", { complete: ["Book agency appointment"] });
     const [commit, parent] = gh.log();
     expect(parent!.message).toBe("init");
-    expect(commit!.message).toMatch(/^quest\(residence-permit\): /);
+    expect(commit!.message).toMatch(/^goal\(residence-permit\): /);
     const files = gh.files();
-    expect(files["quests/residence-permit.md"]).toContain("- [x] Book agency appointment");
+    expect(files["goals/residence-permit.md"]).toContain("- [x] Book agency appointment");
     expect(files["HANDBOOK.md"]).toBeDefined();
   });
 
@@ -94,23 +94,23 @@ describe("GitHubStore", () => {
   it("refuses to overwrite a concurrent change to the same file", async () => {
     const { gh, store } = await setup();
     await store.list();
-    await gh.push({ "quests/residence-permit.md": "---\ntype: quest\ntitle: Edited by the human\n---\n" });
-    const err = await store.apply([{ path: "quests/residence-permit.md", content: "mine" }], { message: "x" }).catch((e: unknown) => e);
+    await gh.push({ "goals/residence-permit.md": "---\ntype: goal\ntitle: Edited by the human\n---\n" });
+    const err = await store.apply([{ path: "goals/residence-permit.md", content: "mine" }], { message: "x" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StoreConflictError);
-    expect((err as StoreConflictError).paths).toEqual(["quests/residence-permit.md"]);
-    expect(gh.files()["quests/residence-permit.md"]).toContain("Edited by the human");
+    expect((err as StoreConflictError).paths).toEqual(["goals/residence-permit.md"]);
+    expect(gh.files()["goals/residence-permit.md"]).toContain("Edited by the human");
   });
 
   it("redoes a quest update on fresh state after a conflict", async () => {
     const { gh, store } = await setup();
     gh.beforeRefUpdate = async () => {
       gh.beforeRefUpdate = undefined;
-      const quest = gh.files()["quests/residence-permit.md"]!;
-      await gh.push({ "quests/residence-permit.md": quest.replace("title: Residence permit 2026", "title: Residence permit (renewal)") });
+      const quest = gh.files()["goals/residence-permit.md"]!;
+      await gh.push({ "goals/residence-permit.md": quest.replace("title: Residence permit 2026", "title: Residence permit (renewal)") });
     };
     await store.refresh();
     await new HippoService(store, { now }).updateQuest("residency-agent", "residence-permit", { complete: ["Get health insurance"] });
-    const quest = gh.files()["quests/residence-permit.md"]!;
+    const quest = gh.files()["goals/residence-permit.md"]!;
     expect(quest).toContain("title: Residence permit (renewal)");
     expect(quest).toContain("- [x] Get health insurance");
   });
@@ -190,12 +190,12 @@ describe("GitHubStore.apply with an explicit base", () => {
   it("detects changes made after the writer's base, even when the store itself is newer", async () => {
     const { gh, store: reader } = await setup();
     const base = await reader.head();
-    await gh.push({ "quests/residence-permit.md": "---\ntype: quest\ntitle: Human edit\n---\n" });
+    await gh.push({ "goals/residence-permit.md": "---\ntype: quest\ntitle: Human edit\n---\n" });
     const writer = new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch });
     await writer.refresh();
-    await expect(writer.apply([{ path: "quests/residence-permit.md", content: "stale" }], { message: "x" }, { base })).rejects.toBeInstanceOf(StoreConflictError);
+    await expect(writer.apply([{ path: "goals/residence-permit.md", content: "stale" }], { message: "x" }, { base })).rejects.toBeInstanceOf(StoreConflictError);
     await writer.apply([{ path: "inbox/campus-agent/x.md", content: "new" }], { message: "y" }, { base });
-    expect(gh.files()["quests/residence-permit.md"]).toContain("Human edit");
+    expect(gh.files()["goals/residence-permit.md"]).toContain("Human edit");
     expect(gh.files()["inbox/campus-agent/x.md"]).toBe("new");
   });
 });
@@ -299,7 +299,7 @@ describe("GitHubStore tokens", () => {
 
 const TEMPLATE = {
   "README.md": "# Vault\n",
-  "_hippo/config.yaml": "version: 1\ncampaign: lisbon-arc\nhuman: player\n",
+  "_hippo/config.yaml": `version: ${CURRENT_VAULT_VERSION}\nname: lisbon-arc\nhumans: [{ id: player }]\n`,
   "party/residency-agent.md": "---\ntype: party\ntitle: Residency Agent\n---\n",
   ".github/workflows/vault.yml": "name: vault\non: push\n",
 };

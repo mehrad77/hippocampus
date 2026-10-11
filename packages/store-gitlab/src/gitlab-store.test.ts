@@ -32,8 +32,8 @@ describe("GitLabStore", () => {
 
   it("serves repeated reads from the blob cache", async () => {
     const { gl, store } = await setup();
-    await store.read("quests/residence-permit.md");
-    await new GitLabStore({ project: gl.repo.id, token: "t", fetch: gl.fetch, cache: (store as unknown as { cache: MemoryBlobCache }).cache }).read("quests/residence-permit.md");
+    await store.read("goals/residence-permit.md");
+    await new GitLabStore({ project: gl.repo.id, token: "t", fetch: gl.fetch, cache: (store as unknown as { cache: MemoryBlobCache }).cache }).read("goals/residence-permit.md");
     expect(gl.calls.filter((c) => c.startsWith("GET repository/blobs/"))).toHaveLength(1);
   });
 
@@ -42,8 +42,8 @@ describe("GitLabStore", () => {
     await new HippoService(store, { now }).updateQuest("residency-agent", "residence-permit", { complete: ["Book agency appointment"] });
     const [commit, parent] = gl.log();
     expect(parent!.message).toBe("init");
-    expect(commit!.message).toMatch(/^quest\(residence-permit\): /);
-    expect(gl.files()["quests/residence-permit.md"]).toContain("- [x] Book agency appointment");
+    expect(commit!.message).toMatch(/^goal\(residence-permit\): /);
+    expect(gl.files()["goals/residence-permit.md"]).toContain("- [x] Book agency appointment");
   });
 
   it("reads its own commits without fetching them back", async () => {
@@ -96,11 +96,11 @@ describe("GitLabStore", () => {
   it("refuses to overwrite a concurrent change to the same file", async () => {
     const { gl, store } = await setup();
     await store.list();
-    await gl.push({ "quests/residence-permit.md": "---\ntype: quest\ntitle: Edited by the human\n---\n" });
-    const err = await store.apply([{ path: "quests/residence-permit.md", content: "mine" }], { message: "x" }).catch((e: unknown) => e);
+    await gl.push({ "goals/residence-permit.md": "---\ntype: quest\ntitle: Edited by the human\n---\n" });
+    const err = await store.apply([{ path: "goals/residence-permit.md", content: "mine" }], { message: "x" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(StoreConflictError);
-    expect((err as StoreConflictError).paths).toEqual(["quests/residence-permit.md"]);
-    expect(gl.files()["quests/residence-permit.md"]).toContain("Edited by the human");
+    expect((err as StoreConflictError).paths).toEqual(["goals/residence-permit.md"]);
+    expect(gl.files()["goals/residence-permit.md"]).toContain("Edited by the human");
   });
 
   it("pins reads to one commit until refreshed", async () => {

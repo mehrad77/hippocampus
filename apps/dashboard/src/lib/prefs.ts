@@ -107,7 +107,7 @@ export function usePrefs(): Prefs {
 export interface Voice {
   look: Look;
   plain: boolean;
-  /** A shared word in the current voice: `t("quests")` → "Goals" or "Quest board". */
+  /** A shared word in the current voice: `t("goals")` → "Goals" or "Quest board". */
   t: (key: TermKey) => string;
   /** Pick the plain or the codex wording of a one-off phrase: `v("Add a note", "Scribe a memory")`. */
   v: <P, C = P>(plain: P, codex: C) => P | C;

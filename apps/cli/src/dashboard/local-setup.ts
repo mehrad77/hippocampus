@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { CONFIG_PATH, CURRENT_VAULT_VERSION, parseConfig, vaultVersionStatus, type HippoConfig } from "@hippocampus/core";
+import { CONFIG_PATH, CURRENT_VAULT_VERSION, parseConfig, presetCatalog, vaultVersionStatus, type HippoConfig } from "@hippocampus/core";
+import { PRESETS } from "@hippocampus/template";
 import { aiSdkLLM, llmConfigFromEnv, pingLLM, sleep } from "@hippocampus/curator";
 import {
   HttpError,
@@ -124,6 +125,7 @@ const VaultRequest = z.discriminatedUnion("action", [
     timezone: z.string().trim().refine(validTimezone, "unknown timezone (use an IANA name like Europe/Lisbon)"),
     domains: z.array(Slug).max(30),
     seed: z.string().trim().max(100).optional(),
+    presets: z.array(Slug).max(10).optional(),
     makeDefault: z.boolean().optional(),
   }),
   z.object({ action: z.literal("open"), dir: LocalPath, makeDefault: z.boolean().optional() }),
@@ -471,7 +473,7 @@ export function localSetup(opts: LocalSetupOptions): LocalSetupPort {
       kind: "local",
       items,
       vault,
-      defaults: { dir: suggestedDir(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, seeds: seeds(), domains: templateDomains() },
+      defaults: { dir: suggestedDir(), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, seeds: seeds(), domains: templateDomains(), presets: presetCatalog(PRESETS).map(({ name, description }) => ({ name, description })) },
       secrets,
       llm,
       git,
@@ -497,7 +499,10 @@ export function localSetup(opts: LocalSetupOptions): LocalSetupPort {
         const req = VaultRequest.parse(body);
         if (req.action === "create") {
           if (req.seed && !seeds().includes(req.seed)) throw new HttpError(400, `No bundled seed "${req.seed}"`, "INVALID");
-          const created = await attempt(() => initVault({ target: req.dir, seed: req.seed, assets, campaign: req.campaign, human: req.human, timezone: req.timezone, domains: req.domains }));
+          for (const p of req.presets ?? []) if (!Object.hasOwn(PRESETS, p)) throw new HttpError(400, `No preset "${p}"`, "INVALID");
+          const created = await attempt(() =>
+            initVault({ target: req.dir, seed: req.seed, assets, campaign: req.campaign, human: req.human, presets: req.presets, timezone: req.timezone, domains: req.domains }),
+          );
           if (created.error) throw new HttpError(400, created.error, "VAULT_SETUP");
           await open({ kind: "dir", dir: created.value!.dir });
           if (req.makeDefault) await save({ HIPPO_VAULT: created.value!.dir, HIPPO_GITHUB_REPO: null });

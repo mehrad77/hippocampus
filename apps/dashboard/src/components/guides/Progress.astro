@@ -1,0 +1,29 @@
+---
+import { progressLabel, progressShape } from "../../lib/progress.ts";
+
+/** A goal's progress with its caption, drawn like the Goals page: one cell per step up to 12. */
+interface Props {
+  name: string;
+  done: number;
+  total: number;
+  due?: string;
+}
+const { name, done, total, due } = Astro.props;
+const p = progressShape(done, total);
+// Static pages can't size a bar inline (the CSP has no inline styles), so a long count is drawn as ten cells.
+const cells = p.segmented ? p.total : 10;
+const on = p.segmented ? p.done : Math.round(p.percent / 10);
+const label = `${name}: ${progressLabel(p.done, p.total)}${due ? `, due ${due}` : ""}`;
+---
+<figure class="guide-progress">
+  <span class="progress progress--md">
+    <span class="progress__track progress__track--cells" role="img" aria-label={label}>
+      {Array.from({ length: cells }, (_, i) => <span class:list={["progress__cell", { "progress__cell--on": i < on }]} />)}
+    </span>
+    <span class="progress__count mono" aria-hidden="true">{p.done}/{p.total}</span>
+  </span>
+  <figcaption>
+    <strong>{name}</strong>
+    {due && <span class="muted small">due {due}</span>}
+  </figcaption>
+</figure>

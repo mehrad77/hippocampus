@@ -17,10 +17,11 @@ describe("commit trailers", () => {
   });
 
   it("name an actor and parse back", () => {
-    for (const actor of [{ kind: "curator" }, { kind: "human" }, { kind: "bootstrap" }, { kind: "agent", id: "job-scout" }] as const) {
+    for (const actor of [{ kind: "curator" }, { kind: "human" }, { kind: "bootstrap" }, { kind: "migration" }, { kind: "agent", id: "job-scout" }] as const) {
       expect(parseActorTrailer(actorTrailer(actor))).toEqual(actor);
     }
     expect(parseActorTrailer(" agent: job-scout ")).toEqual({ kind: "agent", id: "job-scout" });
+    expect(actorTrailer({ kind: "migration" })).toBe("migration");
     expect(parseActorTrailer("gremlin")).toBeUndefined();
     expect(parseActorTrailer("agent:")).toBeUndefined();
   });
