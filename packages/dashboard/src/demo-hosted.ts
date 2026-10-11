@@ -154,7 +154,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       { id: "run-1", curator: "game-master", model: "qwen3.5-9b", started: ago(3 * DAY + 20 * 60_000), ended: ago(3 * DAY), outcome: "expired", consolidated: 2, failed: 0, skipped: 0, summaries: 0, remaining: 5, commits: 1 },
     ];
     state.run = { id: "run-4", curator: "archivist", model: "claude-sonnet-4-5", started: ago(3 * 60_000), leaseUntil: new Date(now().getTime() + 2 * 60_000).toISOString(), live: true, progress: { done: 3, total: 8, unit: "episode" } };
-    state.apps = [{ id: "grant-1", client: "Claude", scopes: ["read", "remember"], agent: "home-finder", vault: state.vaults[0]?.id ?? vaultId(1), created: ago(DAY / 2) }];
+    state.apps = [{ id: "grant-1", client: "Claude", scopes: ["read", "remember", "goal", "curate"], agent: "home-finder", vault: state.vaults[0]?.id ?? vaultId(1), created: ago(DAY / 2), curate: true, mayCurate: true }];
   };
 
   const toStage = (stage: HostedDemoStage, provider?: string) => {
@@ -436,6 +436,14 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       return { ok: true };
     }
     if (sub === "apps" && method === "GET") return { apps: state.apps };
+    if (sub === "apps/curate" && method === "POST") {
+      const { id, on } = (body ?? {}) as { id?: unknown; on?: unknown };
+      const app = state.apps.find((a) => a.id === id);
+      if (!app) throw new HttpError(404, "No such app: it may be disconnected already.", "NOT_FOUND");
+      if (typeof on !== "boolean") throw new HttpError(400, "on: expected true or false", "INVALID");
+      app.curate = on;
+      return { ok: true };
+    }
     if (sub === "apps/revoke" && method === "POST") {
       const id = (body as { id?: unknown } | undefined)?.id;
       state.apps = state.apps.filter((a) => a.id !== id);

@@ -26,6 +26,11 @@ export interface HippoServerOptions {
    * where that agent has authority. Without it, the `agent` argument on reads is ignored.
    */
   holds?: (agent: string) => boolean | Promise<boolean>;
+  /**
+   * For a connection that can't run sleep: why, and who can change it. Shown in the instructions and
+   * at the end of `onboard`, so the agent can tell the person instead of searching for tools.
+   */
+  curation?: string;
 }
 
 // Also defined in apps/worker/src/hosted/registry.ts (KIND_SCOPES) and apps/worker/src/oauth.ts (SCOPE_LABELS).
@@ -118,10 +123,10 @@ function param(v: string | string[] | undefined, form = false): string {
 /** The server's version, as it introduces itself (and as its server card says). */
 export const SERVER_VERSION = "0.1.0";
 
-export function createHippoServer({ service, agent, scopes, version = SERVER_VERSION, jsonSchemaValidator, relay, vault, holds }: HippoServerOptions): McpServer {
+export function createHippoServer({ service, agent, scopes, version = SERVER_VERSION, jsonSchemaValidator, relay, vault, holds, curation }: HippoServerOptions): McpServer {
   const granted = scopes ? normalizeScopes(scopes) : undefined;
   const curates = !!relay && (!granted || granted.includes("curate"));
-  const instructions = INSTRUCTIONS + (agent ? "" : NAMING_INSTRUCTIONS) + (curates ? CURATE_INSTRUCTIONS : "") + (vault ? vaultInstructions(vault) : "");
+  const instructions = INSTRUCTIONS + (agent ? "" : NAMING_INSTRUCTIONS) + (curates ? CURATE_INSTRUCTIONS : curation ? `\n${curation}` : "") + (vault ? vaultInstructions(vault) : "");
   const server = new McpServer({ name: "hippocampus", version }, { instructions, jsonSchemaValidator });
   // Out-of-scope tools are removed outright, so clients never see them.
   const scoped = (scope: CurrentScope, registered: { remove(): void }) => {
@@ -170,7 +175,7 @@ export function createHippoServer({ service, agent, scopes, version = SERVER_VER
         inputSchema: { ...agentArg },
         annotations: { readOnlyHint: true },
       },
-      (args) => guard(async () => text(await service.onboard(who(args)))),
+      (args) => guard(async () => text(`${await service.onboard(who(args))}${!curates && curation ? `\n\n${curation}` : ""}`)),
     ),
   );
 

@@ -84,6 +84,16 @@ export class VaultHost extends DurableObject<HostedEnv> {
     return this.host.claims();
   }
 
+  /** The person turns an app's curating (`oauth:<grant>`) on or off. */
+  setCurate(credential: string, on: boolean): Promise<void> {
+    return this.host.setCurate(credential, on);
+  }
+
+  /** What the person chose for these connections since connecting them. */
+  curation(credentials: string[]): Promise<Record<string, boolean>> {
+    return this.host.curation(credentials);
+  }
+
   /** Stop serving; storage stays until `destroy`. */
   disconnect(reason: string): Promise<void> {
     return this.host.disconnect(reason);

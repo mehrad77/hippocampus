@@ -31,6 +31,19 @@ describe("MCP server", () => {
     expect((res.contents[0] as { text: string }).text).toContain("# 📜 Handbook — ");
   });
 
+  it("tells an agent that can't curate why, in its instructions and at the end of onboard", async () => {
+    const note = "This connection can't run sleep: ask the owner.";
+    const server = createHippoServer({ service: new HippoService(fixtureStore({})), agent: "residency-agent", curation: note });
+    const client = new Client({ name: "test", version: "0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(a), client.connect(b)]);
+    expect(client.getInstructions()).toContain(note);
+    const onboard = (await client.callTool({ name: "onboard", arguments: {} })) as { content: { text: string }[] };
+    expect(onboard.content[0]!.text).toMatch(/You are Residency Agent[\s\S]*ask the owner\.$/);
+    // A plain connection says nothing of the kind.
+    expect((await connect("residency-agent")).client.getInstructions()).not.toContain("sleep");
+  });
+
   it("round-trips remember → recall with a bound identity", async () => {
     const { call, store } = await connect("residency-agent");
     expect((await call("onboard")).text).toContain("You are Residency Agent");

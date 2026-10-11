@@ -442,6 +442,10 @@ export interface HostedConnectedApp {
   /** The vault it's connected to (its id). */
   vault?: string;
   created: string;
+  /** Whether it may run sleep now (its owner's switch). */
+  curate: boolean;
+  /** Whether the viewer can flip that switch: an owner, for an app connected with curating on offer. */
+  mayCurate: boolean;
 }
 
 /**

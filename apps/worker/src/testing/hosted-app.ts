@@ -20,7 +20,7 @@ export type Visit = ReturnType<typeof browser>;
 
 export interface StubCall {
   vault: string;
-  method: "configure" | "mcp" | "dashboard" | "party" | "addParty" | "linkHuman" | "releaseClaims" | "claims" | "disconnect" | "destroy";
+  method: "configure" | "mcp" | "dashboard" | "party" | "addParty" | "linkHuman" | "releaseClaims" | "claims" | "setCurate" | "curation" | "disconnect" | "destroy";
   meta?: VaultMeta;
   grant?: VaultGrant;
   user?: DashboardUser;
@@ -35,6 +35,8 @@ export interface StubCall {
   logins?: { github?: string | null; gitlab?: string | null };
   create?: { domains?: string[] };
   credentials?: string[];
+  credential?: string;
+  on?: boolean;
 }
 
 /** Each vault's Durable Object, as a recorder: every call, and a party per vault. */
@@ -43,6 +45,8 @@ export class FakeVaults implements VaultHosts {
   readonly parties = new Map<string, PartyMember[]>();
   /** What each vault says holds which agent name. */
   readonly claimed = new Map<string, AgentClaim[]>();
+  /** What each vault's switches say, by credential. */
+  readonly curating = new Map<string, Record<string, boolean>>();
 
   get(vault: string): VaultStub {
     const seen = (call: Omit<StubCall, "vault">) => void this.calls.push({ vault, ...call });
@@ -79,6 +83,15 @@ export class FakeVaults implements VaultHosts {
       claims: async () => {
         seen({ method: "claims" });
         return this.claimed.get(vault) ?? [];
+      },
+      setCurate: async (credential, on) => {
+        seen({ method: "setCurate", credential, on });
+        this.curating.set(vault, { ...this.curating.get(vault), [credential]: on });
+      },
+      curation: async (credentials) => {
+        seen({ method: "curation", credentials });
+        const all = this.curating.get(vault) ?? {};
+        return Object.fromEntries(credentials.filter((c) => c in all).map((c) => [c, all[c]!]));
       },
       disconnect: async (reason) => seen({ method: "disconnect", reason }),
       destroy: async () => seen({ method: "destroy" }),

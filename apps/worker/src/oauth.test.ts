@@ -137,13 +137,14 @@ describe("connecting an app over OAuth", () => {
     const { visit, vault } = await h.readyAccount(PLAYER);
     const tokens = await connect(h, visit);
     // Goals also under their old name, so a rolled-back Worker (which knows only `quest`) keeps them.
-    expect(tokens.scope.split(" ").sort()).toEqual(["goal", "quest", "read", "remember"]);
+    // An owner's app also carries `curate` as the most it may do; whether it does is a switch (off here: the box wasn't ticked).
+    expect(tokens.scope.split(" ").sort()).toEqual(["curate", "goal", "quest", "read", "remember"]);
     const res = await h.callMcp(tokens.access_token);
     const seen = (await res.json()) as { vault: string; grant: Record<string, unknown> };
     expect(seen.vault).toBe(vault);
-    expect(seen.grant).toEqual({ scopes: ["read", "remember", "goal", "quest"], via: "oauth", credential: expect.stringMatching(/^oauth:/) });
+    expect(seen.grant).toEqual({ scopes: ["read", "remember", "goal", "quest", "curate"], via: "oauth", credential: expect.stringMatching(/^oauth:/), curate: false });
     const [grant] = (await h.app.oauth.listUserGrants("account-4242")).items;
-    expect(grant!.metadata).toEqual({ label: "Claude", vaultId: vault });
+    expect(grant!.metadata).toEqual({ label: "Claude", vaultId: vault, curate: false });
     expect(h.vaults.to(vault, "addParty")).toEqual([]);
   });
 
@@ -153,7 +154,8 @@ describe("connecting an app over OAuth", () => {
     const tokens = await connect(h, visit, { new_agent: "claude-ai", agent: "home-finder", add_to_party: "1", scope: ["read", "curate"] });
     const seen = (await (await h.callMcp(tokens.access_token)).json()) as { grant: Record<string, unknown> };
     expect(seen.grant.agent).toBeUndefined();
-    expect(seen.grant.scopes).toEqual(["read", "remember", "goal", "quest"]);
+    expect(seen.grant.scopes).toEqual(["read", "remember", "goal", "quest", "curate"]);
+    expect(seen.grant.curate).toBe(false);
     expect(h.vaults.to(vault, "addParty")).toEqual([]);
   });
 
@@ -349,7 +351,7 @@ describe("connected apps", () => {
     await connect(h, gm.visit, {}, { clientName: "ChatGPT" });
     const list = async (visit: Visit) => ((await (await h.api(visit, "account/apps")).json()) as { apps: HostedConnectedApp[] }).apps;
     const apps = await list(player.visit);
-    expect(apps).toEqual([{ id: expect.any(String), client: "Claude", scopes: ["read", "remember", "goal", "quest"], vault: expect.stringMatching(/^[0-9A-Z]{26}$/), created: expect.any(String) }]);
+    expect(apps).toEqual([{ id: expect.any(String), client: "Claude", scopes: ["read", "remember", "goal", "quest", "curate"], vault: expect.stringMatching(/^[0-9A-Z]{26}$/), created: expect.any(String), curate: false, mayCurate: true }]);
     const [theirs] = await list(gm.visit);
     expect((await h.post(player.visit, "account/apps/revoke", { id: theirs!.id })).status).toBe(404);
     expect((await h.post(player.visit, "account/apps/revoke", { id: "../x" })).status).toBe(400);
@@ -358,5 +360,76 @@ describe("connected apps", () => {
     expect(await list(player.visit)).toEqual([]);
     expect((await h.callMcp(access_token)).status).toBe(401);
     expect(await list(gm.visit)).toHaveLength(1);
+  });
+});
+
+describe("letting an app curate", () => {
+  const list = async (h: HostedHarness, visit: Visit) => ((await (await h.api(visit, "account/apps")).json()) as { apps: HostedConnectedApp[] }).apps;
+
+  it("offers the owner a ticked box, and grants curating as the app's ceiling with the box as its starting switch", async () => {
+    const h = await hostedApp();
+    const { visit, vault } = await h.readyAccount(PLAYER);
+    const flow = await consent(h, visit);
+    expect(flow.page).toMatch(/<input type="checkbox" name="curate" checked>/);
+    expect(flow.page).toContain("secret and confidential values included");
+
+    const { access_token } = await exchange(h, flow, await flow.submit({ decision: "approve", curate: "on" }));
+    const seen = (await (await h.callMcp(access_token)).json()) as { grant: Record<string, unknown> };
+    expect(seen.grant).toMatchObject({ scopes: ["read", "remember", "goal", "quest", "curate"], curate: true });
+    const [app] = await list(h, visit);
+    expect(app).toMatchObject({ vault, curate: true, mayCurate: true });
+  });
+
+  it("turns it on and off from the account's apps list, as the owner only", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const gm = await h.readyAccount(GM);
+    await connect(h, player.visit, {});
+    const [app] = await list(h, player.visit);
+    expect(app).toMatchObject({ curate: false, mayCurate: true });
+
+    expect((await h.post(player.visit, "account/apps/curate", { id: app!.id, on: true })).status).toBe(200);
+    expect(h.vaults.to(player.vault, "setCurate")).toEqual([expect.objectContaining({ credential: `oauth:${app!.id}`, on: true })]);
+    expect((await list(h, player.visit))[0]).toMatchObject({ curate: true, mayCurate: true });
+    await h.post(player.visit, "account/apps/curate", { id: app!.id, on: false });
+    expect((await list(h, player.visit))[0]).toMatchObject({ curate: false });
+
+    expect((await h.post(player.visit, "account/apps/curate", { id: app!.id, on: "yes" })).status).toBe(400);
+    expect((await h.post(player.visit, "account/apps/curate", { id: "../x", on: true })).status).toBe(400);
+    expect((await h.post(player.visit, "account/apps/curate", { id: app!.id, on: true }, {})).status).toBe(403);
+    // Another account's app isn't theirs to switch.
+    expect((await h.post(gm.visit, "account/apps/curate", { id: app!.id, on: true })).status).toBe(404);
+  });
+
+  it("gives a member's app no curating, however the form is posted, and refuses to switch it", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const made = (await (await h.post(player.visit, "vaults/members/invite", { role: "member", human: "game-master", login: "game-master", domains: ["university"] })).json()) as { invite: { id: string } };
+    const gm = h.browser();
+    await h.signIn(gm, "game-master");
+    await h.post(gm, "invites/accept", { id: made.invite.id });
+
+    const flow = await consent(h, gm);
+    expect(flow.page).not.toContain('name="curate"');
+    const { access_token, scope } = await exchange(h, flow, await flow.submit({ decision: "approve", curate: "on" }));
+    expect(scope.split(" ")).not.toContain("curate");
+    const seen = (await (await h.callMcp(access_token)).json()) as { grant: Record<string, unknown> };
+    expect(seen.grant.scopes).not.toContain("curate");
+    expect(seen.grant.curate).toBeUndefined();
+    const [app] = await list(h, gm);
+    expect(app).toMatchObject({ curate: false, mayCurate: false });
+    expect((await h.post(gm, "account/apps/curate", { id: app!.id, on: true })).status).toBe(403);
+  });
+
+  it("asks the owner of another vault's app to connect again when it predates curating", async () => {
+    const h = await hostedApp();
+    const { visit, vault } = await h.readyAccount(PLAYER);
+    const flow = await client(h);
+    const request = await h.app.oauth.parseAuthRequest(new Request(flow.authorizeUrl));
+    const { redirectTo } = await h.app.oauth.completeAuthorization({ request, userId: "account-4242", metadata: { vaultId: vault }, scope: ["read", "remember"], props: { kind: "oauth", vaultId: vault, accountId: PLAYER.id } });
+    await exchange(h, flow, new Response(null, { status: 302, headers: { location: redirectTo } }));
+    const [old] = await list(h, visit);
+    expect(old).toMatchObject({ curate: false, mayCurate: false });
+    expect((await h.post(visit, "account/apps/curate", { id: old!.id, on: true })).status).toBe(409);
   });
 });

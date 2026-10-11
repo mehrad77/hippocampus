@@ -8,7 +8,7 @@ import { isLive, type AccountStatus, type Role, type VaultRecord } from "./hoste
 import { createHostedRoutes, type Caller, type HostedRoutes } from "./hosted/routes.ts";
 import { hostedMissing, hostedSettings, type HostedSettings, type HostedVars } from "./hosted/settings.ts";
 import { vaultMeta, type DashboardUser, type VaultHosts, type VaultMeta, type VaultStub } from "./hosted/vault-port.ts";
-import { AUTHORIZE_PATH, MCP_PATH, PROTECTED_RESOURCE_PATH, REGISTER_PATH, addressedVault, authorizePage, canonicalResource, connectedApps, grantOf, invalidToken, keyProps, protectedResource, providerOptions, type OAuthContext } from "./oauth.ts";
+import { AUTHORIZE_PATH, MCP_PATH, PROTECTED_RESOURCE_PATH, REGISTER_PATH, addressedVault, authorizePage, canonicalResource, connectedApps, grantOf, invalidToken, keyProps, oauthCredential, protectedResource, providerOptions, type OAuthContext } from "./oauth.ts";
 import { page, plain } from "./pages.ts";
 import { AI_CATALOG_PATH, DISCOVERY_HEADERS, LLMS_PATH, SERVER_CARD_PATH, aiCatalog, llmsTxt, serverCard } from "./discovery.ts";
 
@@ -151,7 +151,14 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
   };
   const options = providerOptions(publicUrl, handlers);
   const oauth = getOAuthApi(options, env);
-  const apps = connectedApps(oauth, (vaultId, credential) => releaseClaims(vaultId, [credential]));
+  const apps = connectedApps(
+    oauth,
+    (vaultId, credential) => releaseClaims(vaultId, [credential]),
+    async (vaultId, credentials) => {
+      const vault = await routes.registry.vault(vaultId);
+      return vault?.status === "ready" ? (await stubFor(vaultMeta(vault))).curation(credentials) : {};
+    },
+  );
   const routes = createHostedRoutes({
     settings,
     kv: deps.kv,
@@ -167,6 +174,7 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
       revokeVaultGrants: (accountId, vaultId) => apps.revokeVault(accountId, vaultId),
       releaseCredentials: (vaultId, credentials) => releaseClaims(vaultId, credentials),
       claims: async (vault) => (await stubFor(vaultMeta(vault))).claims(),
+      setCurate: async (vault, grant, on) => (await stubFor(vaultMeta(vault))).setCurate(oauthCredential(grant), on),
       seatAgent: async (vault, agent, via) => {
         const stub = await stubFor(vaultMeta(vault));
         if (!(await stub.party()).some((p) => p.id === agent.id)) await stub.addParty(agent, via);
