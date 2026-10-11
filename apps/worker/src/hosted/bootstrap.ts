@@ -39,6 +39,15 @@ export const bootstrapCommit = (message: string): CommitMeta => ({
   author: BOOTSTRAP_AUTHOR,
 });
 
+/**
+ * The commit that brings a vault to format `version`, made when the hosted app first opens an older
+ * vault. No `[skip ci]`: the vault's own CI validates the migrated tree.
+ */
+export const migrationCommit = (version: number): CommitMeta => ({
+  message: withTrailers(`chore: migrate vault to format v${version}`, { [ACTOR_TRAILER]: actorTrailer({ kind: "migration" }) }),
+  author: BOOTSTRAP_AUTHOR,
+});
+
 export type Plan = { mode: "initialize" } | { mode: "adopt"; missing: string[] } | { mode: "refuse" };
 
 /**

@@ -204,7 +204,7 @@ async function mcpClient(origin: string, token: string) {
   const whoami = async () => {
     const r = await client.readResource({ uri: "hippo://dashboard/whoami" });
     const first = r.contents[0] as { text?: string } | undefined;
-    return JSON.parse(first?.text ?? "{}") as { agent: string | null; scopes: string[]; campaign: string; human: string };
+    return JSON.parse(first?.text ?? "{}") as { agent: string | null; scopes: string[]; name: string; campaign: string; human: string; humans: { id: string; github?: string }[] };
   };
   return { client, call, tools, whoami, close: () => client.close() };
 }
@@ -488,8 +488,8 @@ async function main(): Promise<void> {
     await gm.visit(status.body.installUrl);
     const init = await gm.post<{ vault: { status: string; fullName: string } }>("setup/init", {
       repoId: GM.repo,
-      campaign: "Harbor term",
-      human: "game-master",
+      name: "Harbor term",
+      humans: [{ id: "game-master" }],
       timezone: "Europe/Lisbon",
       domains: ["university"],
     });
@@ -503,8 +503,11 @@ async function main(): Promise<void> {
     try {
       const mine = await agent.whoami();
       const theirs = await gmAgent.whoami();
-      check(mine.campaign === "Lisbon relocation" && mine.human === "player", `player's key: ${JSON.stringify(mine)}`);
-      check(theirs.campaign === "Harbor term" && theirs.human === "game-master", `game-master's key: ${JSON.stringify(theirs)}`);
+      check(mine.name === "Lisbon relocation" && mine.human === "player", `player's key: ${JSON.stringify(mine)}`);
+      check(theirs.name === "Harbor term" && theirs.human === "game-master", `game-master's key: ${JSON.stringify(theirs)}`);
+      // Whoever set the vault up is its first human, linked to their GitHub login.
+      check(mine.humans.length === 1 && mine.humans[0]!.github === "player", `player's humans: ${JSON.stringify(mine.humans)}`);
+      check(theirs.humans.length === 1 && theirs.humans[0]!.github === "game-master", `game-master's humans: ${JSON.stringify(theirs.humans)}`);
       const recall = await gmAgent.call("recall", { query: "migration agency residence permit" });
       check(!recall.isError && !recall.text.includes("migration-agency"), "game-master's key found player's notes");
       const o = await gm.api<{ campaign: string }>("overview");

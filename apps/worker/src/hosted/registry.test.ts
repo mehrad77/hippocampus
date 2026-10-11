@@ -116,7 +116,7 @@ describe("keys", () => {
   }
 
   it("fills in each kind's scopes and checks bound agents", () => {
-    expect(keyRequest({ kind: "agent" })).toEqual({ kind: "agent", label: "Any agent", scopes: ["read", "remember", "quest"] });
+    expect(keyRequest({ kind: "agent" })).toEqual({ kind: "agent", label: "Any agent", scopes: ["read", "remember", "goal"] });
     expect(keyRequest({ kind: "curator", label: "Nightly" })).toEqual({ kind: "curator", label: "Nightly", scopes: ["read", "curate"] });
     expect(keyRequest({ kind: "bound", agent: " Home-Finder ", scopes: ["remember", "read"] })).toEqual({ kind: "bound", label: "home-finder", agent: "home-finder", scopes: ["read", "remember"] });
     expect(() => keyRequest({ kind: "bound", agent: "home-finder", scopes: ["remember"] })).toThrow(/needs read/);
@@ -125,6 +125,27 @@ describe("keys", () => {
     expect(() => keyRequest({ kind: "admin" })).toThrow(/kind/);
     expect(() => agentId("curator")).toThrow(/reserved/);
     expect(() => agentId("Not An Id")).toThrow(/lowercase/);
+  });
+
+  it("stores goal with its old name quest, so a rolled-back Worker keeps honoring it", async () => {
+    const { registry, vault } = await withVault();
+    // `quest` is still accepted from older dashboards, as `goal`.
+    expect(keyRequest({ kind: "bound", agent: "home-finder", scopes: ["read", "quest"] }).scopes).toEqual(["read", "goal"]);
+    const { token, key } = await registry.mintKey(vault.id, keyRequest({ kind: "bound", agent: "home-finder", scopes: ["read", "remember", "goal"] }));
+    expect(key.scopes).toEqual(["read", "remember", "goal"]);
+    const [row] = await registry.db.all<{ scopes: string }>("SELECT scopes FROM keys WHERE hash = ?", [key.id]);
+    expect(JSON.parse(row!.scopes)).toEqual(["read", "remember", "goal", "quest"]);
+    expect((await registry.keyForToken(token))!.scopes).toEqual(["read", "remember", "goal"]);
+
+    // What the previous Worker did with a stored row: keep only the scopes it knew.
+    const OLD_KEY_SCOPES = ["read", "remember", "quest", "curate"];
+    expect((JSON.parse(row!.scopes) as unknown[]).filter((s) => OLD_KEY_SCOPES.includes(s as string))).toEqual(["read", "remember", "quest"]);
+
+    // A key the previous Worker minted reads back under the current names.
+    await registry.db.all("UPDATE keys SET scopes = ? WHERE hash = ?", [JSON.stringify(["read", "remember", "quest"]), key.id]);
+    expect((await registry.keyForToken(token))!.scopes).toEqual(["read", "remember", "goal"]);
+    const { key: curator } = await registry.mintKey(vault.id, keyRequest({ kind: "curator" }));
+    expect(curator.scopes).toEqual(["read", "curate"]);
   });
 
   it("stores only a hash, finds the vault by key, and revokes only within the vault", async () => {

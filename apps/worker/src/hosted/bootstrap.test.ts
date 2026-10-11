@@ -2,7 +2,8 @@ import { CURATOR_RULES_PATH, CURRENT_VAULT_VERSION, buildVaultFiles } from "@hip
 import type { HttpError } from "@hippocampus/dashboard";
 import { TEMPLATE } from "@hippocampus/template";
 import { beforeAll, describe, expect, it } from "vitest";
-import { BOOTSTRAP_AUTHOR, GUARDRAIL_FILES, VAULT_PERMISSIONS, bootstrapVault, plan } from "./bootstrap.ts";
+import { V1_FILES } from "../../../../packages/core/src/__fixtures__/v1-vault.ts";
+import { BOOTSTRAP_AUTHOR, GUARDRAIL_FILES, VAULT_PERMISSIONS, bootstrapVault, migrationCommit, plan } from "./bootstrap.ts";
 import { GitHubApp } from "./github-app.ts";
 import { Registry } from "./registry.ts";
 import { APP, appKeyPair, hostedGitHub, registryDb } from "./testing.ts";
@@ -113,6 +114,22 @@ describe("bootstrapVault", () => {
     const err = await refusal(run(await addRepo("player/newer-vault", 9008, newer)));
     expect(err.code).toBe("BAD_VAULT");
     expect(err.message).toMatch(/newer than this Hippocampus/);
+  });
+
+  it("adopts a v1 vault without migrating it: the runtime migrates it when first opened", async () => {
+    const { gh, run, addRepo } = await setup();
+    const result = await run(await addRepo("player/v1-vault", 9009, V1_FILES));
+    expect(result.mode).toBe("adopted");
+    const files = gh.at("player/v1-vault").files();
+    for (const [path, content] of Object.entries(V1_FILES)) expect(files[path]).toBe(content);
+    expect(Object.keys(files).filter((p) => !(p in V1_FILES)).sort()).toEqual([...GUARDRAIL_FILES].sort());
+  });
+
+  it("names the migration commit after the format, without [skip ci], as the migration actor", () => {
+    expect(migrationCommit(CURRENT_VAULT_VERSION)).toEqual({
+      message: `chore: migrate vault to format v${CURRENT_VAULT_VERSION}\n\nHippo-Actor: migration`,
+      author: BOOTSTRAP_AUTHOR,
+    });
   });
 
   it("refuses a public repo before writing or registering anything", async () => {

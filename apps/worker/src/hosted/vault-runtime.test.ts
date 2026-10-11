@@ -1,4 +1,4 @@
-import { AuditError, buildVaultFiles, withTrailers } from "@hippocampus/core";
+import { AuditError, CURRENT_VAULT_VERSION, buildVaultFiles, migrate, withTrailers } from "@hippocampus/core";
 import type { Question } from "@hippocampus/curator/relay";
 import { nodeSqlStorage } from "@hippocampus/index/testing";
 import { gitBlobSha } from "@hippocampus/store-github";
@@ -6,6 +6,7 @@ import { SEEDS, TEMPLATE } from "@hippocampus/template";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { beforeAll, describe, expect, it } from "vitest";
+import { V1_FILES } from "../../../../packages/core/src/__fixtures__/v1-vault.ts";
 import { GitHubApp } from "./github-app.ts";
 import type { Quotas } from "./quotas.ts";
 import { APP, appKeyPair, hostedGitHub } from "./testing.ts";
@@ -49,13 +50,15 @@ function objectStorage() {
   });
 }
 
-async function setup(o: { quotas?: Partial<Quotas>; storage?: ReturnType<typeof objectStorage>; edit?: (files: Record<string, string>) => void } = {}) {
+async function setup(
+  o: { quotas?: Partial<Quotas>; storage?: ReturnType<typeof objectStorage>; edit?: (files: Record<string, string>) => void; files?: Record<string, string>; migrate?: typeof migrate } = {},
+) {
   let t = START;
   const clock = () => new Date(t);
   const github = await hostedGitHub(keys);
   const { gh } = github;
   gh.now = clock;
-  const files = await buildVaultFiles(TEMPLATE, { seed: SEEDS["example-relocation"], now: clock() });
+  const files = o.files ? { ...o.files } : await buildVaultFiles(TEMPLATE, { seed: SEEDS["example-relocation"], now: clock() });
   // job-scout hasn't joined yet, so it can introduce itself.
   delete files["party/job-scout.md"];
   o.edit?.(files);
@@ -65,7 +68,8 @@ async function setup(o: { quotas?: Partial<Quotas>; storage?: ReturnType<typeof 
   const app = new GitHubApp({ appId: APP.id, privateKey: keys.privateKeyPem, apiUrl: "https://api.github.test", fetch: github.fetch, now: clock });
   const storage = o.storage ?? objectStorage();
   const meta: VaultMeta = { vaultId: "01JVAULTPLAYER0000000000000", fullName: "player/vault", branch: "main", repoId: 9001, installationId: installation.id };
-  const deps = { app, apiUrl: "https://api.github.test", webUrl: "https://github.test", fetch: github.fetch, clock, quotas: o.quotas, log: () => undefined };
+  const logged: string[] = [];
+  const deps = { app, apiUrl: "https://api.github.test", webUrl: "https://github.test", fetch: github.fetch, clock, quotas: o.quotas, log: (line: string) => void logged.push(line), migrate: o.migrate };
   const runtime = new VaultRuntime({ ...deps, storage, meta });
 
   const connect = async (grant: VaultGrant, rt: { mcp: VaultRuntime["mcp"] } = runtime) => {
@@ -86,7 +90,7 @@ async function setup(o: { quotas?: Partial<Quotas>; storage?: ReturnType<typeof 
   };
   const mints = () => gh.calls.filter((c) => /^POST \/app\/installations\/\d+\/access_tokens$/.test(c)).length;
   const writes = () => gh.calls.filter((c) => c.startsWith("POST git/") || c.startsWith("PATCH git/")).length;
-  return { gh, repo, app, storage, meta, deps, runtime, connect, api, mints, writes, advance: (ms: number) => (t += ms) };
+  return { gh, repo, app, storage, meta, deps, runtime, connect, api, mints, writes, logged, advance: (ms: number) => (t += ms) };
 }
 
 const trailers = (message: string) => message.slice(message.lastIndexOf("\n\n") + 2).split("\n");
@@ -396,6 +400,125 @@ describe("VaultRuntime: dashboard", () => {
     expect(repo.log()[0]!.message).toMatch(/^party\(player via @player\): add job-scout/);
     expect(trailers(repo.log()[0]!.message)).toContain("Hippo-Actor: human");
     await expect(runtime.addParty({ id: "player", title: "Player" }, "@player")).rejects.toThrow(/is the human, not an agent/);
+  });
+});
+
+describe("VaultRuntime: dashboard humans", () => {
+  const twoHumans = (files: Record<string, string>) => {
+    files["_hippo/config.yaml"] = files["_hippo/config.yaml"]!.replace(/^humans:\n(?:\s+- .*\n)+/m, "humans:\n  - { id: player }\n  - { id: flatmate, github: Flatmate-GH }\n");
+  };
+  const as = async (runtime: VaultRuntime, login: string) => {
+    const res = await runtime.dashboard(new Request(`${ORIGIN}/dashboard/api/session`), { login, account: { status: "approved", admin: false } });
+    return (await res.json()) as { humans: string[]; actor: { kind: string; id: string } };
+  };
+
+  it("acts as the human whose github: is the signed-in login, else the primary human", async () => {
+    const { runtime } = await setup({ edit: twoHumans });
+    const flatmate = await as(runtime, "flatmate-gh");
+    expect(flatmate.humans).toEqual(["player", "flatmate"]);
+    expect(flatmate.actor).toEqual({ kind: "human", id: "flatmate" });
+    expect((await as(runtime, "player")).actor).toEqual({ kind: "human", id: "player" });
+    expect((await as(runtime, "someone-else")).actor).toEqual({ kind: "human", id: "player" });
+  });
+});
+
+describe("VaultRuntime: an older vault is migrated when first opened", () => {
+  const isMigration = (c: { message: string }) => c.message.startsWith("chore: migrate vault to format");
+
+  it("commits the migration once, as the migration actor, leaving the inbox alone", async () => {
+    const { repo, api, logged } = await setup({ files: V1_FILES });
+    const overview = await api("GET", "overview");
+    expect(overview.status).toBe(200);
+    const log = repo.log();
+    expect(log).toHaveLength(2);
+    const [commit] = log;
+    expect(commit!.message.split("\n")[0]).toBe(`chore: migrate vault to format v${CURRENT_VAULT_VERSION}`);
+    expect(trailers(commit!.message)).toEqual(["Hippo-Actor: migration"]);
+    // The vault's CI validates the migrated tree.
+    expect(commit!.message).not.toContain("[skip ci]");
+    expect(commit!.author).toEqual({ name: "Hippocampus", email: "hippocampus@users.noreply.github.com" });
+
+    const files = repo.files();
+    expect(files["_hippo/config.yaml"]).toMatch(new RegExp(`^version: ${CURRENT_VAULT_VERSION}$`, "m"));
+    expect(files["goals/residence-permit.md"]).toContain("type: goal");
+    expect(files["quests/residence-permit.md"]).toBeUndefined();
+    for (const [path, content] of Object.entries(V1_FILES)) if (path.startsWith("inbox/") || path.startsWith("disputes/")) expect(files[path]).toBe(content);
+
+    // Opened again: nothing left to migrate.
+    expect((await api("GET", "catalog")).status).toBe(200);
+    expect(repo.log().filter(isMigration)).toHaveLength(1);
+    expect(logged.some((l) => l.includes('"route":"vault/migrate"') && l.includes('"status":200'))).toBe(true);
+  });
+
+  it("migrates once when the first requests arrive together", async () => {
+    const { repo, api, runtime, connect } = await setup({ files: V1_FILES });
+    const { call } = await connect(AGENT_KEY);
+    const [a, b, party, onboard] = await Promise.all([api("GET", "overview"), api("GET", "catalog"), runtime.party(), call("onboard", { agent: "residency-agent" })]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect(party.map((p) => p.id)).toEqual(["game-master", "residency-agent"]);
+    expect(onboard.isError).toBeFalsy();
+    expect(repo.log().filter(isMigration)).toHaveLength(1);
+  });
+
+  it("answers 503 VAULT_MIGRATING when someone pushed meanwhile, and migrates on the next request", async () => {
+    let pushed = false;
+    const ctx: { repo?: Awaited<ReturnType<typeof setup>>["repo"] } = {};
+    const racing: typeof migrate = async (store, config, opts) => {
+      const result = await migrate(store, config, opts);
+      if (!pushed) {
+        pushed = true;
+        await ctx.repo!.push({ "_hippo/config.yaml": `${V1_FILES["_hippo/config.yaml"]}\n# edited on GitHub\n` }, "main", "docs: note\n\nHippo-Actor: human");
+      }
+      return result;
+    };
+    const { repo, api, logged } = await setup({ files: V1_FILES, migrate: racing });
+    ctx.repo = repo;
+    const refused = await api("GET", "overview");
+    expect(refused.status).toBe(503);
+    expect(refused.body.code).toBe("VAULT_MIGRATING");
+    expect(repo.log().filter(isMigration)).toHaveLength(0);
+    expect(logged).toContainEqual(expect.stringContaining('"code":"VAULT_MIGRATING"'));
+
+    expect((await api("GET", "overview")).status).toBe(200);
+    expect(repo.log().filter(isMigration)).toHaveLength(1);
+    expect(repo.files()["_hippo/config.yaml"]).toContain("# edited on GitHub");
+  });
+
+  it("refuses a migration the audit doesn't allow, with 503 VAULT_MIGRATING and nothing but the code in the log", async () => {
+    const forged: typeof migrate = async (store, config, opts) => {
+      const result = await migrate(store, config, opts);
+      return { ...result, changes: [...result.changes, { path: "inbox/game-master/2026-09-27T100000-arrival.md", content: "---\nagent: game-master\n---\nRewritten.\n" }] };
+    };
+    const { repo, api, connect, logged, writes } = await setup({ files: V1_FILES, migrate: forged });
+    const refused = await api("GET", "overview");
+    expect(refused.status).toBe(503);
+    expect(refused.body).toMatchObject({ code: "VAULT_MIGRATING" });
+    expect(JSON.stringify(refused.body)).not.toContain("inbox/");
+    const res = await connect(AGENT_KEY).catch((e: unknown) => e);
+    expect(res).toBeInstanceOf(Error);
+    expect(writes()).toBe(0);
+    expect(repo.log()).toHaveLength(1);
+    const lines = logged.filter((l) => l.includes("vault/migrate"));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) expect(Object.keys(JSON.parse(l)).sort()).toEqual(["code", "ms", "route", "status", "vault"]);
+  });
+
+  it("aborts a sleep run that was open across the migration", async () => {
+    const { repo, connect, deps, storage, meta } = await setup();
+    await (await connect(bound("home-finder"))).call("remember", { text: "New landlord is João Silva." });
+    const step = (await (await connect(CURATOR_KEY)).call("sleep_start", { model: "test-model" })).json();
+    expect(step.state).toBe("ask");
+
+    // The repo goes back to a v1 vault (as if restored), and the object restarts.
+    const now = repo.files();
+    await repo.push({ ...Object.fromEntries(Object.keys(now).map((p) => [p, null])), ...V1_FILES }, "main", "chore: restore\n\nHippo-Actor: human");
+    const restarted = new VaultRuntime({ ...deps, storage, meta });
+    const res = await restarted.dashboard(new Request(`${ORIGIN}/dashboard/api/overview`), OWNER);
+    expect(res.status).toBe(200);
+    const { run, history } = await restarted.relay.status();
+    expect(run).toBeUndefined();
+    expect(history[0]).toMatchObject({ id: step.run, outcome: "aborted" });
+    expect(repo.log().filter(isMigration)).toHaveLength(1);
   });
 });
 

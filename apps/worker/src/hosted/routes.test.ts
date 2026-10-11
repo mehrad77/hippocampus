@@ -181,10 +181,13 @@ describe("onboarding", () => {
     // Settings are checked before anything touches GitHub.
     expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS, timezone: "Mars/Olympus" })).body).toMatchObject({ code: "INVALID" });
     expect((await post(player, "setup/init", { repoId: 1, ...SETTINGS })).status).toBe(404);
+    expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS, presets: ["people"] })).body).toMatchObject({ code: "INVALID" });
     const init = await post<{ vault: { id: string; status: string; fullName: string }; mode: string }>(player, "setup/init", { repoId: 9001, ...SETTINGS });
     expect(init.body).toMatchObject({ mode: "initialized", vault: { status: "ready", fullName: "player/vault", branch: "main" } });
     const vaultId = init.body.vault.id;
     expect(gh.at("player/vault").files()[".github/workflows/validate.yml"]).toBeDefined();
+    // The person who set it up is its human, linked to their login, so the dashboard acts as them.
+    expect(gh.at("player/vault").files()["_hippo/config.yaml"]).toContain("- {id: player, github: player}");
     expect(seen.changed).toContain(vaultId);
     expect(await kv.get(`hosted:install:${PLAYER}`, "json")).toBeNull();
     expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS })).body).toMatchObject({ code: "HAS_VAULT" });

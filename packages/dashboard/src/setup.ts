@@ -239,13 +239,21 @@ export interface HostedSetupStatus {
 
 export interface HostedInitRequest {
   repoId: number;
-  campaign: string;
-  human: string;
+  /** What the memory is about. One of `name` and `campaign` is required. */
+  name?: string;
+  /** @deprecated The older name of `name`. */
+  campaign?: string;
+  /** Shorthand for `humans: [{ id: human }]`; one of the two is required. */
+  human?: string;
+  /** The vault's humans, primary first. Without a `github:` on any of them, the signed-in login goes on the first. */
+  humans?: { id: string; github?: string; domains?: string[] }[];
   timezone: string;
   domains: string[];
   seed?: "example-relocation";
   /** age public key for `secrets.recipient`. */
   recipient?: string;
+  /** Presets to lay over the template. None are offered on the hosted app yet, so only an empty list. */
+  presets?: string[];
 }
 
 export interface HostedInitResult {

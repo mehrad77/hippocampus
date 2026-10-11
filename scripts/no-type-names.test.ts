@@ -17,7 +17,6 @@ const ALLOWED: { file: string; line: string; why: string }[] = [
   { file: "packages/core/src/audit.ts", line: 'can("quest")', why: "key scope name" },
   { file: "packages/mcp/src/server.ts", line: "export const LEGACY_GOAL_SCOPE", why: "the goal scope's old name" },
   { file: "apps/worker/src/hosted/registry.ts", line: "KEY_SCOPES", why: "key scope names" },
-  { file: "apps/worker/src/hosted/registry.ts", line: '["read", "remember", "quest"]', why: "key scope names" },
   { file: "packages/dashboard/src/mcp-source.ts", line: 'can("quest")', why: "key scope name" },
   { file: "packages/dashboard/src/demo-hosted.ts", line: '"goal", "quest"]', why: "key scope names (both, like new hosted keys)" },
   // Config keys and values of the v1 format (renamed in v2), not entity types.

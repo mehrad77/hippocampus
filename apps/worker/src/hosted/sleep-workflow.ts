@@ -12,7 +12,7 @@ export const SLEEP_WORKFLOW = `# Nightly sleep for this Hippocampus vault: Claud
 #   Secret    HIPPO_CURATOR_KEY     a curator key: dashboard → Setup → Keys → Curator
 #   Variable  HIPPO_MCP_URL         the vault's MCP URL, shown on the dashboard's setup page
 #   Variable  HIPPO_CURATOR_MODEL   optional: the model that curates, like sonnet or opus (default sonnet)
-# Curating shows the model every new memory in full, secret ones in plain text.
+# Curating shows the model every new memory in full: secret ones in plain text, and confidential details.
 name: sleep
 on:
   schedule:
@@ -40,8 +40,8 @@ jobs:
             hippocampus MCP tools. If sleep_status shows a run already open, stop. Otherwise call
             sleep_start with model "\${{ vars.HIPPO_CURATOR_MODEL || 'sonnet' }}", follow the procedure it
             returns, and answer its questions with sleep_answer (or sleep_skip for an episode you
-            can't place) until the state is "done". Never repeat a secret value outside the answers
-            that ask for it.
+            can't place) until the state is "done". Never repeat a secret value or a confidential
+            detail outside the answers that ask for it.
           claude_args: >-
             --model \${{ vars.HIPPO_CURATOR_MODEL || 'sonnet' }}
             --mcp-config '{"mcpServers":{"hippocampus":{"type":"http","url":"\${{ vars.HIPPO_MCP_URL }}","headers":{"Authorization":"Bearer \${{ secrets.HIPPO_CURATOR_KEY }}"}}}}'

@@ -141,7 +141,11 @@ describe("connecting an app over OAuth", () => {
       ["goal", false],
       ["curate", false],
     ]);
-    expect(page).toMatch(/secret memories in plain text/);
+    expect(page).toMatch(/secret memories in plain text, and confidential details/);
+    // Goals under their current name; `quest` is accepted when posted, never offered.
+    expect(page).toContain("Update goals: objectives, status, progress");
+    expect(page).toContain("(it sees confidential details)");
+    expect(page).not.toMatch(/value="quest"/);
   });
 
   it("grants the chosen agent and scopes for the account's vault", async () => {

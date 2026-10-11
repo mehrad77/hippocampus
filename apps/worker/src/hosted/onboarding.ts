@@ -1,4 +1,4 @@
-import { SLUG, validTimezone, type VaultSettings } from "@hippocampus/core";
+import { SLUG, validTimezone, type HumanSetting, type VaultSettings } from "@hippocampus/core";
 import { HttpError, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSetupPort, type HostedSetupStatus, type HostedVault, type SetupItem, type Snippet } from "@hippocampus/dashboard";
 import { GitHubStore } from "@hippocampus/store-github";
 import { SEEDS } from "@hippocampus/template";
@@ -26,6 +26,8 @@ export interface HostedSetupDeps {
 
 /** Checking emptiness costs a few requests per repo, so only this many get checked. */
 const MAX_CHECKED = 8;
+/** GitHub's login rule: alphanumerics and single inner dashes, up to 39 characters. */
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
 const READ_ONLY = { metadata: "read", contents: "read" } as const;
 
 const REASONS: Record<DisconnectReason, string> = {
@@ -102,7 +104,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
   }
 
   async function init(body: unknown): Promise<HostedInitResult> {
-    const req = initRequest(body);
+    const req = initRequest(body, account.login);
     const existing = await registry.vaultOf(account.id);
     if (existing?.status === "ready") throw new HttpError(409, `You already have a vault: ${existing.fullName}.`, "HAS_VAULT");
     // A retry on the same repo can go on with the vault's own installation once the pending one has expired.
@@ -115,7 +117,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       accountId: account.id,
       installationId,
       repo: { id: repo.id, fullName: repo.fullName, branch: repo.defaultBranch },
-      settings: { campaign: req.campaign, human: req.human, timezone: req.timezone, domains: req.domains, recipient: req.recipient },
+      settings: { campaign: req.campaign, humans: req.humans, timezone: req.timezone, domains: req.domains, recipient: req.recipient },
       seed: req.seed,
       now: now(),
     });
@@ -176,28 +178,59 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
   };
 }
 
-/** The campaign settings and the repo for `init`, checked before anything touches GitHub. */
-export function initRequest(body: unknown): VaultSettings & { repoId: number; seed?: string } {
+/**
+ * The vault's settings and the repo for `init`, checked before anything touches GitHub. Takes
+ * `name` (or the older `campaign`) and `humans` (or one `human`); the signed-in `login` becomes the
+ * first human's `github:` unless the request links someone already.
+ */
+export function initRequest(body: unknown, login?: string): VaultSettings & { repoId: number; seed?: string } {
   const b = (body ?? {}) as Record<string, unknown>;
   const bad = (msg: string): never => {
     throw new HttpError(400, msg, "INVALID");
   };
+  const slugs = (v: unknown, field: string): string[] => {
+    if (v === undefined) return [];
+    if (!Array.isArray(v) || v.length > 30) bad(`${field}: a list of up to 30 ids`);
+    const ids = [...new Set((v as unknown[]).map((d) => (typeof d === "string" ? d.trim().toLowerCase() : "")))];
+    for (const d of ids) if (!SLUG.test(d)) bad(`${field}: "${d}" must be lowercase letters, digits and dashes`);
+    return ids;
+  };
   if (typeof b.repoId !== "number" || !Number.isSafeInteger(b.repoId) || b.repoId <= 0) bad("repoId: pick one of the installation's repos");
-  const campaign = typeof b.campaign === "string" ? b.campaign.trim() : "";
-  if (!campaign || campaign.length > 120) bad("campaign: a name, up to 120 characters");
-  const human = typeof b.human === "string" ? b.human.trim().toLowerCase() : "";
-  if (!SLUG.test(human)) bad("human: your id in the vault, lowercase letters, digits and dashes (like player)");
+  const rawName = b.name ?? b.campaign;
+  const name = typeof rawName === "string" ? rawName.trim() : "";
+  if (!name || name.length > 120) bad("name: what the memory is about, up to 120 characters");
+
+  let humans: HumanSetting[];
+  if (b.humans !== undefined) {
+    if (!Array.isArray(b.humans) || !b.humans.length || b.humans.length > 10) bad("humans: a list of 1 to 10 people, the primary one first");
+    humans = (b.humans as unknown[]).map((h, i) => {
+      const o = (typeof h === "string" ? { id: h } : (h ?? {})) as Record<string, unknown>;
+      const id = typeof o.id === "string" ? o.id.trim().toLowerCase() : "";
+      if (!SLUG.test(id)) bad(`humans[${i}].id: an id in the vault, lowercase letters, digits and dashes (like player)`);
+      const github = o.github === undefined ? undefined : typeof o.github === "string" && GITHUB_LOGIN.test(o.github.trim()) ? o.github.trim() : bad(`humans[${i}].github: a GitHub login`);
+      const domains = slugs(o.domains, `humans[${i}].domains`);
+      return { id, ...(github ? { github } : {}), ...(domains.length ? { domains } : {}) };
+    });
+  } else {
+    const id = typeof b.human === "string" ? b.human.trim().toLowerCase() : "";
+    if (!SLUG.test(id)) bad("human: your id in the vault, lowercase letters, digits and dashes (like player)");
+    humans = [{ id }];
+  }
+  if (new Set(humans.map((h) => h.id)).size !== humans.length) bad("humans: each id once");
+  // The person setting the vault up is its primary human, so the dashboard acts as them.
+  if (login && !humans.some((h) => h.github)) humans[0] = { ...humans[0]!, github: login };
+
   if (typeof b.timezone !== "string" || !validTimezone(b.timezone)) bad("timezone: an IANA name like Europe/Lisbon");
-  if (!Array.isArray(b.domains) || b.domains.length > 30) bad("domains: a list of up to 30 ids");
-  const domains = [...new Set((b.domains as unknown[]).map((d) => (typeof d === "string" ? d.trim().toLowerCase() : "")))];
-  for (const d of domains) if (!SLUG.test(d)) bad(`domains: "${d}" must be lowercase letters, digits and dashes`);
+  if (!Array.isArray(b.domains)) bad("domains: a list of up to 30 ids");
+  const domains = slugs(b.domains, "domains");
   if (b.seed !== undefined && (typeof b.seed !== "string" || !SEEDS[b.seed])) bad(`seed: choose from ${Object.keys(SEEDS).join(", ")}`);
+  if (b.presets !== undefined && (!Array.isArray(b.presets) || b.presets.length)) bad("presets: none are available on the hosted app yet; leave it out or send an empty list");
   // An age X25519 recipient: `age1` and 58 bech32 characters.
   if (b.recipient !== undefined && (typeof b.recipient !== "string" || !/^age1[02-9ac-hj-np-z]{58}$/.test(b.recipient))) bad("recipient: an age public key (age1…)");
   return {
     repoId: b.repoId as number,
-    campaign,
-    human,
+    campaign: name,
+    humans,
     timezone: b.timezone as string,
     domains,
     ...(b.seed === undefined ? {} : { seed: b.seed as string }),

@@ -281,7 +281,7 @@ const SCOPE_LABELS: Record<CurrentScope, string> = {
   read: "Read the vault: recall, look up notes, briefings",
   remember: "Remember: add new memories to its inbox",
   goal: "Update goals: objectives, status, progress",
-  curate: "Curate: run sleep, consolidating the inbox into notes",
+  curate: "Curate: run sleep, consolidating the inbox into notes (it sees confidential details)",
 };
 /** Pre-ticked whatever the app asks for: the rest is the person's call. */
 const DEFAULT_SCOPES = new Set<Scope>(["read", "remember"]);
@@ -296,7 +296,7 @@ function consentPage(o: { details: ConsentDescription; handle: string; account: 
   const scopes = SCOPES.map(
     (s) =>
       `<label><input type="checkbox" name="scope" value="${s}"${DEFAULT_SCOPES.has(s) ? " checked" : ""}> ${escape(SCOPE_LABELS[s])}</label>` +
-      (s === "curate" ? `<p class="warn"><small>Curating shows the app every new memory in full, <strong>secret memories in plain text</strong>. Allow it only for an app you trust with them.</small></p>` : ""),
+      (s === "curate" ? `<p class="warn"><small>Curating shows the app every new memory in full: <strong>secret memories in plain text, and confidential details</strong>. Allow it only for an app you trust with them.</small></p>` : ""),
   ).join("\n");
   return `<h1>Connect ${name} to your vault?</h1>
 <p>${origin} Access will be sent to <strong>${escape(details.redirectHost)}</strong>.</p>

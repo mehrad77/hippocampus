@@ -108,7 +108,7 @@ describe("MCP with vault keys", () => {
       grant: { agent: "home-finder", scopes: ["read", "remember"], via: "key", keyKind: "bound" },
       body: expect.stringContaining("tools/list"),
     });
-    expect((await grantFor({ kind: "agent" })).grant).toEqual({ scopes: ["read", "remember", "quest"], via: "key", keyKind: "agent" });
+    expect((await grantFor({ kind: "agent" })).grant).toEqual({ scopes: ["read", "remember", "goal"], via: "key", keyKind: "agent" });
     expect((await grantFor({ kind: "curator" })).grant).toEqual({ scopes: ["read", "curate"], via: "key", keyKind: "curator" });
     // The Durable Object gets the grant, never the key itself.
     expect(h.vaults.to(vault, "mcp").every((c) => c.authorization === null)).toBe(true);

@@ -1,14 +1,15 @@
-import { CONFIG_PATH, HippoService, Vault, displayName, parseConfig, type SearcherFactory } from "@hippocampus/core";
+import { AuditError, CONFIG_PATH, HippoService, StoreConflictError, Vault, displayName, migrate, parseConfig, vaultVersionStatus, type HippoConfig, type SearcherFactory } from "@hippocampus/core";
 import { SleepRelay, type RunStore } from "@hippocampus/curator/relay";
-import { createDashboardApi, errorResponse, json, serviceSource, type DashboardSource, type ErrorReport } from "@hippocampus/dashboard";
+import { HttpError, createDashboardApi, errorResponse, json, serviceSource, type DashboardSource, type ErrorReport } from "@hippocampus/dashboard";
 import { HippoIndex, doSql, type DurableSqlLike, type SqlStorageLike } from "@hippocampus/index";
 import { createHippoServer, type Scope } from "@hippocampus/mcp";
 import { GitHubStore, SnapshotCache, SqliteBlobCache, type BlobCache } from "@hippocampus/store-github";
+import { TEMPLATE } from "@hippocampus/template";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { jsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/types.js";
 import { ScribeQueue } from "../scribe.ts";
 import { AuditedStore, type Principal } from "./audited-store.ts";
-import { VAULT_PERMISSIONS } from "./bootstrap.ts";
+import { VAULT_PERMISSIONS, migrationCommit } from "./bootstrap.ts";
 import { cappedEmbedder, type HostedEmbedding } from "./embed-cap.ts";
 import type { InstallationToken, Narrowing, Permissions } from "./github-app.ts";
 import { logEvent } from "./limits.ts";
@@ -73,6 +74,8 @@ export interface VaultRuntimeDeps {
   jsonSchemaValidator?: jsonSchemaValidator;
   quotas?: Partial<Quotas>;
   log?: (line: string) => void;
+  /** The format migration; tests swap it to make it misbehave. */
+  migrate?: typeof migrate;
 }
 
 export const DASHBOARD_API = "/dashboard/api";
@@ -89,6 +92,10 @@ export const RUNTIME_PERMISSIONS: Permissions = Object.fromEntries(Object.entrie
 
 const HUMAN: Principal = { kind: "human" };
 const CURATOR: Principal = { kind: "curator" };
+const MIGRATION: Principal = { kind: "migration" };
+
+/** The vault is being brought to the current format, or that failed: the request can be retried. */
+const migrating = () => new HttpError(503, "This vault is being updated to the current format. Try again in a moment.", "VAULT_MIGRATING");
 
 export const grantPrincipal = (grant: VaultGrant): Principal => ({ kind: "agent", agent: grant.agent, scopes: grant.scopes });
 
@@ -179,6 +186,8 @@ export class VaultRuntime {
   /** Where the vault keeps unconsolidated episodes (`folders.inbox`); they stay out of storage at rest. */
   private inboxPrefix = "inbox/";
   private inboxKnown?: Promise<void>;
+  private current?: Promise<void>;
+  private readonly runs: RunStore;
 
   constructor(private readonly d: VaultRuntimeDeps) {
     this.meta = d.meta;
@@ -191,13 +200,14 @@ export class VaultRuntime {
     const { installationId, repoId } = d.meta;
     this.token = storedToken(d.storage.sql, () => d.app.installationToken(installationId, { repositoryIds: [repoId], permissions: RUNTIME_PERMISSIONS }), now);
     this.writer = new ScribeQueue(this.github());
+    this.runs = this.leased(limitRuns(new SqlRunStore(d.storage.sql), this.counter, this.quotas.sleepRunsPerDay));
     this.relay = new SleepRelay({
       open: async (at) => {
-        await this.learnInbox();
+        await this.ready();
         const store = this.store(CURATOR);
         return { vault: await Vault.load(store, { now: () => at }), store };
       },
-      runs: this.leased(limitRuns(new SqlRunStore(d.storage.sql), this.counter, this.quotas.sleepRunsPerDay)),
+      runs: this.runs,
       clock: this.clock,
     });
   }
@@ -251,6 +261,61 @@ export class VaultRuntime {
     return this.inboxKnown;
   }
 
+  /** What every request waits for: the inbox folder known, and the vault in the current format. */
+  private async ready(): Promise<void> {
+    await this.learnInbox();
+    await this.ensureCurrent();
+  }
+
+  /**
+   * Brings an older vault to the current format the first time this object opens it, as one audited
+   * commit by the `migration` actor. Memoized; a failure (an audit refusal, a conflict with a push)
+   * answers 503 and is retried by the next request. A newer vault is left to fail as before (VERSION).
+   */
+  private ensureCurrent(): Promise<void> {
+    this.current ??= this.migrateIfOlder().catch((err: unknown) => {
+      this.current = undefined;
+      throw err;
+    });
+    return this.current;
+  }
+
+  private async migrateIfOlder(): Promise<void> {
+    const started = Date.now();
+    const reads = this.github();
+    let config: HippoConfig | undefined;
+    try {
+      const raw = await reads.read(CONFIG_PATH);
+      config = raw === undefined ? undefined : parseConfig(raw);
+    } catch {
+      config = undefined;
+    }
+    if (!config) {
+      // A missing or broken config: loading the vault explains it. Checked again next time.
+      this.current = undefined;
+      return;
+    }
+    if (vaultVersionStatus(config) !== "older") return;
+    const result = await (this.d.migrate ?? migrate)(reads, config, { dryRun: true, template: TEMPLATE });
+    if (!result.changes.length) return;
+    // Audited like any hosted write: as the migration actor, against the commit it was computed from.
+    const store = new AuditedStore({ reads, writer: this.writer, principal: MIGRATION, quotas: this.quotas });
+    try {
+      await store.apply(result.changes, migrationCommit(result.to));
+    } catch (err) {
+      if (err instanceof AuditError || err instanceof StoreConflictError) {
+        await logEvent({ route: "vault/migrate", vault: this.meta.vaultId, status: 503, code: "VAULT_MIGRATING", ms: Date.now() - started }, this.d.log).catch(() => undefined);
+        throw migrating();
+      }
+      throw err;
+    }
+    await logEvent({ route: "vault/migrate", vault: this.meta.vaultId, status: 200, ms: Date.now() - started }, this.d.log).catch(() => undefined);
+    // A run open across the migration asked about the old tree. Queued, not awaited: the relay's
+    // own steps wait for this migration, so waiting for them here would deadlock.
+    const run = await this.runs.get();
+    if (run) void this.relay.abort(run.id).catch(() => undefined);
+  }
+
   private serviceOver(store: SizeGuarded): HippoService {
     return new HippoService(store, { searcher: this.searcher, now: this.clock });
   }
@@ -295,7 +360,7 @@ export class VaultRuntime {
     if (request.method !== "POST") return json(405, { error: "Method not allowed", code: "METHOD" }, { allow: "POST" });
     try {
       await this.keepAlarm();
-      await this.learnInbox();
+      await this.ready();
       const store = this.store(grantPrincipal(grant));
       const server = createHippoServer({
         service: this.serviceOver(store),
@@ -323,10 +388,11 @@ export class VaultRuntime {
     const started = Date.now();
     try {
       await this.keepAlarm();
-      await this.learnInbox();
+      await this.ready();
       const repo = this.meta.fullName;
       const url = `${(this.d.webUrl ?? "https://github.com").replace(/\/$/, "")}/${repo}`;
-      const source = serviceSource(this.service(), { mode: "worker", vault: { kind: "github", repo, branch: this.meta.branch, url } }, { curator: this.curator });
+      const human = await this.humanOf(user.login);
+      const source = serviceSource(this.service(), { mode: "worker", vault: { kind: "github", repo, branch: this.meta.branch, url } }, { curator: this.curator, ...(human ? { human } : {}) });
       const api = createDashboardApi({
         basePath: DASHBOARD_API,
         source: () => source,
@@ -340,9 +406,20 @@ export class VaultRuntime {
     }
   }
 
+  /** The human a signed-in GitHub login is (their `github:` in the config), else the primary human; undefined when the config doesn't load. */
+  private async humanOf(login: string): Promise<string | undefined> {
+    try {
+      const { humans } = parseConfig(await this.github().read(CONFIG_PATH));
+      const key = login.toLowerCase();
+      return (humans.find((h) => h.github?.toLowerCase() === key) ?? humans[0])?.id;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The party's agents, for the OAuth consent page. */
   async party(): Promise<{ id: string; title: string }[]> {
-    await this.learnInbox();
+    await this.ready();
     const vault = await this.service().vault();
     return vault
       .withCapability("actor")
@@ -352,7 +429,7 @@ export class VaultRuntime {
 
   /** Seats an agent, as the human (the consent page's "new agent"). */
   async addParty(input: { id: string; title: string; lane?: string; authority?: string[] }, via: string): Promise<{ slug: string }> {
-    await this.learnInbox();
+    await this.ready();
     const { slug } = await this.service().addPartyMember({ id: input.id, title: input.title, lane: input.lane, authority: input.authority }, { via });
     return { slug };
   }
