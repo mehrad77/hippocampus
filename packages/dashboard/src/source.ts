@@ -51,6 +51,23 @@ export interface IntroductionDecision {
   authority?: string[];
 }
 
+/** `POST actions/upgrade-vault`: what the owner's Upgrade did. Nothing changed when the vault was current already. */
+export interface VaultUpgrade {
+  upgraded: boolean;
+  from: number;
+  to: number;
+  /** How many paths the upgrade commit changed. */
+  changed: number;
+  /** What the owner should know: things carried over in another shape, or left as they were. */
+  notes: string[];
+}
+
+/** Which of `remember`'s optional inputs a source takes (servers from before them don't). */
+export interface RememberFields {
+  confidential: boolean;
+  data: boolean;
+}
+
 export type IntroductionResult = { decision: "approve"; agent: string; path: string } | { decision: "dismiss"; agent: string };
 
 /** A human settles a proposal or a possible merge (merges can only be declined). */
@@ -93,10 +110,14 @@ export interface DashboardSource {
   /** A human withdraws a fact (`field`, or `field` in `scope`): it becomes retconned. */
   retract?(ref: string, field: string, scope?: string, via?: string): Promise<{ entity: string; field: string }>;
   remember?(input: Remember): Promise<{ id: string; path: string }>;
+  /** Absent: `remember` takes every field. A source that doesn't answers 501 for the ones it lacks. */
+  rememberFields?: RememberFields;
   addParty?(input: NewPartyMember, via?: string): Promise<{ slug: string; path: string }>;
   introduction?(input: IntroductionDecision, via?: string): Promise<IntroductionResult>;
   /** The agent-run sleep (hosted): its open run and history, and aborting a stuck run. */
   curator?: { status(): Promise<CuratorStatus>; abort(run: string, via?: string): Promise<CuratorStatus> };
+  /** The owner's Upgrade button (hosted): bring an older vault to the current format. */
+  upgradeVault?(via?: string): Promise<VaultUpgrade>;
 }
 
 /** Mirrors the relay's `RunStatus` (packages/curator/src/relay.ts) without depending on the curator. No memory content. */
@@ -132,6 +153,10 @@ export interface Capabilities {
   /** Withdraw a fact. */
   retract: boolean;
   remember: boolean;
+  /** `remember` can mark an episode confidential. */
+  confidential: boolean;
+  /** `remember` takes a kind's structured `data`. */
+  data: boolean;
   party: boolean;
   /** Approve or dismiss agents' introductions. */
   introductions: boolean;
@@ -139,6 +164,8 @@ export interface Capabilities {
   setup: SetupKind;
   /** The agent-run sleep's status and abort (`GET curator`, `POST actions/curator`). */
   curator: boolean;
+  /** The owner can upgrade an older vault from the dashboard (`POST actions/upgrade-vault`). */
+  upgrade: boolean;
 }
 
 /** `GET /session`: what the UI needs before rendering anything. */
@@ -161,9 +188,12 @@ export function capabilities(source: DashboardSource | undefined, setup: SetupKi
     proposal: !!source?.proposal,
     retract: !!source?.retract,
     remember: !!source?.remember,
+    confidential: !!source?.remember && source.rememberFields?.confidential !== false,
+    data: !!source?.remember && source.rememberFields?.data !== false,
     party: !!source?.addParty,
     introductions: !!source?.introduction,
     curator: !!source?.curator,
+    upgrade: !!source?.upgradeVault,
     setup,
   };
 }

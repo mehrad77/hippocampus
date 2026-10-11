@@ -1,6 +1,6 @@
-import { AuditError, CONFIG_PATH, HippoService, StoreConflictError, Vault, displayName, migrate, parseConfig, vaultVersionStatus, type HippoConfig, type SearcherFactory } from "@hippocampus/core";
+import { AuditError, CONFIG_PATH, CURRENT_VAULT_VERSION, HippoService, StoreConflictError, Vault, displayName, migrate, parseConfig, vaultVersionStatus, type HippoConfig, type SearcherFactory } from "@hippocampus/core";
 import { SleepRelay, type RunStore } from "@hippocampus/curator/relay";
-import { HttpError, createDashboardApi, errorResponse, json, serviceSource, type DashboardSource, type ErrorReport } from "@hippocampus/dashboard";
+import { HttpError, createDashboardApi, errorResponse, json, serviceSource, type DashboardSource, type ErrorReport, type SourceInfo, type VaultUpgrade } from "@hippocampus/dashboard";
 import { HippoIndex, doSql, type DurableSqlLike, type SqlStorageLike } from "@hippocampus/index";
 import { createHippoServer, type Scope } from "@hippocampus/mcp";
 import { GitHubStore, SnapshotCache, SqliteBlobCache, type BlobCache } from "@hippocampus/store-github";
@@ -94,11 +94,18 @@ const HUMAN: Principal = { kind: "human" };
 const CURATOR: Principal = { kind: "curator" };
 const MIGRATION: Principal = { kind: "migration" };
 
-/** The vault is being brought to the current format, or that failed: the request can be retried. */
-const migrating = () => new HttpError(503, "This vault is being updated to the current format. Try again in a moment.", "VAULT_MIGRATING");
-/** The update can't be done here (the audit refused it): only the owner, locally, can. Says nothing about the vault's content. */
-const migrationRefused = () =>
-  new HttpError(503, "This vault needs an update to the current format that can't be applied automatically. The owner can run `hippo migrate` in a local clone and push.", "VAULT_MIGRATING");
+/**
+ * The vault is older than this Worker's format. Nothing here migrates it until its owner clicks
+ * Upgrade on the dashboard, so a Worker rolled back right after a deploy never meets a vault it can't read.
+ * Says nothing about the vault's content.
+ */
+export const upgradeNeeded = () =>
+  new HttpError(409, "This vault uses an older format. Its owner can upgrade it on the Hippocampus dashboard.", "VAULT_UPGRADE_NEEDED");
+/** Someone pushed while the upgrade was computed: clicking again redoes it against the new head. */
+const upgradeRaced = () => new HttpError(409, "The vault changed while it was being upgraded. Try again.", "CONFLICT");
+/** The upgrade can't be done here (the audit refused it): only the owner, locally, can. Says nothing about the vault's content. */
+const upgradeRefused = () =>
+  new HttpError(409, "This vault's upgrade can't be applied here. The owner can run `hippo migrate` in a local clone and push.", "VAULT_UPGRADE_REFUSED");
 
 export const grantPrincipal = (grant: VaultGrant): Principal => ({ kind: "agent", agent: grant.agent, scopes: grant.scopes });
 
@@ -189,7 +196,9 @@ export class VaultRuntime {
   /** Where the vault keeps unconsolidated episodes (`folders.inbox`); they stay out of storage at rest. */
   private inboxPrefix = "inbox/";
   private inboxKnown?: Promise<void>;
-  private current?: Promise<void>;
+  /** The vault is known to be in the current format (see `format`). */
+  private current = false;
+  private upgrading?: Promise<VaultUpgrade>;
   private readonly runs: RunStore;
 
   constructor(private readonly d: VaultRuntimeDeps) {
@@ -267,56 +276,75 @@ export class VaultRuntime {
   /** What every request waits for: the inbox folder known, and the vault in the current format. */
   private async ready(): Promise<void> {
     await this.learnInbox();
-    await this.ensureCurrent();
+    if ((await this.format()).status === "older") throw upgradeNeeded();
   }
 
   /**
-   * Brings an older vault to the current format the first time this object opens it, as one audited
-   * commit by the `migration` actor. Memoized; a failure (an audit refusal, a conflict with a push)
-   * answers 503 and is retried by the next request. A newer vault is left to fail as before (VERSION).
+   * The vault's config and how its format compares to this Worker's. Only "current" is remembered:
+   * an older vault is read again on every request, so an upgrade pushed from a local clone counts at once.
+   * A missing or broken config isn't decided here: loading the vault explains it.
    */
-  private ensureCurrent(): Promise<void> {
-    this.current ??= this.migrateIfOlder().catch((err: unknown) => {
-      this.current = undefined;
-      throw err;
-    });
-    return this.current;
-  }
-
-  private async migrateIfOlder(): Promise<void> {
-    const started = Date.now();
-    const reads = this.github();
+  private async format(): Promise<{ status: "current" | "older" | "newer" | "unknown"; config?: HippoConfig }> {
+    if (this.current) return { status: "current" };
     let config: HippoConfig | undefined;
     try {
-      const raw = await reads.read(CONFIG_PATH);
+      const raw = await this.github().read(CONFIG_PATH);
       config = raw === undefined ? undefined : parseConfig(raw);
     } catch {
       config = undefined;
     }
-    if (!config) {
-      // A missing or broken config: loading the vault explains it. Checked again next time.
-      this.current = undefined;
-      return;
+    if (!config) return { status: "unknown" };
+    const status = vaultVersionStatus(config);
+    if (status === "current") this.current = true;
+    return { status, config };
+  }
+
+  /**
+   * The owner's Upgrade button: brings an older vault to the current format as one audited commit by
+   * the `migration` actor, and aborts a sleep run that was asked about the old tree. Clicks that
+   * arrive together share one upgrade; a click on a current vault changes nothing.
+   */
+  upgrade(): Promise<VaultUpgrade> {
+    this.upgrading ??= this.migrateIfOlder().finally(() => {
+      this.upgrading = undefined;
+    });
+    return this.upgrading;
+  }
+
+  private async migrateIfOlder(): Promise<VaultUpgrade> {
+    const started = Date.now();
+    const { status, config } = await this.format();
+    if (status !== "older" || !config) {
+      const version = config?.version ?? CURRENT_VAULT_VERSION;
+      return { upgraded: false, from: version, to: version, changed: 0, notes: [] };
     }
-    if (vaultVersionStatus(config) !== "older") return;
+    const reads = this.github();
     const result = await (this.d.migrate ?? migrate)(reads, config, { dryRun: true, template: TEMPLATE });
-    if (!result.changes.length) return;
-    // Audited like any hosted write: as the migration actor, against the commit it was computed from.
-    const store = new AuditedStore({ reads, writer: this.writer, principal: MIGRATION, quotas: this.quotas });
-    try {
-      await store.apply(result.changes, migrationCommit(result.to));
-    } catch (err) {
-      if (err instanceof AuditError || err instanceof StoreConflictError) {
-        await logEvent({ route: "vault/migrate", vault: this.meta.vaultId, status: 503, code: "VAULT_MIGRATING", ms: Date.now() - started }, this.d.log).catch(() => undefined);
-        throw err instanceof AuditError ? migrationRefused() : migrating();
+    const done = (code?: string, status = 200) =>
+      logEvent({ route: "vault/upgrade", vault: this.meta.vaultId, status, ...(code ? { code } : {}), ms: Date.now() - started }, this.d.log).catch(() => undefined);
+    if (result.changes.length) {
+      // Audited like any hosted write: as the migration actor, against the commit it was computed from.
+      const store = new AuditedStore({ reads, writer: this.writer, principal: MIGRATION, quotas: this.quotas });
+      try {
+        await store.apply(result.changes, migrationCommit(result.to));
+      } catch (err) {
+        if (err instanceof AuditError) {
+          await done("VAULT_UPGRADE_REFUSED", 409);
+          throw upgradeRefused();
+        }
+        if (err instanceof StoreConflictError) {
+          await done("CONFLICT", 409);
+          throw upgradeRaced();
+        }
+        throw err;
       }
-      throw err;
     }
-    await logEvent({ route: "vault/migrate", vault: this.meta.vaultId, status: 200, ms: Date.now() - started }, this.d.log).catch(() => undefined);
-    // A run open across the migration asked about the old tree. Queued, not awaited: the relay's
-    // own steps wait for this migration, so waiting for them here would deadlock.
+    this.current = true;
+    await done();
+    // A run open across the upgrade asked about the old tree.
     const run = await this.runs.get();
-    if (run) void this.relay.abort(run.id).catch(() => undefined);
+    if (run) await this.relay.abort(run.id).catch(() => undefined);
+    return { upgraded: true, from: result.from, to: result.to, changed: result.changed.length, notes: result.notes };
   }
 
   private serviceOver(store: SizeGuarded): HippoService {
@@ -386,16 +414,25 @@ export class VaultRuntime {
     }
   }
 
-  /** The dashboard's API (`/dashboard/api/...`) for the vault's signed-in owner, who acts as the human. */
+  /**
+   * The dashboard's API (`/dashboard/api/...`) for the vault's signed-in owner, who acts as the human.
+   * An older vault still answers the session and the Upgrade button; everything else says VAULT_UPGRADE_NEEDED.
+   */
   async dashboard(request: Request, user: DashboardUser): Promise<Response> {
     const started = Date.now();
     try {
       await this.keepAlarm();
-      await this.ready();
+      await this.learnInbox();
+      const { status, config } = await this.format();
       const repo = this.meta.fullName;
       const url = `${(this.d.webUrl ?? "https://github.com").replace(/\/$/, "")}/${repo}`;
+      const vault = { kind: "github" as const, repo, branch: this.meta.branch, url };
       const human = await this.humanOf(user.login);
-      const source = serviceSource(this.service(), { mode: "worker", vault: { kind: "github", repo, branch: this.meta.branch, url } }, { curator: this.curator, ...(human ? { human } : {}) });
+      const upgradeVault = () => this.upgrade();
+      const source: DashboardSource =
+        status === "older" && config
+          ? awaitingUpgrade(config, { mode: "worker", vault }, human, upgradeVault)
+          : { ...serviceSource(this.service(), { mode: "worker", vault }, { curator: this.curator, ...(human ? { human } : {}) }), upgradeVault };
       const api = createDashboardApi({
         basePath: DASHBOARD_API,
         source: () => source,
@@ -448,6 +485,33 @@ export class VaultRuntime {
     const { run } = await this.relay.status();
     if (run) await this.d.storage.setAlarm?.(Date.parse(run.leaseUntil) + 1000);
   }
+}
+
+/**
+ * The dashboard over a vault in an older format: who's signed in, read from the config alone, and the
+ * Upgrade button. Every read answers VAULT_UPGRADE_NEEDED, which is what the UI's banner looks for.
+ */
+function awaitingUpgrade(config: HippoConfig, info: Pick<SourceInfo, "mode" | "vault">, human: string | undefined, upgradeVault: () => Promise<VaultUpgrade>): DashboardSource {
+  const refuse = async (): Promise<never> => {
+    throw upgradeNeeded();
+  };
+  return {
+    info: async () => ({
+      ...info,
+      name: config.name,
+      campaign: config.campaign,
+      human: config.human,
+      humans: config.humans.map((h) => h.id),
+      actor: { kind: "human", id: human ?? config.human },
+    }),
+    overview: refuse,
+    catalog: refuse,
+    entity: refuse,
+    graph: refuse,
+    chronicle: refuse,
+    search: refuse,
+    upgradeVault,
+  };
 }
 
 // ── The Durable Object's state ────────────────────────────────────────────────

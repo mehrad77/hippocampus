@@ -78,6 +78,7 @@ export type {
   SetupState,
   SetupStatus,
   Snippet,
+  VaultUpgrade,
 } from "@hippocampus/dashboard";
 
 // Shapes of hosted routes the shared contracts don't type yet (apps/worker/src/hosted). Optional

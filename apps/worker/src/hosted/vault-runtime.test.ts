@@ -379,7 +379,7 @@ describe("VaultRuntime: dashboard", () => {
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
       account: { status: "approved", admin: false },
-      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, party: true, introductions: true, curator: true, setup: "hosted" },
+      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, introductions: true, curator: true, upgrade: true, setup: "hosted" },
     });
 
     const r = await api("POST", "actions/remember", { text: "My residence card arrives next week." });
@@ -422,13 +422,39 @@ describe("VaultRuntime: dashboard humans", () => {
   });
 });
 
-describe("VaultRuntime: an older vault is migrated when first opened", () => {
+describe("VaultRuntime: an older vault waits for its owner's Upgrade", () => {
   const isMigration = (c: { message: string }) => c.message.startsWith("chore: migrate vault to format");
+  const upgrade = (api: Awaited<ReturnType<typeof setup>>["api"]) => api("POST", "actions/upgrade-vault", {});
 
-  it("commits the migration once, as the migration actor, leaving the inbox alone", async () => {
-    const { repo, api, logged } = await setup({ files: V1_FILES });
+  it("migrates nothing on read: data, MCP and the consent page answer VAULT_UPGRADE_NEEDED, the session still loads", async () => {
+    const { repo, api, connect, runtime, writes } = await setup({ files: V1_FILES });
     const overview = await api("GET", "overview");
-    expect(overview.status).toBe(200);
+    expect(overview.status).toBe(409);
+    expect(overview.body).toEqual({ code: "VAULT_UPGRADE_NEEDED", error: expect.stringContaining("dashboard") });
+    expect((await api("GET", "catalog")).body.code).toBe("VAULT_UPGRADE_NEEDED");
+    expect((await api("POST", "actions/remember", { text: "My residence card arrives next week." })).status).toBe(501);
+
+    const session = await api("GET", "session");
+    expect(session.status).toBe(200);
+    expect(session.body).toMatchObject({ mode: "worker", actor: { kind: "human", id: "player" }, capabilities: { upgrade: true, remember: false } });
+
+    const mcp = await runtime.mcp(new Request(`${ORIGIN}/mcp`, { method: "POST", headers: { "content-type": "application/json", accept: "application/json, text/event-stream" }, body: "{}" }), AGENT_KEY);
+    expect(mcp.status).toBe(409);
+    expect(await mcp.json()).toMatchObject({ code: "VAULT_UPGRADE_NEEDED" });
+    expect(await connect(AGENT_KEY).catch((e: unknown) => e)).toBeInstanceOf(Error);
+    await expect(runtime.party()).rejects.toMatchObject({ code: "VAULT_UPGRADE_NEEDED" });
+
+    expect(writes()).toBe(0);
+    expect(repo.log()).toHaveLength(1);
+  });
+
+  it("upgrades once when the owner clicks, as the migration actor, leaving the inbox alone", async () => {
+    const { repo, api, connect, logged } = await setup({ files: V1_FILES });
+    const r = await upgrade(api);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ upgraded: true, from: 1, to: CURRENT_VAULT_VERSION, notes: expect.any(Array) });
+    expect(r.body.changed).toBeGreaterThan(0);
+
     const log = repo.log();
     expect(log).toHaveLength(2);
     const [commit] = log;
@@ -444,23 +470,22 @@ describe("VaultRuntime: an older vault is migrated when first opened", () => {
     expect(files["quests/residence-permit.md"]).toBeUndefined();
     for (const [path, content] of Object.entries(V1_FILES)) if (path.startsWith("inbox/") || path.startsWith("disputes/")) expect(files[path]).toBe(content);
 
-    // Opened again: nothing left to migrate.
-    expect((await api("GET", "catalog")).status).toBe(200);
+    // Everything works now, and another click changes nothing.
+    expect((await api("GET", "overview")).status).toBe(200);
+    expect((await (await connect(AGENT_KEY)).call("onboard", { agent: "residency-agent" })).isError).toBeFalsy();
+    expect((await upgrade(api)).body).toMatchObject({ upgraded: false, from: CURRENT_VAULT_VERSION, to: CURRENT_VAULT_VERSION });
     expect(repo.log().filter(isMigration)).toHaveLength(1);
-    expect(logged.some((l) => l.includes('"route":"vault/migrate"') && l.includes('"status":200'))).toBe(true);
+    expect(logged.some((l) => l.includes('"route":"vault/upgrade"') && l.includes('"status":200'))).toBe(true);
   });
 
-  it("migrates once when the first requests arrive together", async () => {
-    const { repo, api, runtime, connect } = await setup({ files: V1_FILES });
-    const { call } = await connect(AGENT_KEY);
-    const [a, b, party, onboard] = await Promise.all([api("GET", "overview"), api("GET", "catalog"), runtime.party(), call("onboard", { agent: "residency-agent" })]);
-    expect([a.status, b.status]).toEqual([200, 200]);
-    expect(party.map((p) => p.id)).toEqual(["game-master", "residency-agent"]);
-    expect(onboard.isError).toBeFalsy();
+  it("upgrades once when clicks arrive together", async () => {
+    const { repo, api } = await setup({ files: V1_FILES });
+    const results = await Promise.all([upgrade(api), upgrade(api), upgrade(api)]);
+    expect(results.map((r) => r.status)).toEqual([200, 200, 200]);
     expect(repo.log().filter(isMigration)).toHaveLength(1);
   });
 
-  it("answers 503 VAULT_MIGRATING when someone pushed meanwhile, and migrates on the next request", async () => {
+  it("answers 409 CONFLICT when someone pushed meanwhile, and upgrades on the next click", async () => {
     let pushed = false;
     const ctx: { repo?: Awaited<ReturnType<typeof setup>>["repo"] } = {};
     const racing: typeof migrate = async (store, config, opts) => {
@@ -473,38 +498,37 @@ describe("VaultRuntime: an older vault is migrated when first opened", () => {
     };
     const { repo, api, logged } = await setup({ files: V1_FILES, migrate: racing });
     ctx.repo = repo;
-    const refused = await api("GET", "overview");
-    expect(refused.status).toBe(503);
-    expect(refused.body.code).toBe("VAULT_MIGRATING");
+    const refused = await upgrade(api);
+    expect(refused.status).toBe(409);
+    expect(refused.body.code).toBe("CONFLICT");
     expect(repo.log().filter(isMigration)).toHaveLength(0);
-    expect(logged).toContainEqual(expect.stringContaining('"code":"VAULT_MIGRATING"'));
+    expect(logged).toContainEqual(expect.stringContaining('"code":"CONFLICT"'));
+    expect((await api("GET", "overview")).body.code).toBe("VAULT_UPGRADE_NEEDED");
 
-    expect((await api("GET", "overview")).status).toBe(200);
+    expect((await upgrade(api)).status).toBe(200);
     expect(repo.log().filter(isMigration)).toHaveLength(1);
     expect(repo.files()["_hippo/config.yaml"]).toContain("# edited on GitHub");
   });
 
-  it("refuses a migration the audit doesn't allow, with 503 VAULT_MIGRATING and nothing but the code in the log", async () => {
+  it("refuses an upgrade the audit doesn't allow with the `hippo migrate` hint, and nothing but the code in the log", async () => {
     const forged: typeof migrate = async (store, config, opts) => {
       const result = await migrate(store, config, opts);
       return { ...result, changes: [...result.changes, { path: "inbox/game-master/2026-09-27T100000-arrival.md", content: "---\nagent: game-master\n---\nRewritten.\n" }] };
     };
-    const { repo, api, connect, logged, writes } = await setup({ files: V1_FILES, migrate: forged });
-    const refused = await api("GET", "overview");
-    expect(refused.status).toBe(503);
-    expect(refused.body).toMatchObject({ code: "VAULT_MIGRATING" });
+    const { repo, api, logged, writes } = await setup({ files: V1_FILES, migrate: forged });
+    const refused = await upgrade(api);
+    expect(refused.status).toBe(409);
+    expect(refused.body).toMatchObject({ code: "VAULT_UPGRADE_REFUSED" });
     expect(JSON.stringify(refused.body)).toContain("hippo migrate");
     expect(JSON.stringify(refused.body)).not.toContain("inbox/");
-    const res = await connect(AGENT_KEY).catch((e: unknown) => e);
-    expect(res).toBeInstanceOf(Error);
     expect(writes()).toBe(0);
     expect(repo.log()).toHaveLength(1);
-    const lines = logged.filter((l) => l.includes("vault/migrate"));
+    const lines = logged.filter((l) => l.includes("vault/upgrade"));
     expect(lines.length).toBeGreaterThan(0);
     for (const l of lines) expect(Object.keys(JSON.parse(l)).sort()).toEqual(["code", "ms", "route", "status", "vault"]);
   });
 
-  it("aborts a sleep run that was open across the migration", async () => {
+  it("aborts a sleep run that was open across the upgrade", async () => {
     const { repo, connect, deps, storage, meta } = await setup();
     await (await connect(bound("home-finder"))).call("remember", { text: "New landlord is João Silva." });
     const step = (await (await connect(CURATOR_KEY)).call("sleep_start", { model: "test-model" })).json();
@@ -514,8 +538,11 @@ describe("VaultRuntime: an older vault is migrated when first opened", () => {
     const now = repo.files();
     await repo.push({ ...Object.fromEntries(Object.keys(now).map((p) => [p, null])), ...V1_FILES }, "main", "chore: restore\n\nHippo-Actor: human");
     const restarted = new VaultRuntime({ ...deps, storage, meta });
-    const res = await restarted.dashboard(new Request(`${ORIGIN}/dashboard/api/overview`), OWNER);
-    expect(res.status).toBe(200);
+    const post = (path: string) => restarted.dashboard(new Request(`${ORIGIN}/dashboard/api/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), OWNER);
+    expect((await restarted.dashboard(new Request(`${ORIGIN}/dashboard/api/overview`), OWNER)).status).toBe(409);
+    expect((await restarted.relay.status()).run).toBeDefined();
+
+    expect((await post("actions/upgrade-vault")).status).toBe(200);
     const { run, history } = await restarted.relay.status();
     expect(run).toBeUndefined();
     expect(history[0]).toMatchObject({ id: step.run, outcome: "aborted" });

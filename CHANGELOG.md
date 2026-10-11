@@ -70,7 +70,7 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 ### Changed
 - Quests are goals (`goals/`) and campaigns are arcs (`arcs/`). `update_quest`, the `quest` scope and `/actions/quest` keep working as aliases, and keys store both scopes so a rollback keeps access.
 - The curator's prompts are neutral and quote each type's description and examples; the Handbook drops the campaign framing and lists the vault's own types and kinds.
-- `hippo migrate` commits exactly the paths it changed in a git vault, as `Hippo-Actor: migration`; the hosted app migrates a vault the first time it opens it.
+- `hippo migrate` commits exactly the paths it changed in a git vault, as `Hippo-Actor: migration`; the hosted app never migrates on its own: an older vault answers `VAULT_UPGRADE_NEEDED` to agents until its owner clicks Upgrade on the dashboard, which makes the same audited commit.
 - Contact cadence along an `extends:` chain takes the nearest value (a colleague's `1m` over the stranger's `none` it extends); mixins and groups still mesh, with any `none` winning.
 - The search index schema is v3; existing indexes rebuild themselves.
 - Agents are told to use the MCP tools rather than edit vault files. The handbook documents `remember` and `introduce`; the inbox file format remains for local tools without MCP.

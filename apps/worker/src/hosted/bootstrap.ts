@@ -40,7 +40,7 @@ export const bootstrapCommit = (message: string): CommitMeta => ({
 });
 
 /**
- * The commit that brings a vault to format `version`, made when the hosted app first opens an older
+ * The commit that brings a vault to format `version`, made when the owner clicks Upgrade on the hosted dashboard for an older
  * vault. No `[skip ci]`: the vault's own CI validates the migrated tree.
  */
 export const migrationCommit = (version: number): CommitMeta => ({
