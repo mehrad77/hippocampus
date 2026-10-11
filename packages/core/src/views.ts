@@ -423,8 +423,10 @@ const DAY = 86400_000;
 const DATEISH = /(date|deadline|expir|appointment|due|until|start|end)/;
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}/;
 
-export function shown(v: FactValue | undefined | null, opts: { confidential?: boolean } = {}): Shown {
+export function shown(v: FactValue | undefined | null, opts: { confidential?: boolean; reveal?: boolean } = {}): Shown {
   if (isSecretRef(v)) return { value: null, secret: true };
+  // Revealed to the human, a confidential value still says it is one.
+  if (opts.confidential && opts.reveal) return { value: v === undefined || v === null ? null : String(v), secret: false, confidential: true };
   if (opts.confidential) return { value: null, secret: false, confidential: true };
   return { value: v === undefined || v === null ? null : String(v), secret: false };
 }
@@ -437,11 +439,24 @@ export function isConfidentialField(vault: Vault, e: Entity, field: string, f?: 
 }
 
 /**
- * Whether `caller` may see confidential values of `e` (`field`, a `facts:` key): only a caller bound
- * to an identity (a bound key, an OAuth grant, local `--agent`) with authority there, or a human.
+ * Whether the agent `caller` may see confidential values of `e` (`field`, a `facts:` key): only an
+ * agent bound to an identity (a bound key, an OAuth grant, local `--agent`) with lane authority there.
+ * A caller naming a human is refused: a bound key can't claim to be the human. The human's own reads
+ * (the dashboard) say so explicitly with `ReadAs.human`.
  */
 export function seesConfidential(vault: Vault, caller: string | undefined, e: Entity, field?: string): boolean {
-  return !!caller && vault.authorityOf(caller, e, field) !== "none";
+  return !!caller && !vault.isHuman(caller) && vault.authorityOf(caller, e, field) === "authority";
+}
+
+/**
+ * Who reads a view. `human` is the vault's own human reading through their dashboard: they see
+ * confidential values. Everyone else sees them masked (agents see them only through `seesConfidential`).
+ */
+export interface ReadAs {
+  /** The agent the connection is bound to; absent for unbound callers, who see confidential values masked. */
+  caller?: string;
+  /** The vault's human reads (the dashboard's own backend, never an agent's connection). */
+  human?: boolean;
 }
 
 export function daysBetween(from: string, to: string): number {
@@ -480,12 +495,15 @@ export interface ViewContext {
   today: string;
   staleBefore: string;
   rel: RelationIndex;
+  /** The human reads: confidential values are shown (secrets never are). */
+  human?: boolean;
 }
 
-export function viewContext(vault: Vault): ViewContext {
+export function viewContext(vault: Vault, read: ReadAs = {}): ViewContext {
   const now = vault.nowIso();
   return {
     vault,
+    ...(read.human ? { human: true } : {}),
     now,
     today: localParts(now, vault.config.timezone).date,
     staleBefore: new Date(Date.parse(now) - vault.config.curator.stale_after_days * DAY).toISOString(),
@@ -561,8 +579,9 @@ export function goalCard(ctx: ViewContext, q: Entity): GoalCard {
 export const questCard = goalCard;
 
 export function factDetail(ctx: ViewContext, e: Entity, field: string, f: Fact): FactDetail {
-  const dispute = ctx.vault.disputes.get(ctx.vault.disputeSlug(e.slug, field));
+  const dispute = ctx.vault.disputeFor(e.slug, field);
   const confidential = isConfidentialField(ctx.vault, e, field, f);
+  const reveal = !!ctx.human;
   const { field: name, scope } = parseFactKey(field);
   const def = ctx.vault.schema.fieldDef(e.fm.type, field);
   return {
@@ -573,7 +592,7 @@ export function factDetail(ctx: ViewContext, e: Entity, field: string, f: Fact):
     ...(f.valid_until ? { validUntil: f.valid_until } : {}),
     ...(f.confidence !== undefined ? { confidence: f.confidence } : {}),
     ...(def?.human_only ? { humanOnly: true } : {}),
-    ...shown(f.value, { confidential }),
+    ...shown(f.value, { confidential, reveal }),
     status: f.status,
     by: f.by ?? ctx.vault.config.human,
     byHuman: ctx.vault.isHuman(f.by),
@@ -583,14 +602,16 @@ export function factDetail(ctx: ViewContext, e: Entity, field: string, f: Fact):
     src: f.src,
     seenBy: f.seen_by ?? [],
     dispute: dispute?.fm.status === "open" ? dispute.slug : undefined,
-    was: (f.was ?? []).map((w) => ({ ...shown(w.value, { confidential }), by: w.by, at: w.at, ...(w.why ? { why: w.why } : {}) })),
+    was: (f.was ?? []).map((w) => ({ ...shown(w.value, { confidential, reveal }), by: w.by, at: w.at, ...(w.why ? { why: w.why } : {}) })),
   };
 }
 
 export function disputeView(ctx: ViewContext, d: Dispute): DisputeView {
   const e = ctx.vault.resolve(d.fm.entity);
   const current = e?.fm.facts[d.fm.field];
-  const confidential = !!e && isConfidentialField(ctx.vault, e, d.fm.field, current);
+  // Any confidential claim (or a confidential fact) masks every value: showing the others would tell which one it is.
+  const confidential = ctx.vault.disputeHidden(d, e);
+  const reveal = !!ctx.human;
   return {
     slug: d.slug,
     kind: d.fm.kind ?? "conflict",
@@ -603,7 +624,7 @@ export function disputeView(ctx: ViewContext, d: Dispute): DisputeView {
     opened: d.fm.opened,
     resolved: d.fm.resolved,
     claims: d.fm.claims.map((c) => ({
-      ...shown(c.value, { confidential }),
+      ...shown(c.value, { confidential, reveal }),
       by: c.by ?? ctx.vault.config.human,
       byHuman: ctx.vault.isHuman(c.by),
       authority: e ? shownAuthority(ctx.vault.authorityOf(c.by, e, d.fm.field)) : "none",
@@ -611,7 +632,7 @@ export function disputeView(ctx: ViewContext, d: Dispute): DisputeView {
       src: c.src,
     })),
     current: e && current ? factDetail(ctx, e, d.fm.field, current) : undefined,
-    ruling: d.fm.ruling === undefined || d.fm.ruling === "" ? undefined : shown(d.fm.ruling, { confidential }),
+    ruling: d.fm.ruling === undefined || d.fm.ruling === "" ? undefined : shown(d.fm.ruling, { confidential, reveal }),
     secretField: e ? isSecretField(ctx.vault, e, d.fm.field) : false,
   };
 }
@@ -685,7 +706,7 @@ export function findings(ctx: ViewContext): Pick<Attention, "disputes" | "rumors
   const stale: FactFinding[] = [];
   for (const e of ctx.vault.entities.values()) {
     for (const [field, f] of Object.entries(e.fm.facts)) {
-      const finding = { ref: refOf(e), field, ...shown(f.value, { confidential: isConfidentialField(ctx.vault, e, field, f) }), by: f.by ?? ctx.vault.config.human, at: f.at };
+      const finding = { ref: refOf(e), field, ...shown(f.value, { confidential: isConfidentialField(ctx.vault, e, field, f), reveal: !!ctx.human }), by: f.by ?? ctx.vault.config.human, at: f.at };
       if (f.status === "rumor") rumors.push(finding);
       if (f.status === "canon" && f.at && f.at < ctx.staleBefore) stale.push(finding);
     }
@@ -888,8 +909,8 @@ export function introductions(vault: Vault): IntroductionView[] {
 
 // ── Views ────────────────────────────────────────────────────────────────────────
 
-export async function overview(vault: Vault): Promise<Overview> {
-  const ctx = viewContext(vault);
+export async function overview(vault: Vault, read: ReadAs = {}): Promise<Overview> {
+  const ctx = viewContext(vault, read);
   const { config } = vault;
   const lastSleep = await lastSleepAt(vault);
   const from30 = addDays(ctx.today, -29);
@@ -957,8 +978,8 @@ export async function overview(vault: Vault): Promise<Overview> {
   };
 }
 
-export function catalog(vault: Vault): Catalog {
-  const ctx = viewContext(vault);
+export function catalog(vault: Vault, read: ReadAs = {}): Catalog {
+  const ctx = viewContext(vault, read);
   const entities = [...vault.entities.values()].map((e) => entityCard(ctx, e)).sort((a, b) => a.title.localeCompare(b.title));
   return {
     name: vault.config.name,
@@ -973,8 +994,8 @@ export function catalog(vault: Vault): Catalog {
   };
 }
 
-export async function entityDetail(vault: Vault, e: Entity): Promise<EntityDetail> {
-  const ctx = viewContext(vault);
+export async function entityDetail(vault: Vault, e: Entity, read: ReadAs = {}): Promise<EntityDetail> {
+  const ctx = viewContext(vault, read);
   const lastSleep = await lastSleepAt(vault);
   const chronicle = await readChronicle(vault, addDays(ctx.today, -89), ctx.today);
   const isParty = vault.schema.has(e.fm.type, "actor");
@@ -1020,8 +1041,8 @@ export async function entityDetail(vault: Vault, e: Entity): Promise<EntityDetai
   };
 }
 
-export function graph(vault: Vault): Graph {
-  const ctx = viewContext(vault);
+export function graph(vault: Vault, read: ReadAs = {}): Graph {
+  const ctx = viewContext(vault, read);
   const nodes = [...vault.entities.values()].map((e) => {
     const c = entityCard(ctx, e);
     return { slug: c.slug, title: c.title, type: c.type, tags: c.tags, degree: c.degree, status: c.status };
@@ -1037,7 +1058,8 @@ export function graph(vault: Vault): Graph {
 }
 
 /** One month (`YYYY-MM`) of the chronicle, newest day first; `latest` (or no month) picks the newest month on record. */
-export async function chroniclePage(vault: Vault, month?: string): Promise<ChroniclePage> {
+/** `read` is accepted like every view's; the chronicle holds no confidential value to reveal (the curator redacts it). */
+export async function chroniclePage(vault: Vault, month?: string, _read: ReadAs = {}): Promise<ChroniclePage> {
   const days = await chronicleDays(vault);
   const months = [...new Set(days.map(([d]) => d.slice(0, 7)))].sort().reverse();
   const pick = month && /^\d{4}-\d{2}$/.test(month) ? month : (months[0] ?? localParts(vault.nowIso(), vault.config.timezone).date.slice(0, 7));

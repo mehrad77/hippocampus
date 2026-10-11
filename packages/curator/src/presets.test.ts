@@ -25,7 +25,7 @@ const summaries = (llm: ScriptedLLM) => llm.respond("summary", () => ({ summary:
 
 describe("people preset", () => {
   const notes = {
-    "characters/ana-souza.md": '---\ntype: character\ntitle: Ana Souza\nextends: "[[colleague]]"\nstats:\n  last_contact: 2026-08-01\n---\n\n## Notes\n',
+    "characters/case-officer.md": '---\ntype: character\ntitle: Case Officer\nextends: "[[colleague]]"\nstats:\n  last_contact: 2026-08-01\n---\n\n## Notes\n',
     "characters/joao-silva.md": '---\ntype: character\ntitle: João Silva\nextends: "[[landlord]]"\n---\n\n## Notes\n',
   };
 
@@ -42,24 +42,24 @@ describe("people preset", () => {
     expect((await fm(store, "characters/joao-silva.md")).stats).toMatchObject({ last_contact: "2026-09-27", counts: { rollup: 1, "rollup/whatsapp": 1 } });
     expect(await store.read("chronicle/2026/09/2026-09-27.md")).toContain("> whatsapp with [[joao-silva]] · pt · 4 · 3 · them");
 
-    // Ana is a colleague: the archetype's 1m cadence (over the stranger's none) makes her overdue.
+    // The case officer is a colleague: the archetype's 1m cadence (over the stranger's none) makes her overdue.
     // João is a landlord (cadence none): never overdue, however long it's been.
     const service = new HippoService(store, { now });
     const { overdue } = await service.briefing();
-    expect(overdue.map((o) => [o.ref, o.cadence])).toEqual([["[[ana-souza]]", "1m"]]);
-    const brief = await service.personBrief("ana-souza");
+    expect(overdue.map((o) => [o.ref, o.cadence])).toEqual([["[[case-officer]]", "1m"]]);
+    const brief = await service.personBrief("case-officer");
     expect(brief.guidelines.inherited.map((g) => g.source)).toEqual(["colleague", "colleague", "stranger", "stranger"]);
 
     // Stakes are the human's: an agent's suggestion becomes a proposal. A guideline can hold for one language.
     await store.write(...episode("2026-09-27T11:00:00Z", "observation", "For recruiters, the real stake is the relocation package.", "about: [recruiter]\n"));
-    await store.write(...episode("2026-09-27T12:00:00Z", "moment", "Ana switched to Persian; she writes Finglish, casual and short.", 'about: [ana-souza]\ndata:\n  with: "[[ana-souza]]"\n  trigger: tone_shift\n'));
+    await store.write(...episode("2026-09-27T12:00:00Z", "moment", "The case officer switched to English; she writes casual and short.", 'about: [case-officer]\ndata:\n  with: "[[case-officer]]"\n  trigger: tone_shift\n'));
     const llm = summaries(
       new ScriptedLLM()
         .push("mentions", nothing, nothing)
         .push(
           "claims",
           { ...noClaims, facts: [{ entity: "recruiter", field: "stakes", value: "The relocation package", secret: false }] },
-          { ...noClaims, guidelines: [{ entity: "ana-souza", rule: "Write in Finglish, casual and short", scope: "lang:fa" }] },
+          { ...noClaims, guidelines: [{ entity: "case-officer", rule: "Write in English, casual and short", scope: "lang:en" }] },
         ),
     );
     const second = await sleep({ store, llm, now });
@@ -67,10 +67,10 @@ describe("people preset", () => {
     expect(second.consolidated[0]!.proposals).toEqual(["recruiter.stakes"]);
     expect((await fm(store, "archetypes/recruiter.md")).facts.stakes.value).toBe("A job offer; salary and start date are the human's call.");
     expect(await fm(store, "disputes/proposal-recruiter-stakes.md")).toMatchObject({ kind: "proposal", state: "pending", field: "stakes" });
-    const ana = await fm(store, "characters/ana-souza.md");
-    expect(ana.guidelines).toEqual([expect.objectContaining({ rule: "Write in Finglish, casual and short", scope: "lang:fa", status: "rumor" })]);
-    // The moment counts as contact, so Ana isn't overdue any more.
-    expect(ana.stats).toMatchObject({ last_contact: "2026-09-27", counts: { moment: 1 } });
+    const officer = await fm(store, "characters/case-officer.md");
+    expect(officer.guidelines).toEqual([expect.objectContaining({ rule: "Write in English, casual and short", scope: "lang:en", status: "rumor" })]);
+    // The moment counts as contact, so the case officer isn't overdue any more.
+    expect(officer.stats).toMatchObject({ last_contact: "2026-09-27", counts: { moment: 1 } });
     expect((await new HippoService(store, { now }).briefing()).overdue).toEqual([]);
   });
 });
@@ -122,7 +122,7 @@ describe("student preset", () => {
     const store = await vault("student", {
       "courses/econ-101.md": "---\ntype: course\ntitle: Introduction to Economics\nfacts:\n  code: HU-ECO-101\n  credits: 6\n---\n\n## Notes\n",
       "assignments/econ-problem-set.md":
-        '---\ntype: assignment\ntitle: Econ problem set\nstatus: assigned\ncounterparty: "[[econ-101]]"\ndue: 2026-09-28\nrepeat: { every: 1w }\n---\n%% hippo:begin objectives %%\n- [x] Read chapter 2\n%% hippo:end objectives %%\n\n## Notes\n',
+        '---\ntype: assignment\ntitle: Econ problem set\nstatus: assigned\nowner: "[[home-finder]]"\ncounterparty: "[[econ-101]]"\ndue: 2026-09-28\nrepeat: { every: 1w }\n---\n%% hippo:begin objectives %%\n- [x] Read chapter 2\n%% hippo:end objectives %%\n\n## Notes\n',
     });
     await store.write(...episode("2026-09-27T10:00:00Z", "observation", "Submitted this week's Econ problem set.", "about: [econ-problem-set]\n"));
     const llm = summaries(new ScriptedLLM().push("mentions", nothing).push("claims", { ...noClaims, goals: [{ goal: "econ-problem-set", status: "submitted", completed: [], added: [] }] }));
@@ -137,7 +137,7 @@ describe("student preset", () => {
 describe("household preset", () => {
   it("brings a paid bill back with next month's due date", async () => {
     const store = await vault("household", {
-      "bills/rent.md": "---\ntype: bill\ntitle: Rent\nstatus: unpaid\ndue: 2026-10-01\nrepeat: { every: 1m }\nfacts:\n  amount: 1200\n---\n\n## Notes\n",
+      "bills/rent.md": "---\ntype: bill\ntitle: Rent\ntags: [housing]\nstatus: unpaid\ndue: 2026-10-01\nrepeat: { every: 1m }\nfacts:\n  amount: 1200\n---\n\n## Notes\n",
     });
     await store.write(...episode("2026-09-27T10:00:00Z", "fact", "Paid October's rent.", "about: [rent]\n"));
     const llm = summaries(new ScriptedLLM().push("mentions", nothing).push("claims", { ...noClaims, goals: [{ goal: "rent", status: "paid", completed: [], added: [] }] }));

@@ -178,8 +178,31 @@ function ancestry(name: string, raw: Map<string, RawType>, warn: (w: string) => 
   return chain;
 }
 
+/**
+ * Why a type's folder can't hold notes, or undefined when it can. A type folder outside the vault, in
+ * the tool's own `_hippo/` or a dot folder, or on the inbox, chronicle, disputes or secrets would let
+ * notes (and the curator's writes to them) reach places the audit treats as something else.
+ */
+export function badTypeFolder(folder: string, config: HippoConfig): string | undefined {
+  const f = folder.replace(/\/+$/, "");
+  const segs = f.split("/");
+  if (!f || f.startsWith("/") || /^[A-Za-z]:/.test(f) || f.includes("\\")) return "isn't a relative path";
+  if (segs.some((s) => s === ".." || s === "." || s === "")) return "isn't a plain path inside the vault";
+  if (segs[0]!.startsWith(".") || segs[0] === "_hippo" || segs[0]!.startsWith("_hippo")) return "is inside the tool's own or a hidden folder";
+  const overlaps = (a: string, b: string) => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`);
+  const { inbox, chronicle, disputes, secrets } = config.folders;
+  const clash = Object.entries({ inbox, chronicle, disputes, secrets, schema: schemaFolder(config) }).find(([, g]) => g && overlaps(f, g.replace(/\/+$/, "")));
+  return clash ? `overlaps the ${clash[0]} folder` : undefined;
+}
+
 function resolveTypes(config: HippoConfig, notes: Map<string, SourceNote>, warn: (w: string) => void): ResolvedType[] {
   const raw = collectTypes(config, notes, warn);
+  for (const [name, { def }] of raw) {
+    const why = badTypeFolder(def.folder ?? name, config);
+    if (!why) continue;
+    warn(`type "${name}": folder "${def.folder ?? name}" ${why}; skipped the type`);
+    raw.delete(name);
+  }
   return [...raw].map(([name, { def, examples }]) => {
     // Farthest ancestor first, so nearer definitions overwrite.
     const lineage = [...ancestry(name, raw, warn)].reverse().map((r) => r.def);

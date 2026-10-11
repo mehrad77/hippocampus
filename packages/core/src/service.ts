@@ -41,6 +41,7 @@ import {
   type EntityDetail,
   type Graph,
   type Overview,
+  type ReadAs,
   type SearchResult,
   type Shown,
 } from "./views.ts";
@@ -62,11 +63,6 @@ export interface FactView {
   confidential?: true;
 }
 
-/** Who is reading. Confidential values are shown only to a bound caller (`caller`) with authority over them. */
-export interface ReadAs {
-  /** The agent the connection is bound to; absent for unbound callers, who see confidential values masked. */
-  caller?: string;
-}
 
 export interface GuidelinesView {
   /** The human's own guidelines: the prose under the note's `## Guidelines` heading. */
@@ -154,7 +150,12 @@ export interface EpisodeBrief {
 
 export interface ChronicleEntry extends EpisodeBrief {}
 
-// Confidential values stay masked unless the caller is bound and has authority over them.
+/** Whether this reader sees `field`'s confidential value: the human (dashboard), or a bound agent with authority over it. */
+function sees(vault: Vault, read: ReadAs, e: Entity, field: string): boolean {
+  return !!read.human || seesConfidential(vault, read.caller, e, field);
+}
+
+// Confidential values stay masked unless the human reads, or the caller is a bound agent with authority over them.
 function factViews(vault: Vault, e: Entity, opts: ReadAs & { limit?: number } = {}): FactView[] {
   return Object.entries(e.fm.facts)
     .slice(0, opts.limit ?? Infinity)
@@ -163,7 +164,7 @@ function factViews(vault: Vault, e: Entity, opts: ReadAs & { limit?: number } = 
       const { scope } = parseFactKey(field);
       return {
         field,
-        value: formatValue(f.value, { confidential: confidential && !seesConfidential(vault, opts.caller, e, field) }),
+        value: formatValue(f.value, { confidential: confidential && !sees(vault, opts, e, field) }),
         status: f.status,
         by: f.by ?? vault.config.human,
         at: f.at,
@@ -332,7 +333,7 @@ export class HippoService {
       .map((h) => vault.episodes.find((ep) => ep.id === h.id)!)
       .filter(Boolean)
       .map((ep) => ({ id: ep.id, agent: ep.agent, kind: ep.kind, at: ep.at, text: truncate(ep.text, 300) }));
-    return { entities: entities.map((e) => brief(vault, e, { caller: opts.caller })), related: related.slice(0, 10), pending: recent };
+    return { entities: entities.map((e) => brief(vault, e, { caller: opts.caller, human: opts.human })), related: related.slice(0, 10), pending: recent };
   }
 
   async get(ref: string, opts: ReadAs = {}): Promise<EntityView> {
@@ -348,7 +349,7 @@ export class HippoService {
     const inherits = [...inheritance.chain, ...inheritance.mixins].map((x) => link(x.slug));
     const cadence = cadenceOf(vault, e, this.today(vault));
     return {
-      ...brief(vault, e, { caller: opts.caller, limit: Infinity }),
+      ...brief(vault, e, { caller: opts.caller, human: opts.human, limit: Infinity }),
       summary: getSummary(e),
       path: e.path,
       aliases: e.fm.aliases,
@@ -416,7 +417,7 @@ export class HippoService {
       .filter((d) => vault.resolve(d.fm.entity)?.slug === e.slug || (d.fm.targets ?? []).some((t) => vault.resolve(t)?.slug === e.slug))
       .map((d) => ({ ref: link(d.slug), kind: d.fm.kind ?? ("conflict" as const), field: d.fm.field, ...(d.fm.state ? { state: d.fm.state } : {}) }));
     const cadence = cadenceOf(vault, e, today);
-    const base = brief(vault, e, { caller: opts.caller, limit: Infinity });
+    const base = brief(vault, e, { caller: opts.caller, human: opts.human, limit: Infinity });
     return {
       ...base,
       summary: getSummary(e),
@@ -470,7 +471,7 @@ export class HippoService {
     const answers: (FactView & { entity: string; score: number })[] = [];
     for (const hit of await index.search(question, { kind: "entity", limit: 5 })) {
       const e = vault.entities.get(hit.id)!;
-      for (const f of factViews(vault, e, { caller: opts.caller })) {
+      for (const f of factViews(vault, e, { caller: opts.caller, human: opts.human })) {
         const hay = fold(`${f.field.replace(/_/g, " ")} ${f.value}`);
         const overlap = terms.filter((t) => hay.includes(t)).length;
         answers.push({ ...f, entity: link(e.slug), score: hit.score * (1 + overlap) });
@@ -484,7 +485,8 @@ export class HippoService {
       .filter((d) => entities.has(unwrapLink(d.fm.entity)))
       .map((d) => {
         const e = vault.resolve(d.fm.entity);
-        const confidential = !!e && isConfidentialField(vault, e, d.fm.field, e.fm.facts[d.fm.field]) && !seesConfidential(vault, opts.caller, e, d.fm.field);
+        // A confidential claim masks the whole dispute, as the fact's own flag does.
+        const confidential = vault.disputeHidden(d, e) && !(e && sees(vault, opts, e, d.fm.field));
         return { ref: link(d.slug), entity: d.fm.entity, field: d.fm.field, claims: d.fm.claims.map((c) => `${formatValue(c.value, { confidential })} (${c.by ?? "human"})`) };
       });
     return { facts: top, disputes, pending_inbox: vault.episodes.length };
@@ -550,33 +552,35 @@ export class HippoService {
 
   // ── Human views and actions (the dashboard) ──────────────────────────────────
 
-  async overview(): Promise<Overview> {
-    return overview(await this.vault());
+  /** The dashboard's overview; `human` reveals confidential values to the vault's own human. */
+  async overview(opts: ReadAs = {}): Promise<Overview> {
+    return overview(await this.vault(), opts);
   }
 
-  async catalog(): Promise<Catalog> {
-    return catalog(await this.vault());
+  async catalog(opts: ReadAs = {}): Promise<Catalog> {
+    return catalog(await this.vault(), opts);
   }
 
-  async graph(): Promise<Graph> {
-    return graph(await this.vault());
+  async graph(opts: ReadAs = {}): Promise<Graph> {
+    return graph(await this.vault(), opts);
   }
 
-  async chronicle(month?: string): Promise<ChroniclePage> {
-    return chroniclePage(await this.vault(), month);
+  async chronicle(month?: string, opts: ReadAs = {}): Promise<ChroniclePage> {
+    return chroniclePage(await this.vault(), month, opts);
   }
 
-  async entityDetail(ref: string): Promise<EntityDetail> {
+  /** One note for the dashboard; `human` reveals confidential values to the vault's own human. */
+  async entityDetail(ref: string, opts: ReadAs = {}): Promise<EntityDetail> {
     const vault = await this.vault();
     const e = vault.resolve(ref);
     if (!e) throw new VaultError(`no entity "${ref}"${await this.suggest(vault, ref)}`);
-    return entityDetail(vault, e);
+    return entityDetail(vault, e, opts);
   }
 
-  async search(query: string, opts: { limit?: number } = {}): Promise<SearchResult> {
+  async search(query: string, opts: { limit?: number } & ReadAs = {}): Promise<SearchResult> {
     const vault = await this.vault();
     const index = await this.searcher(vault);
-    const ctx = viewContext(vault);
+    const ctx = viewContext(vault, opts);
     const entities = (await index.search(query, { kind: "entity", limit: opts.limit ?? 8 })).map((h) => vault.entities.get(h.id)!).filter(Boolean);
     const seen = new Set(entities.map((e) => e.slug));
     const related: SearchResult["related"] = [];
@@ -596,11 +600,13 @@ export class HippoService {
   }
 
   /**
-   * The human settles a dispute: pick one of the claims, apply a ruling already written in Obsidian
-   * (`pending`), or give a new value. It becomes canon right away, exactly as the next sleep would.
+   * A human settles a dispute: pick one of the claims, apply a ruling already written in Obsidian
+   * (`pending`), or give a new value. It becomes canon right away, by that human (`as`, default the
+   * primary one), exactly as the next sleep would.
    */
-  async rule(dispute: string, choice: { claim?: number; value?: string; pending?: boolean }, opts: { via?: string } = {}) {
+  async rule(dispute: string, choice: { claim?: number; value?: string; pending?: boolean }, opts: { as?: string; via?: string } = {}) {
     return this.mutate((vault) => {
+      const by = humanOf(vault, { asHuman: opts.as || true })!;
       const slug = unwrapLink(dispute);
       const d = vault.disputes.get(slug);
       if (!d || d.fm.status !== "open") throw new VaultError(`no open dispute "${dispute}"`);
@@ -621,10 +627,13 @@ export class HippoService {
       } else {
         throw new VaultError("pick a claim or give a value");
       }
-      applyRuling(vault, d, value);
+      const hidden = vault.disputeHidden(d, entity);
+      applyRuling(vault, d, value, by);
       vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
-      const result: { dispute: string; entity: string; field: string } & Shown = { dispute: slug, entity: entity.slug, field: d.fm.field, ...shown(value) };
-      return { message: signed(`rule(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): ${entity.slug}.${d.fm.field} = ${result.secret ? "🔒" : result.value}`), result };
+      const confidential = hidden || isConfidentialField(vault, entity, d.fm.field, entity.fm.facts[d.fm.field]);
+      const result: { dispute: string; entity: string; field: string } & Shown = { dispute: slug, entity: entity.slug, field: d.fm.field, ...shown(value, { confidential }) };
+      // Neither a secret nor a confidential value goes into the commit message.
+      return { message: signed(`rule(${by}${opts.via ? ` via ${opts.via}` : ""}): ${entity.slug}.${d.fm.field} = ${result.secret ? "🔒" : result.confidential ? "◐" : result.value}`), result };
     });
   }
 

@@ -111,15 +111,15 @@ Types `extend` other types (fields, capabilities, statuses and template carry ov
 ```markdown
 ---
 type: character
-title: Ana Souza
-aliases: [Ana]
+title: Case Officer
+aliases: [the officer]
 extends: "[[colleague]]"
 relations:
   - { rel: works_at, target: "[[harbor-university]]", role: lecturer }
 facts:
   employer: { value: Harbor University, status: canon, by: campus-agent, at: 2026-09-26T11:00:00Z, src: [ep-01J9…] }
-  greeting@lang:pt: { value: "Olá Ana", status: rumor, by: home-finder, seen_by: [home-finder] }
-  email: { value: ana@example.org, status: canon }      # identity key: confidential
+  greeting@lang:pt: { value: "Bom dia", status: rumor, by: home-finder, seen_by: [home-finder] }
+  email: { value: officer@lisbon.example, status: canon }# identity key: confidential
 guidelines:
   - { rule: Write in Portuguese, scope: "lang:pt", status: canon }
 stats: { first_met: 2026-09-01, last_contact: 2026-09-26, counts: { interaction: 3 } }

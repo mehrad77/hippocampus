@@ -69,17 +69,19 @@ export async function applyFact(
     const suffix = slugify(prov.src[0] ?? `p-${hash(`${prov.by}|${prov.at}`)}`);
     const ref = secretRef(entity.slug, field);
     vault.writeFile(secretPath(vault.config.folders.secrets, ref, suffix), await encryptSecret(recipient, String(value)));
-    vault.openProposal(entity, field, { value: `${ref}.${suffix}`, by: prov.by, at: prov.at, src: prov.src, ...confidenceOf(opts) }, opts.evidence);
+    vault.openProposal(entity, field, { value: `${ref}.${suffix}`, by: prov.by, at: prov.at, src: prov.src, ...confidenceOf(opts), ...(opts.confidential ? { confidential: true } : {}) }, opts.evidence);
     return { entity: entity.slug, field, decision: "propose", reason: "only a human sets this field", secret };
   }
 
   if (secret) {
     // Ciphertext can't be compared, so secrets are last-writer-wins among equals, but a lower-ranked
-    // source never replaces what a higher-ranked one stored (an agent can't overwrite the human's).
+    // source never replaces what a higher-ranked one holds, secret or not: an agent marking a value
+    // secret can't overwrite the human's plain one.
     const held = entity.fm.facts[field];
-    if (held && isSecretRef(held.value) && AUTHORITY_RANK[incomingAuthority] < AUTHORITY_RANK[vault.authorityOf(held.by, entity, field)]) {
-      vault.warnings.push(`secret ${entity.slug}.${field} not replaced: ${prov.by} outranked by ${held.by ?? "the human"}`);
-      return { entity: entity.slug, field, decision: "keep", reason: `${held.by ?? "the human"} outranks ${prov.by}`, secret };
+    const live = held && held.status !== "retconned" ? held : undefined;
+    if (live && AUTHORITY_RANK[incomingAuthority] < AUTHORITY_RANK[vault.authorityOf(live.by, entity, field)]) {
+      vault.warnings.push(`secret ${entity.slug}.${field} not replaced: ${prov.by} outranked by ${live.by ?? "the human"}`);
+      return { entity: entity.slug, field, decision: "keep", reason: `${live.by ?? "the human"} outranks ${prov.by}`, secret };
     }
     const ref = secretRef(entity.slug, field);
     const recipient = vault.config.secrets.recipient;
@@ -95,12 +97,15 @@ export async function applyFact(
       at: prov.at,
       src: prov.src,
       ...qualifiersOf(opts),
+      ...(held?.confidential ? { confidential: true } : {}),
+      ...(held ? { was: capWas([...(held.was ?? []), priorOf(held, "replaced")]) } : {}),
     };
     vault.touch(entity);
     return { entity: entity.slug, field, decision: "replace", reason: "secret updated", secret };
   }
 
   const existing = entity.fm.facts[field];
+  const open = existing?.status === "disputed" ? vault.disputeFor(entity.slug, field) : undefined;
   const decision = reconcileFact({
     existing,
     incoming: { value, by: prov.by, at: prov.at, src: prov.src, ...qualifiersOf(opts) },
@@ -109,17 +114,21 @@ export async function applyFact(
     canonThreshold: vault.config.curator.canon_threshold,
     def,
     sameAuthor: !!existing && sameSource(vault, existing.by, prov.by),
+    ...(open?.fm.status === "open"
+      ? { disputeClaims: open.fm.claims.map((c) => ({ authority: vault.authorityOf(c.by, entity, field), sameAuthor: sameSource(vault, c.by, prov.by) })) }
+      : {}),
   });
   if (decision.action === "propose") {
     vault.openProposal(entity, field, decision.claim, opts.evidence);
     return { entity: entity.slug, field, decision: decision.action, reason: decision.reason };
   }
   const fact = decision.fact;
-  if (opts.confidential && decision.action !== "keep") fact.confidential = true;
+  // A confidential claim that disputes a value doesn't make that value confidential: the claim says so itself.
+  if (opts.confidential && decision.action !== "keep" && decision.action !== "dispute") fact.confidential = true;
   entity.fm.facts[field] = fact;
   if (decision.action === "dispute") vault.openDispute(entity, field, decision.claims);
   if ((decision.action === "replace" || decision.action === "succeed") && existing?.status === "disputed") {
-    const d = vault.disputes.get(vault.disputeSlug(entity.slug, field));
+    const d = vault.disputeFor(entity.slug, field);
     if (d && d.fm.status === "open") vault.resolveDispute(d);
   }
   if (decision.action !== "keep") vault.touch(entity);
@@ -154,7 +163,7 @@ export function retractFact(vault: Vault, entity: Entity, rawField: string, by: 
   if (f.status === "retconned") throw new VaultError(`${entity.slug}.${field} is already retracted`);
   f.status = "retconned";
   delete f.seen_by;
-  const d = vault.disputes.get(vault.disputeSlug(entity.slug, field));
+  const d = vault.disputeFor(entity.slug, field);
   if (d && d.fm.status === "open") vault.resolveDispute(d);
   vault.touch(entity, vault.human(by)?.id ?? by);
   return field;
@@ -268,6 +277,8 @@ export function applyRuling(vault: Vault, d: Dispute, value: FactValue, by = vau
   if (!entity) return undefined;
   if (d.fm.kind === "merge") throw new VaultError(`${d.slug} is a possible duplicate, not a value: merge the notes by hand, or decline it`);
   const existing = entity.fm.facts[d.fm.field];
+  // A confidential claim stays confidential once it's the value.
+  const confidential = !!existing?.confidential || d.fm.claims.some((c) => c.confidential && String(c.value) === String(value));
   d.fm.ruling = value;
   entity.fm.facts[d.fm.field] = {
     value,
@@ -276,7 +287,7 @@ export function applyRuling(vault: Vault, d: Dispute, value: FactValue, by = vau
     at: vault.nowIso(),
     src: [...new Set(d.fm.claims.flatMap((c) => c.src))],
     was: existing ? capWas([...(existing.was ?? []), priorOf(existing, "ruled")]) : undefined,
-    ...(existing?.confidential ? { confidential: true } : {}),
+    ...(confidential ? { confidential: true } : {}),
   };
   if (d.fm.kind === "proposal") d.fm.state = "applied";
   vault.touch(entity, by);
@@ -295,8 +306,8 @@ export function declineProposal(vault: Vault, d: Dispute): void {
 export function isSecretField(vault: Vault, entity: Entity, field: string): boolean {
   if (vault.schema.isSecretField(entity.fm.type, field)) return true;
   if (isSecretRef(entity.fm.facts[field]?.value)) return true;
-  const d = vault.disputes.get(vault.disputeSlug(entity.slug, field));
-  return !!d?.fm.claims.some((c) => isSecretRef(c.value));
+  // A proposal's encrypted claim makes the field secret too, so it's never ruled in plain text.
+  return [vault.disputeFor(entity.slug, field), vault.disputeFor(entity.slug, field, "proposal")].some((d) => !!d?.fm.claims.some((c) => isSecretRef(c.value)));
 }
 
 export interface NewPartyMember {

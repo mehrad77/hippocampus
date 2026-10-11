@@ -223,3 +223,24 @@ describe("dashboard resources", () => {
     await expect(client.readResource({ uri: "hippo://dashboard/entity/nobody-here" })).rejects.toMatchObject({ code: -32602, data: { code: "VAULT" } });
   });
 });
+
+describe("MCP input limits and whoami (review fixes)", () => {
+  it("refuses an objective longer than one checklist line", async () => {
+    const { call, store } = await connect("residency-agent");
+    expect((await call("update_goal", { goal: "residence-permit", add: ["x".repeat(301)] })).isError).toBe(true);
+    expect(await store.read("goals/residence-permit.md")).not.toContain("x".repeat(301));
+    expect((await call("update_goal", { goal: "residence-permit", add: ["x".repeat(300)] })).isError).toBeFalsy();
+  });
+
+  it("whoami lists the humans without their GitHub logins", async () => {
+    const store = fixtureStore({ "_hippo/config.yaml": (await fixtureStore().read("_hippo/config.yaml"))!.replace("humans: [{ id: player }]", "humans: [{ id: player, github: player-login }]") });
+    const server = createHippoServer({ service: new HippoService(store), agent: "residency-agent" });
+    const client = new Client({ name: "test", version: "0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const res = await client.readResource({ uri: "hippo://dashboard/whoami" });
+    const text = (res.contents[0] as { text: string }).text;
+    expect(text).toContain('"player"');
+    expect(text).not.toContain("player-login");
+  });
+});

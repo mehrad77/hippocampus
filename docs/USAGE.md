@@ -132,7 +132,7 @@ npx @mehrad77/hippocampus -v ~/vaults/my-campaign serve --http 8765
 
 Tools: `onboard`, `introduce`, `remember`, `recall`, `get`, `neighbors`, `ask_canon`, `briefing` (with `about`, a brief on one person before contacting them), `update_goal` (`update_quest` still works), plus the curator's `sleep_*` tools (§5).
 
-`remember` takes any of the vault's kinds with its typed `data`, for example a call that is only data: `kind: interaction, data: { with: "[[ana-souza]]", channel: call }`. `scope` says where a memory holds (`lang:pt`), and `confidential: true` keeps it out of search, summaries and the chronicle. From the terminal: `hippo remember -k moment --data with=[[ana-souza]] --data trigger=first_contact "First message, in Portuguese"`.
+`remember` takes any of the vault's kinds with its typed `data`, for example a call that is only data: `kind: interaction, data: { with: "[[migration-agency]]", channel: call }`. `scope` says where a memory holds (`lang:pt`), and `confidential: true` keeps it out of search, summaries and the chronicle. From the terminal: `hippo remember -k moment --data with=[[migration-agency]] --data trigger=first_contact "First message, in Portuguese"`.
 
 **Confidential** values stay in your notes but out of search, summaries, the chronicle and every agent's view, except an agent bound to its id (a single-agent key, an OAuth connection, `serve --agent`) with authority over them. The curator sees them while curating. For remote agents and Claude.ai or ChatGPT connectors, use the hosted app (§8).
 

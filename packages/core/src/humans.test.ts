@@ -107,7 +107,8 @@ describe("qualifiers", () => {
     const agency = v.resolve("migration-agency")!;
     await applyFact(v, agency, "greeting", "Olá", { by: "campus-agent", at: "2026-09-10T00:00:00Z", src: ["ep-a"] }, { scope: "lang:pt" });
     await applyFact(v, agency, "greeting", "Oi", { by: "home-finder", at: "2026-09-11T00:00:00Z", src: ["ep-b"] }, { scope: "lang:pt" });
-    const d = v.disputes.get("dispute-migration-agency-greeting-lang-pt")!;
+    const d = v.disputeFor("migration-agency", "greeting@lang:pt")!;
+    expect(d.slug).toMatch(/^dispute-migration-agency-greeting-lang-pt-[0-9a-z]{6}$/);
     expect(d.fm.field).toBe("greeting@lang:pt");
     expect(applyRuling(v, d, "Olá")).toBe("migration-agency.greeting@lang:pt = Olá");
     expect(agency.fm.facts["greeting@lang:pt"]).toMatchObject({ value: "Olá", status: "canon", by: "player" });

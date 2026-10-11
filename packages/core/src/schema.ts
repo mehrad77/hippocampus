@@ -201,6 +201,8 @@ export const Claim = z.object({
   at: z.string().optional(),
   src: z.array(z.string()).default([]),
   confidence,
+  /** The value is confidential: dispute bodies, views, search and the review never show it. */
+  confidential: z.boolean().optional(),
 });
 export type Claim = z.infer<typeof Claim>;
 

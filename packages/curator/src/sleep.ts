@@ -1,5 +1,6 @@
 import {
   ACTOR_TRAILER,
+  AUTHORITY_RANK,
   AuditError,
   CURATOR_RULES_PATH,
   HANDBOOK_PATH,
@@ -21,6 +22,8 @@ import {
   factKey,
   fieldUsage,
   findings,
+  getObjectives,
+  getSummary,
   goalProps,
   identify,
   identityFields,
@@ -30,11 +33,15 @@ import {
   link,
   logDecision,
   matchIdentity,
+  matchObjective,
   miniSearcher,
   normalizeName,
+  normalizeScope,
   openQuestion,
+  overlayStore,
   parseDoc,
   parseFactKey,
+  proposeMerge,
   redact,
   renderDoc,
   renderHandbook,
@@ -148,8 +155,13 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
   for (const ep of pickBatch(vault, opts.limit)) {
     log(`… ${ep.id} (${ep.agent}): ${ep.secret ? "(secret)" : ep.confidential ? "(confidential)" : ep.text.slice(0, 70).replace(/\s+/g, " ")}`);
     const before = vault.snapshot();
+    // The vault as it stood before this episode, so its audit sees only what this episode changed.
+    const base = overlayStore(opts.store, vault.changes());
     try {
       const { evidence: text, secrets: seen, ...r } = await consolidate(vault, llm, ep, opts.searcher ?? miniSearcher, { houseRules });
+      // One episode that breaks a rule fails alone and stays in the inbox; it never blocks every sleep after it.
+      const violations = await auditChanges({ before: base, changes: vault.changes(), actor: { kind: "curator" }, forbidden: [...secrets, ...seen] });
+      if (violations.length) throw new AuditError(violations);
       report.consolidated.push(r);
       secrets.push(...seen);
       if (text) for (const slug of r.touched) evidence.set(slug, [...(evidence.get(slug) ?? []), text]);
@@ -164,9 +176,10 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
     }
   }
 
+  await redactRun(vault, opts.store, evidence, secrets);
   for (const { entity, texts } of summaryTargets(vault, evidence)) {
     try {
-      await summarize(vault, llm, entity, texts, { houseRules });
+      await summarize(vault, llm, entity, texts, { houseRules, secrets });
       report.summaries.push(entity.slug);
     } catch (err) {
       report.warnings.push(`summary for ${entity.slug} failed: ${(err as Error).message}`);
@@ -174,6 +187,7 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
   }
 
   finishRun(vault, report);
+  // The backstop: each episode passed its own audit, so this one catches only what the run as a whole adds.
   const violations = await auditChanges({ before: opts.store, changes: vault.changes(), actor: { kind: "curator" }, forbidden: secrets });
   if (violations.length) throw new AuditError(violations);
   if (!opts.dryRun) report.changed = await vault.flush({ message: commitMessage(report), author: CURATOR_AUTHOR });
@@ -201,11 +215,46 @@ export function summaryTargets(vault: Vault, evidence: ReadonlyMap<string, reado
   return out;
 }
 
-/** Rewrite one entity's summary region. Errors propagate: the caller decides whether a failed summary matters. */
-export async function summarize(vault: Vault, llm: LLM, entity: Entity, texts: string[], o: { houseRules?: string } = {}): Promise<void> {
+/**
+ * Rewrite one entity's summary region. Errors propagate: the caller decides whether a failed summary
+ * matters. A summary that repeats a confidential value or one of `secrets` more than the old one did
+ * is refused (thrown), so only that summary is dropped, not the run.
+ */
+export async function summarize(vault: Vault, llm: LLM, entity: Entity, texts: string[], o: { houseRules?: string; secrets?: string[] } = {}): Promise<void> {
   const { summary } = await llm.object({ name: "summary", schema: summarySchema, ...summaryPrompt(vault, entity, texts, o.houseRules) });
+  const previous = getSummary(entity);
+  const secrets = (o.secrets ?? []).filter((v) => v.trim().length >= 3);
+  const more = (count: (t: string) => number) => count(summary) > count(previous);
+  if (confidentialValues(vault).some((v) => more((t) => occurrences(t, v))) || secrets.some((v) => more((t) => t.split(v).length - 1))) {
+    throw new Error("the new summary repeats a confidential or secret value; the previous one stays");
+  }
   setSummary(entity, summary);
   vault.markDirty(entity);
+}
+
+/**
+ * Once a batch is done, redact this run's chronicle entries and summary evidence again with what is
+ * confidential now: a later episode may have made a value confidential after an earlier one quoted it.
+ * Only the quoted lines of entries this run appended change; headers, links and older days don't.
+ */
+export async function redactRun(vault: Vault, store: VaultStore, evidence: Map<string, string[]>, secrets: string[]): Promise<void> {
+  const hidden = confidentialValues(vault);
+  if (!hidden.length && !secrets.length) return;
+  const clean = (t: string) => redactAll(redact(t, secrets), hidden);
+  for (const [slug, texts] of evidence) evidence.set(slug, texts.map(clean));
+  const folder = `${vault.config.folders.chronicle}/`;
+  for (const c of vault.changes()) {
+    if (!("content" in c) || !c.path.startsWith(folder)) continue;
+    const old = ((await store.read(c.path)) ?? "").trimEnd();
+    const at = old && c.content.startsWith(old) ? old.length : 0;
+    const added = c.content.slice(at);
+    const quoted = (line: string) => line.startsWith("> ") && !line.startsWith("> [!episode]") && !line.startsWith("> ↳");
+    const redacted = added
+      .split("\n")
+      .map((line) => (quoted(line) ? clean(line) : line))
+      .join("\n");
+    if (redacted !== added) vault.writeFile(c.path, c.content.slice(0, at) + redacted);
+  }
 }
 
 /** End a run: write the morning review and the handbook, and fill in what's left and what went wrong. */
@@ -342,6 +391,22 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
   const secretsSeen: string[] = [];
   const skipped = new Set<string>();
   const commitments: Commitment[] = [];
+  const reducers = new Set([...(BEHAVIOUR_REDUCERS[kind.def.behaviour] ?? []), ...kind.def.reducers]);
+  // Agent text bound for managed memory (decisions, questions, guidelines, objectives, goal titles):
+  // never a secret this episode carried, nor a value that is confidential by now.
+  const clean = (x: string) => redactAll(redact(x, secretsSeen), confidentialValues(vault));
+  /** A scope as given, undefined for none, or null when it has nothing to normalize (the item is skipped). */
+  const scopeOf = (raw: string | undefined): string | undefined | null => {
+    const t = raw?.trim();
+    if (!t) return undefined;
+    try {
+      normalizeScope(t);
+      return t;
+    } catch {
+      report.notes.push("a scope with no letters or digits; what it qualified was left out");
+      return null;
+    }
+  };
   if (needsModel(vault, ep)) {
     // 1. Mentions
     const { entities: mentions } = await llm.object({ name: "mentions", schema: mentionsSchema(vault.schema), ...mentionsPrompt(vault, ep, o.houseRules) });
@@ -376,10 +441,10 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
       }
     }
 
-    // 3. Claims about the resolved entities.
+    // 3. Claims about the resolved entities. A task (or commitment) kind is asked even about none: its promise is the point.
     const goals = activeQuests(vault);
     const list = [...entities.values()];
-    if (list.length) {
+    if (list.length || reducers.has("task")) {
       const slugs = list.map((e) => e.slug);
       const claims = await llm.object({
         name: "claims",
@@ -395,10 +460,12 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
         const value = f.value.trim();
         if (!e || !value || /^(unknown|n\/a|none|null)$/i.test(value)) continue;
         const secret = f.secret || (ep.secret === true && looksLikeIdentifier(value));
+        const scope = scopeOf(f.scope?.trim() || ep.scope);
+        if (scope === null) continue;
         const result = await applyFact(vault, e, f.field, value, prov, {
           secret,
           confidential: f.confidential || ep.confidential || undefined,
-          scope: f.scope?.trim() || ep.scope,
+          scope,
           validFrom: isoDay(f.valid_from),
           validUntil: isoDay(f.valid_until),
         });
@@ -410,15 +477,27 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
       for (const r of claims.relations) {
         const from = target(r.from);
         const to = target(r.to);
-        const opts = { role: r.role, scope: ep.scope, validFrom: isoDay(r.valid_from), validUntil: isoDay(r.valid_until) };
+        const scope = scopeOf(ep.scope);
+        if (scope === null) continue;
+        const opts = { role: r.role, scope, validFrom: isoDay(r.valid_from), validUntil: isoDay(r.valid_until) };
         if (from && to && addRelation(vault, from, r.rel, to, prov, opts)) report.relations.push(`${from.slug} —${r.rel}→ ${to.slug}`);
       }
       for (const g of claims.goals) {
         const goal = vault.entities.get(g.goal);
         if (!goal) continue;
-        // A confidential episode may move a goal along, but its words don't become objectives.
-        if (ep.confidential && g.added.length) skipped.add("new objectives");
-        const update: GoalUpdate = { status: g.status === "unchanged" ? undefined : g.status, complete: g.completed, add: ep.confidential ? [] : g.added, ...(g.progress ? { progress: g.progress } : {}) };
+        // Only the goal's owner, or a source with authority over it, says it's done, failed or blocked.
+        let status = g.status === "unchanged" ? undefined : g.status;
+        const owner = goalProps(goal).owner;
+        const owns = !!owner && (vault.resolve(owner)?.slug ?? unwrapLink(owner)) === ep.agent;
+        if (status && !owns && AUTHORITY_RANK[vault.authorityOf(ep.agent, goal)] < AUTHORITY_RANK.authority) {
+          report.notes.push(`${goal.slug}: status change not applied: ${ep.agent} neither owns it nor has authority over it`);
+          status = undefined;
+        }
+        // A confidential episode may tick off objectives the goal already has, but its words never become objectives.
+        const existing = getObjectives(goal);
+        const completed = ep.confidential ? g.completed.flatMap((t) => matchObjective(existing, t)?.text ?? []) : g.completed.map(clean);
+        if (ep.confidential && (g.added.length || completed.length < g.completed.length)) skipped.add("new objectives");
+        const update: GoalUpdate = { status, complete: completed, add: ep.confidential ? [] : g.added.map(clean), ...(g.progress ? { progress: g.progress } : {}) };
         const changes = tryGoalUpdate(vault, goal, update, ep.agent);
         if (changes.length) {
           report.goals.push(`${goal.slug}: ${changes.join(", ")}`);
@@ -433,7 +512,9 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
           skipped.add("guidelines");
           continue;
         }
-        if (addGuideline(vault, e, { rule: g.rule, scope: g.scope?.trim() || ep.scope }, prov)) report.guidelines.push(e.slug);
+        const scope = scopeOf(g.scope?.trim() || ep.scope);
+        if (scope === null) continue;
+        if (addGuideline(vault, e, { rule: clean(g.rule), scope }, prov)) report.guidelines.push(e.slug);
       }
       const answered = claims.answered ?? [];
       if (answered.length) for (const e of entities.values()) for (const id of answerQuestions(vault, e, answered, ep)) report.questions.push(`✓ ${id} on ${e.slug}`);
@@ -441,7 +522,6 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
   }
 
   // 5. The kind's reducers, by its behaviour (and any it names), on what the episode is about.
-  const reducers = new Set([...(BEHAVIOUR_REDUCERS[kind.def.behaviour] ?? []), ...kind.def.reducers]);
   const touched = () => [...entities.values()].filter(usable);
   // Decisions and questions go on the notes the episode names (hints, data links), else on all it touched.
   const subjects = () => (hinted.length ? [...new Set(hinted)] : touched().filter((e) => !vault.schema.has(e.fm.type, "goal")));
@@ -451,28 +531,32 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
       take(vault.entities.get(slug)!);
     }
   }
+  // A secret-bearing episode's own words never stand in for a decision or a question: only its data does.
+  const fallback = !ep.secret && ep.text.trim() ? truncate(ep.text, 300) : undefined;
   if (reducers.has("decision")) {
-    const what = text(ep.data?.what) ?? (ep.text.trim() ? truncate(ep.text, 300) : undefined);
+    const what = text(ep.data?.what) ?? fallback;
     if (what && ep.confidential) skipped.add("the decision");
     else if (what) {
-      const input = { what, why: text(ep.data?.why), alternatives: texts(ep.data?.alternatives), revisit: isoDay(text(ep.data?.revisit)) };
+      const why = text(ep.data?.why);
+      const input = { what: clean(what), why: why && clean(why), alternatives: texts(ep.data?.alternatives).map(clean), revisit: isoDay(text(ep.data?.revisit)) };
       for (const e of subjects()) report.decisions.push(`${e.slug}: ${logDecision(vault, e, input, prov).id}`);
     }
   }
   if (reducers.has("question")) {
-    const q = text(ep.data?.question) ?? text(ep.data?.q) ?? (ep.text.trim() ? truncate(ep.text, 300) : undefined);
+    const q = text(ep.data?.question) ?? text(ep.data?.q) ?? fallback;
     if (q && ep.confidential) skipped.add("the question");
-    else if (q) for (const e of subjects()) report.questions.push(`? ${openQuestion(vault, e, q, prov).id} on ${e.slug}`);
+    else if (q) for (const e of subjects()) report.questions.push(`? ${openQuestion(vault, e, clean(q), prov).id} on ${e.slug}`);
   }
   if (reducers.has("task")) {
     const title = text(ep.data?.title);
-    if (title) {
+    // Without a claims step to find it, the promise is the data's title.
+    if (title && !commitments.some((c) => normalizeName(c.title) === normalizeName(title))) {
       const counterparty = text(ep.data?.counterparty) ?? text(ep.data?.with);
       commitments.push({ title, owner: text(ep.data?.owner), counterparty: counterparty && unwrapLink(counterparty), due: text(ep.data?.due), objectives: texts(ep.data?.objectives) });
     }
   }
   if (commitments.length && ep.confidential) skipped.add("commitments");
-  else for (const c of commitments) applyCommitment(vault, c, ep, report, take, kind.def.goalType);
+  else for (const c of commitments) applyCommitment(vault, { ...c, title: clean(c.title), objectives: c.objectives?.map(clean) }, ep, report, take, kind.def.goalType);
   if (skipped.size) report.notes.push(`confidential: ${[...skipped].join(", ")} kept out of shared notes`);
 
   // Belt and braces: a model may echo a secret as a name or alias; it must never reach a note.
@@ -546,6 +630,12 @@ function resolveIdentities(
     if (!Object.keys(facts).length) continue;
     if (report.created.includes(e.slug)) {
       const found = identify(vault, e.fm.type, undefined, facts);
+      // A note of another kind with the same key may still be the same thing: the human decides, nothing is folded.
+      const foreign = found.via === "key" ? undefined : found.foreign?.[0];
+      if (foreign) {
+        const d = proposeMerge(vault, e, foreign.entity, foreign.field);
+        if (!report.merges.includes(d.slug)) report.merges.push(d.slug);
+      }
       if (found.via !== "key" || !found.entity || found.entity === e) continue;
       const existing = found.entity;
       const names = [e.fm.title ?? "", ...e.fm.aliases].filter((a) => a && normalizeName(a) !== normalizeName(existing.slug));
@@ -580,8 +670,9 @@ function tryGoalUpdate(vault: Vault, goal: Entity, update: GoalUpdate, by: strin
 
 /**
  * A promise becomes a goal of the kind's `goal_type` (else the vault's default goal type), unless an
- * open goal with the same title (normalized) and the same counterparty already tracks it: then that
- * one is updated.
+ * open goal with the same title (normalized) already tracks it, with the same counterparty or with
+ * none on either side: then that one gets what it doesn't have yet (owner, counterparty, due date are
+ * never overwritten) and the new objectives.
  */
 function applyCommitment(vault: Vault, c: Commitment, ep: Episode, report: EpisodeReport, take: (e: Entity, isNew?: boolean) => void, goalType?: string): void {
   const title = c.title.trim();
@@ -595,7 +686,8 @@ function applyCommitment(vault: Vault, c: Commitment, ep: Episode, report: Episo
   const counterparty = c.counterparty ? vault.resolve(c.counterparty) : undefined;
   const sameParty = (g: Entity) => {
     const cp = goalProps(g).counterparty;
-    return (cp ? vault.resolve(cp)?.slug ?? unwrapLink(cp) : undefined) === counterparty?.slug;
+    const theirs = cp ? (vault.resolve(cp)?.slug ?? unwrapLink(cp)) : undefined;
+    return !theirs || !counterparty || theirs === counterparty.slug;
   };
   let goal = activeQuests(vault).find((g) => normalizeName(displayName(g)) === normalizeName(title) && sameParty(g));
   const isNew = !goal;
@@ -605,13 +697,21 @@ function applyCommitment(vault: Vault, c: Commitment, ep: Episode, report: Episo
   }
   const due = isoDay(c.due);
   if (c.due && !due) report.notes.push(`${goal.slug}: due date isn't an ISO date; left unset`);
-  const changes = tryGoalUpdate(vault, goal, { owner: c.owner, counterparty: counterparty?.slug, ...(due ? { due } : {}), add: c.objectives ?? [] }, ep.agent);
+  // What someone already set on a goal stays: a later mention of the same promise only fills gaps.
+  const set = isNew ? {} : goalProps(goal);
+  const update: GoalUpdate = {
+    ...(c.owner && !set.owner ? { owner: c.owner } : {}),
+    ...(counterparty && !set.counterparty ? { counterparty: counterparty.slug } : {}),
+    ...(due && !set.due ? { due } : {}),
+    add: c.objectives ?? [],
+  };
+  const changes = tryGoalUpdate(vault, goal, update, ep.agent);
   if (isNew || changes.length) report.goals.push(`${goal.slug}: ${[...(isNew ? ["new"] : []), ...changes].join(", ")}`);
   take(goal, isNew);
 }
 
-/** Every confidential value in the vault (facts marked so, confidential fields, identity keys), current and past. */
-function confidentialValues(vault: Vault): string[] {
+/** Every confidential value in the vault (facts marked so, confidential fields, identity keys, confidential claims), current and past. */
+export function confidentialValues(vault: Vault): string[] {
   const out = new Set<string>();
   for (const e of vault.entities.values()) {
     for (const [k, f] of Object.entries(e.fm.facts)) {
@@ -621,6 +721,13 @@ function confidentialValues(vault: Vault): string[] {
         // The audit's own rule: a value too short or common to look for isn't redacted either.
         if (!isSecretRef(v) && isTrackedConfidential(s)) out.add(s);
       }
+    }
+  }
+  // A confidential claim waiting in a dispute or proposal is as confidential as a fact.
+  for (const d of vault.disputes.values()) {
+    for (const c of d.fm.claims) {
+      const s = String(c.value).trim();
+      if (c.confidential && !isSecretRef(c.value) && isTrackedConfidential(s)) out.add(s);
     }
   }
   return [...out];

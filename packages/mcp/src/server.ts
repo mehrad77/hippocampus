@@ -73,7 +73,8 @@ export interface DashboardWhoami {
   campaign: string;
   /** The primary human's id. */
   human: string;
-  humans: { id: string; domains: string[]; github?: string }[];
+  /** Without GitHub logins: an agent's connection has no business knowing the human's accounts. */
+  humans: { id: string; domains: string[] }[];
 }
 
 /** Vault errors become InvalidParams with a stable `data.code`, so the dashboard can answer 400 or 409 like it does locally. */
@@ -153,13 +154,13 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
           data: z
             .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.union([z.string(), z.number(), z.boolean()]))]))
             .optional()
-            .describe('Typed fields the kind declares, e.g. { "with": "[[ana]]", "channel": "call" }'),
+            .describe('Typed fields the kind declares, e.g. { "with": "[[migration-agency]]", "channel": "call" }'),
           confidential: z.boolean().optional().describe("true to keep it out of search, prompts and the chronicle"),
           scope: z.string().max(100).optional().describe("Context it holds in, e.g. lang:pt or org:harbor-university"),
-          about: z.array(z.string()).optional().describe('Hints: entity names or [[links]], e.g. ["[[residence-permit]]", "Agência de Migração"]'),
+          about: z.array(z.string().max(200)).max(20).optional().describe('Hints: entity names or [[links]], e.g. ["[[residence-permit]]", "Agência de Migração"]'),
           confidence: z.number().min(0).max(1).optional(),
           secret: z.boolean().optional().describe("true if it contains ID/passport/bank numbers or credentials"),
-          at: z.string().optional().describe("When it happened (ISO 8601); defaults to now"),
+          at: z.string().max(40).optional().describe("When it happened (ISO 8601); defaults to now"),
         },
       },
       (args) =>
@@ -283,6 +284,8 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
     ),
   );
 
+  // One checklist line: long enough for a step, short enough that it can't carry a document.
+  const objective = z.string().max(300);
   const progressArg = z
     .object({
       done: z.number().int().min(0).optional(),
@@ -302,17 +305,17 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
           ...agentArg,
           goal: z.string().describe("Slug, [[link]], title, or alias"),
           status: z.string().max(40).optional().describe("active, blocked, done, failed, dormant, or a word of the goal type's own statuses"),
-          complete: z.array(z.string()).optional().describe("Objectives now done (fuzzy-matched)"),
-          reopen: z.array(z.string()).optional().describe("Objectives to mark not done again (fuzzy-matched)"),
-          add: z.array(z.string()).optional().describe("New objectives"),
+          complete: z.array(objective).max(50).optional().describe("Objectives now done (fuzzy-matched)"),
+          reopen: z.array(objective).max(50).optional().describe("Objectives to mark not done again (fuzzy-matched)"),
+          add: z.array(objective).max(50).optional().describe("New objectives"),
           progress: progressArg,
-          due: z.string().nullable().optional().describe("ISO date (YYYY-MM-DD); null clears it"),
-          owner: z.string().optional().describe("The agent or person who drives it"),
-          counterparty: z.string().optional().describe("Who it's with or for, e.g. [[landlord]]"),
+          due: z.string().max(40).nullable().optional().describe("ISO date (YYYY-MM-DD); null clears it"),
+          owner: z.string().max(200).optional().describe("The agent or person who drives it"),
+          counterparty: z.string().max(200).optional().describe("Who it's with or for, e.g. [[landlord]]"),
           repeat: z
             .object({
-              every: z.string().optional().describe("Interval: 1w, 2w, 1m, 1y"),
-              after_last: z.string().optional().describe("Count from the last episode of this kind with the counterparty, e.g. interaction"),
+              every: z.string().max(40).optional().describe("Interval: 1w, 2w, 1m, 1y"),
+              after_last: z.string().max(200).optional().describe("Count from the last episode of this kind with the counterparty, e.g. interaction"),
             })
             .nullable()
             .optional()
@@ -338,20 +341,20 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
           ...agentArg,
           quest: z.string(),
           status: z.enum(["active", "blocked", "done", "failed", "dormant"]).optional(),
-          complete: z.array(z.string()).optional().describe("Objectives now done (fuzzy-matched)"),
-          reopen: z.array(z.string()).optional().describe("Objectives to mark not done again (fuzzy-matched)"),
-          add: z.array(z.string()).optional().describe("New objectives"),
+          complete: z.array(objective).max(50).optional().describe("Objectives now done (fuzzy-matched)"),
+          reopen: z.array(objective).max(50).optional().describe("Objectives to mark not done again (fuzzy-matched)"),
+          add: z.array(objective).max(50).optional().describe("New objectives"),
           clock: z
             .object({
-              name: z.string(),
+              name: z.string().max(120),
               segments: z.number().int().min(2).max(12).optional(),
               tick: z.number().int().optional().describe("Segments to fill (+) or clear (−)"),
               filled: z.number().int().min(0).optional(),
-              deadline: z.string().optional(),
+              deadline: z.string().max(40).optional(),
             })
             .optional(),
-          deadline: z.string().optional(),
-          owner: z.string().optional(),
+          deadline: z.string().max(40).optional(),
+          owner: z.string().max(200).optional(),
         },
       },
       (args) =>
@@ -416,7 +419,7 @@ export function createHippoServer({ service, agent, scopes, version = "0.1.0", j
           name: config.name,
           campaign: config.name,
           human: config.human,
-          humans: config.humans.map((h) => ({ id: h.id, domains: h.domains, ...(h.github ? { github: h.github } : {}) })),
+          humans: config.humans.map((h) => ({ id: h.id, domains: h.domains })),
         } satisfies DashboardWhoami;
       }
       case "overview":

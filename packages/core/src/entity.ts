@@ -1,5 +1,5 @@
 import { GOAL_KEYS, goalProps, renderProgress } from "./goal.ts";
-import { getRegion, humanText, parseDoc, renderDoc, setRegion, removeRegion } from "./markdown.ts";
+import { escapeRegionText, getRegion, humanText, parseDoc, regionLine, renderDoc, setRegion, removeRegion } from "./markdown.ts";
 import { EntityFrontmatter, type DecisionEntry, type Fact, type FactValue, type Guideline, type QuestionEntry, type Stats } from "./schema.ts";
 import { parseFactKey } from "./text.ts";
 import { link, unwrapLink } from "./wikilink.ts";
@@ -107,12 +107,12 @@ function compactFacts(facts: Record<string, Fact>): Record<string, unknown> {
 
 const STATUS_MARK: Record<string, string> = { canon: "✓ canon", rumor: "? rumor", disputed: "⚠ disputed", retconned: "✗ retconned" };
 
-/** A value for a table or an agent: secrets and confidential values masked, pipes escaped. */
+/** A value for a table or an agent: secrets and confidential values masked, one line, pipes and `%%` escaped. */
 export function formatValue(v: FactValue, opts: { confidential?: boolean } = {}): string {
   const s = String(v);
   if (s.startsWith("secret://")) return "🔒 secret";
   if (opts.confidential) return "◐ confidential";
-  return s.replace(/\|/g, "\\|").replace(/\n/g, " ");
+  return regionLine(s).replace(/\|/g, "\\|");
 }
 
 /** `2024-01 → 2026-03`, `since 2024-01`, `until 2026-03`, or empty. */
@@ -131,8 +131,8 @@ function renderFacts(facts: Record<string, Fact>): string {
   const head = ["Fact", ...(scoped ? ["Scope"] : []), "Value", "Status", "By", "Since", ...(dated ? ["Valid"] : [])];
   const rows = entries.map(({ field, scope, key, f }) => {
     const cells = [
-      scoped ? field : key,
-      ...(scoped ? [scope ?? ""] : []),
+      regionLine(scoped ? field : key),
+      ...(scoped ? [regionLine(scope ?? "")] : []),
       formatValue(f.value, { confidential: f.confidential }),
       STATUS_MARK[f.status] ?? f.status,
       f.by ? link(f.by) : "human",
@@ -146,22 +146,23 @@ function renderFacts(facts: Record<string, Fact>): string {
 
 function renderRelations(e: Entity): string {
   // Dataview inline fields (`rel:: [[x]]`) so Obsidian's graph and Dataview both see typed edges.
-  return e.fm.relations.map((r) => `- ${r.rel}:: ${link(unwrapLink(r.target))}`).join("\n");
+  return e.fm.relations.map((r) => `- ${regionLine(r.rel)}:: ${regionLine(link(unwrapLink(r.target)))}`).join("\n");
 }
 
-const by = (who: string | undefined) => (who ? link(who) : "human");
-const day = (at: string | undefined) => at?.slice(0, 10) ?? "";
+// Every piece of agent text below goes through `regionLine`: one line, no `%%`.
+const by = (who: string | undefined) => (who ? regionLine(link(who)) : "human");
+const day = (at: string | undefined) => regionLine(at?.slice(0, 10) ?? "");
 
 function renderGuidelines(gs: Guideline[]): string {
-  return gs.map((g) => `- ${g.rule.replace(/\n/g, " ")}${g.scope ? ` _(${g.scope})_` : ""} · ${STATUS_MARK[g.status] ?? g.status} · ${by(g.by)}`).join("\n");
+  return gs.map((g) => `- ${regionLine(g.rule)}${g.scope ? ` _(${regionLine(g.scope)})_` : ""} · ${STATUS_MARK[g.status] ?? regionLine(g.status)} · ${by(g.by)}`).join("\n");
 }
 
 function renderDecisions(ds: DecisionEntry[]): string {
   return ds
     .map((d) => {
-      const head = `- **${d.what.replace(/\n/g, " ")}**${d.why ? ` — ${d.why.replace(/\n/g, " ")}` : ""} · ${by(d.by)}${d.at ? ` · ${day(d.at)}` : ""}`;
-      const alts = d.alternatives.length ? `\n  - instead of: ${d.alternatives.join("; ")}` : "";
-      return `${head}${alts}${d.revisit ? `\n  - revisit ${d.revisit}` : ""}`;
+      const head = `- **${regionLine(d.what)}**${d.why ? ` — ${regionLine(d.why)}` : ""} · ${by(d.by)}${d.at ? ` · ${day(d.at)}` : ""}`;
+      const alts = d.alternatives.length ? `\n  - instead of: ${d.alternatives.map(regionLine).join("; ")}` : "";
+      return `${head}${alts}${d.revisit ? `\n  - revisit ${regionLine(d.revisit)}` : ""}`;
     })
     .join("\n");
 }
@@ -172,16 +173,16 @@ function renderQuestions(qs: QuestionEntry[]): string {
   return qs
     .map((q) => {
       const answered = q.status === "answered" ? ` — answered${q.answered_by ? ` by ${link(q.answered_by)}` : ""}${q.answered_at ? ` ${day(q.answered_at)}` : ""}` : "";
-      return `- ${QUESTION_MARK[q.status] ?? "[ ]"} ${q.q.replace(/\n/g, " ")} · ${by(q.by)}${answered}`;
+      return `- ${QUESTION_MARK[q.status] ?? "[ ]"} ${regionLine(q.q)} · ${by(q.by)}${answered}`;
     })
     .join("\n");
 }
 
 function renderStats(st: Stats): string {
-  const dates = [st.first_met ? `first met ${st.first_met}` : "", st.last_contact ? `last contact ${st.last_contact}` : ""].filter(Boolean);
+  const dates = [st.first_met ? `first met ${day(st.first_met)}` : "", st.last_contact ? `last contact ${day(st.last_contact)}` : ""].filter(Boolean);
   const counts = Object.entries(st.counts)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, n]) => `${k} ×${n}${st.last[k] ? ` (last ${st.last[k]})` : ""}`);
+    .map(([k, n]) => `${regionLine(k)} ×${n}${st.last[k] ? ` (last ${day(st.last[k])})` : ""}`);
   return [dates.length ? `- ${dates.join(" · ")}` : "", ...counts.map((c) => `- ${c}`)].filter(Boolean).join("\n");
 }
 
@@ -199,7 +200,7 @@ export function renderEntity(e: Entity, opts: { goal?: boolean } = {}): string {
   body = Object.keys(e.fm.facts).length ? setRegion(body, "facts", renderFacts(e.fm.facts)) : removeRegion(body, "facts");
   body = e.fm.relations.length ? setRegion(body, "relations", renderRelations(e)) : removeRegion(body, "relations");
   if (opts.goal ?? hasGoalProps(e)) {
-    const line = renderProgress(goalProps(e));
+    const line = regionLine(renderProgress(goalProps(e)));
     body = line ? setRegion(body, "progress", line) : removeRegion(body, "progress");
   }
   body = e.fm.guidelines?.length ? setRegion(body, "guidelines", renderGuidelines(e.fm.guidelines)) : removeRegion(body, "guidelines");
@@ -226,7 +227,7 @@ export function getSummary(e: Entity): string {
 }
 
 export function setSummary(e: Entity, text: string): void {
-  e.body = setRegion(e.body, "summary", text.trim());
+  e.body = setRegion(e.body, "summary", escapeRegionText(text.trim()));
 }
 
 export function relationTargets(e: Entity): string[] {

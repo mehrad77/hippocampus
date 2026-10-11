@@ -57,6 +57,17 @@ export function proposeMerge(vault: Vault, a: Entity, b: Entity, field: string):
   return vault.openMerge(a, b, field, evidence);
 }
 
+/**
+ * Whether a note of type `a` may be folded into one of type `b` when an identity key says they're one:
+ * the same type, or types sharing a capability. A person and a company with the same email are not
+ * one note; the human decides (a merge proposal).
+ */
+export function foldable(vault: Vault, a: string, b: string): boolean {
+  if (a === b) return true;
+  const caps = vault.schema.type(b)?.capabilities ?? [];
+  return (vault.schema.type(a)?.capabilities ?? []).some((c) => caps.includes(c));
+}
+
 export interface Identified {
   entity?: Entity;
   /** `name`: the name resolved it; `key`: an identity key did (the caller may add the name as an alias). */
@@ -65,20 +76,26 @@ export interface Identified {
   merge?: Dispute;
   /** Several notes share the key: nothing is picked. */
   ambiguous?: Entity[];
+  /** Notes of an unrelated type with the key: never picked, only proposed as a merge. */
+  foreign?: IdentityMatch[];
 }
 
 /**
  * Which note a report is about, given the note its name resolved to (if any) and the facts it
  * carries. The name wins; a key that points at another note raises a merge proposal instead of
- * moving anything. Without a name, a key that matches exactly one note picks it.
+ * moving anything. Without a name, a key that matches exactly one note of a `foldable` type picks it;
+ * notes of other types come back as `foreign`, for a merge proposal.
  */
 export function identify(vault: Vault, type: string, named: Entity | undefined, facts: Record<string, FactValue>): Identified {
-  const matches = matchIdentity(vault, type, facts);
+  const all = matchIdentity(vault, type, facts);
   if (named) {
-    const other = matches.find((m) => m.entity.slug !== named.slug);
-    if (!other || matches.some((m) => m.entity.slug === named.slug)) return { entity: named, via: "name" };
+    const other = all.find((m) => m.entity.slug !== named.slug);
+    if (!other || all.some((m) => m.entity.slug === named.slug)) return { entity: named, via: "name" };
     return { entity: named, via: "name", merge: proposeMerge(vault, named, other.entity, other.field) };
   }
-  if (matches.length === 1) return { entity: matches[0]!.entity, via: "key" };
-  return matches.length ? { ambiguous: matches.map((m) => m.entity) } : {};
+  const matches = all.filter((m) => foldable(vault, type, m.entity.fm.type));
+  const foreign = all.filter((m) => !matches.includes(m));
+  const other = foreign.length ? { foreign } : {};
+  if (matches.length === 1) return { entity: matches[0]!.entity, via: "key", ...other };
+  return matches.length ? { ambiguous: matches.map((m) => m.entity), ...other } : other;
 }

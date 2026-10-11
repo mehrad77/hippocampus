@@ -30,7 +30,7 @@ Call `remember` once per durable thing you learn:
 
 - One memory per call. Exact values: ISO dates (2026-10-14), amounts with currency, full names.
 - Say how you know it (`confidence`) and which notes it's `about`.
-- Pick the `kind` that fits (the handbook lists them): `fact`, `decision`, `question`, `task`, `interaction`, and any the vault adds. Some kinds take typed `data` (for example `{ "with": "[[ana-souza]]", "channel": "call" }`) and need no text; some keep only a short gist.
+- Pick the `kind` that fits (the handbook lists them): `fact`, `decision`, `question`, `task`, `interaction`, and any the vault adds. Some kinds take typed `data` (for example `{ "with": "[[migration-agency]]", "channel": "call" }`) and need no text; some keep only a short gist.
 - Use `scope` when it only holds somewhere (`lang:pt`).
 - Private matters (health, money, family): set `confidential: true`. It stays out of search, summaries and the chronicle.
 - Corrections are new memories ("the appointment moved to 2026-10-20"), not edits.

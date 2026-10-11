@@ -79,6 +79,14 @@ function canonical(v: unknown): string {
 const regionNames = (body: string) => [...body.matchAll(/%% hippo:begin ([\w-]+) %%/g)].map((m) => m[1]!);
 const cites = (chronicle: string, id: string) => chronicle.includes(`^${id}\n`) || chronicle.trimEnd().endsWith(`^${id}`);
 
+/** The callout of episode `id` in a chronicle day: from its `[!episode]` header to its `^id`. */
+function calloutOf(chronicle: string, id: string): string | undefined {
+  const m = new RegExp(`\\^${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\r?\\n|$)`).exec(chronicle);
+  if (!m) return undefined;
+  const start = chronicle.lastIndexOf("> [!episode]", m.index);
+  return chronicle.slice(Math.max(0, start), m.index);
+}
+
 /**
  * How often a secret value appears. Short values (a CVV, a PIN) only count as whole tokens, or every
  * date that contains "026" would block a run; long ones count anywhere, like `redact` does.
@@ -371,6 +379,23 @@ function auditGoalEdit(path: string, b: Entity, a: Entity, flag: Flag): void {
   }
 }
 
+/** Values of a dispute note's confidential claims. */
+function confidentialClaims(raw: string | undefined): string[] {
+  return (dispute(raw)?.claims ?? []).filter((c) => c.confidential).map((c) => String(c.value).trim()).filter((v) => !isSecretRef(v) && isTrackedConfidential(v));
+}
+
+/** Agent text in a note's managed memory: guidelines, decisions, questions (frontmatter and regions) and objectives. */
+function managedText(e: Entity | undefined): string {
+  if (!e) return "";
+  const fm = e.fm;
+  return [
+    ...(fm.guidelines ?? []).flatMap((g) => [g.rule, g.scope ?? ""]),
+    ...(fm.decisions ?? []).flatMap((d) => [d.what, d.why ?? "", ...d.alternatives]),
+    ...(fm.questions ?? []).map((q) => q.q),
+    ...["guidelines", "decisions", "questions", "objectives"].map((r) => getRegion(e.body, r) ?? ""),
+  ].join("\n");
+}
+
 /** A fact's value is confidential when the fact says so, or its field is confidential or an identity key. */
 function confidentialValues(l: Layout, e: Entity | undefined): string[] {
   if (!e) return [];
@@ -387,16 +412,18 @@ function confidentialValues(l: Layout, e: Entity | undefined): string[] {
 }
 
 /**
- * Confidential values must not newly appear in a note's summary, title or aliases, or in the chronicle;
- * nor may a consolidated confidential episode's text. The values come from the notes this change set
- * touches, and from every note when it writes a summary or the chronicle, which can repeat any of them.
+ * Confidential values must not newly appear in a note's summary, title, aliases or managed memory
+ * (guidelines, decisions, questions, objectives), in a dispute note's body, or in the chronicle; nor
+ * may a consolidated confidential episode's text appear in its own chronicle entry. The values come
+ * from the notes and dispute claims this change set touches, and from every note when it writes a
+ * summary, managed memory or the chronicle, which can repeat any of them.
  */
 async function auditConfidential(i: {
   l: Layout;
   before: VaultStore;
   changes: Change[];
   was: Map<string, string | undefined>;
-  removed: { confidential?: string }[];
+  removed: { id: string; confidential?: string }[];
   flag: Flag;
 }): Promise<void> {
   const { l, changes, was, flag } = i;
@@ -407,7 +434,11 @@ async function auditConfidential(i: {
     return { path: c.path, b: old === undefined ? undefined : parseNote(c.path, old), a: "content" in c ? parseNote(c.path, c.content) : undefined };
   });
   const found = new Set(notes.flatMap((n) => [...confidentialValues(l, n.b), ...confidentialValues(l, n.a)]));
-  const shared = changes.some((c) => "content" in c && under(c.path, l.chronicle)) || notes.some((n) => n.a && summary(n.a) !== summary(n.b));
+  const disputes = changes.filter((c) => "content" in c && under(c.path, l.disputes));
+  for (const c of disputes) for (const v of [...confidentialClaims(was.get(c.path)), ...confidentialClaims("content" in c ? c.content : undefined)]) found.add(v);
+  const shared =
+    changes.some((c) => "content" in c && under(c.path, l.chronicle)) ||
+    notes.some((n) => n.a && (summary(n.a) !== summary(n.b) || managedText(n.a) !== managedText(n.b)));
   if (shared) {
     const paths = new Set((await Promise.all(l.schema.folders().map((t) => i.before.list(t.folder)))).flat());
     for (const path of paths) {
@@ -415,6 +446,7 @@ async function auditConfidential(i: {
       const raw = await i.before.read(path);
       for (const v of confidentialValues(l, raw === undefined ? undefined : parseNote(path, raw))) found.add(v);
     }
+    for (const path of await i.before.list(l.disputes)) for (const v of confidentialClaims(await i.before.read(path))) found.add(v);
   }
   const values = [...found];
   const grew = (now: string, then: string, vs: string[]) => vs.some((v) => occurrences(now, v) > occurrences(then, v));
@@ -423,14 +455,21 @@ async function auditConfidential(i: {
       if (!a) continue;
       if (grew(summary(a), summary(b), values)) flag(path, "confidential value in a summary");
       if (grew(names(a), names(b), values)) flag(path, "confidential value in a title or alias");
+      if (grew(managedText(a), managedText(b), values)) flag(path, "confidential value in managed memory");
+    }
+    for (const c of disputes) {
+      if (!("content" in c)) continue;
+      const old = was.get(c.path);
+      if (grew(parseDoc(c.content).body, old === undefined ? "" : parseDoc(old).body, values)) flag(c.path, "confidential value in a dispute note");
     }
   }
-  const episodes = i.removed.flatMap((r) => (r.confidential ? [r.confidential] : []));
+  const episodes = i.removed.filter((r): r is typeof r & { confidential: string } => !!r.confidential);
   for (const c of changes) {
     if (!("content" in c) || !under(c.path, l.chronicle)) continue;
     const then = was.get(c.path) ?? "";
     if (values.length && grew(chronicleProse(c.content), chronicleProse(then), values)) flag(c.path, "confidential value in the chronicle");
-    if (episodes.some((t) => c.content.split(t).length > then.split(t).length)) flag(c.path, "confidential episode in the chronicle");
+    // Only the episode's own entry: another episode may well say the same words in the open.
+    if (episodes.some((r) => calloutOf(c.content, r.id)?.includes(r.confidential))) flag(c.path, "confidential episode in the chronicle");
   }
 }
 

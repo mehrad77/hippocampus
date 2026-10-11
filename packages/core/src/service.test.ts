@@ -410,7 +410,10 @@ describe("HippoService: people", () => {
     const email = async (caller?: string) => (await svc.get("landlord", { caller })).facts.find((f) => f.field === "email")!.value;
     expect(await email()).toBe("◐ confidential");
     expect(await email("home-finder")).toBe("◐ confidential");
-    expect(await email("player")).toBe("landlord@lisbon.example");
+    // A bound key naming a human isn't the human: only the dashboard's own read (`human`) reveals.
+    expect(await email("player")).toBe("◐ confidential");
+    expect(await email("human")).toBe("◐ confidential");
+    expect((await svc.get("landlord", { human: true })).facts.find((f) => f.field === "email")!.value).toBe("landlord@lisbon.example");
     const svc2 = new HippoService(people({ "characters/landlord.md": LANDLORD.replace("tags: [colleague]", "tags: [colleague, housing]") }), { now });
     expect((await svc2.get("landlord", { caller: "home-finder" })).facts[0]!.value).toBe("landlord@lisbon.example");
     expect((await svc2.askCanon("landlord email", { caller: "home-finder" })).facts.map((f) => f.value)).toContain("landlord@lisbon.example");

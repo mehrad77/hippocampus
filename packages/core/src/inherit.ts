@@ -66,16 +66,20 @@ function mixinsOf(vault: Vault, e: Entity, skip: Set<string>): Entity[] {
  */
 export function meshCadence(own: string | undefined, candidates: (string | undefined)[], warnings: string[] = []): string | undefined {
   const norm = (c: string | undefined) => c?.trim().toLowerCase() || undefined;
-  if (norm(own)) return norm(own);
+  const valid = (raw: string | undefined): string | undefined => {
+    const c = norm(raw);
+    if (!c) return undefined;
+    if (c === NONE || parseDuration(c) !== undefined) return c;
+    warnings.push(`cadence "${raw}" isn't a duration like 2w, 1m or none; ignored`);
+    return undefined;
+  };
+  // A cadence of its own that isn't one is ignored like any other, so the inherited one still applies.
+  const mine = valid(own);
+  if (mine) return mine;
   const values: string[] = [];
   for (const raw of candidates) {
-    const c = norm(raw);
-    if (!c) continue;
-    if (c !== NONE && parseDuration(c) === undefined) {
-      warnings.push(`cadence "${raw}" isn't a duration like 2w, 1m or none; ignored`);
-      continue;
-    }
-    values.push(c);
+    const c = valid(raw);
+    if (c) values.push(c);
   }
   if (values.includes(NONE)) return NONE;
   const counts = new Map<string, number>();

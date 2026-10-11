@@ -1,3 +1,5 @@
+import { VaultError } from "./errors.ts";
+
 /** Fold diacritics (incl. Turkish dotless ı / dotted İ) and lowercase, for matching. */
 export function fold(input: string): string {
   return input
@@ -40,13 +42,19 @@ export function toFieldName(input: string): string {
   );
 }
 
-/** A scope as written in a fact key: folded, lowercase, `:`/`.`/`-`/`_` kept (`lang:pt`, `org:harbor-university`). */
+/**
+ * A scope as written in a fact key: folded, lowercase, letters and digits of any script with
+ * `:`/`.`/`-`/`_` kept (`lang:pt`, `org:harbor-university`, `lang:日本語`). A scope that has
+ * something but normalizes to nothing throws: dropping it would merge its value into the unscoped one.
+ */
 export function normalizeScope(input: string): string {
-  return fold(input)
+  const out = fold(input)
     .trim()
-    .replace(/[^a-z0-9:._-]+/g, "-")
+    .replace(/[^\p{L}\p{N}:._-]+/gu, "-")
     .replace(/-*:-*/g, ":")
     .replace(/^[-:]+|[-:]+$/g, "");
+  if (!out && input.trim()) throw new VaultError(`scope "${input.trim()}" has no letters or digits`);
+  return out;
 }
 
 /** The `facts:` key of `field` in `scope`: `field@scope`, or just `field` without a scope. */
@@ -126,15 +134,29 @@ export function fromLocal(date: string, time: string, timeZone: string): string 
   return new Date(at).toISOString();
 }
 
-const DURATION_DAYS: Record<string, number> = { d: 1, w: 7, m: 30, y: 365 };
+const DURATION_DAYS = { d: 1, w: 7, m: 30, y: 365 } as const;
+export type DurationUnit = keyof typeof DURATION_DAYS;
 
 /**
- * A duration like `3d`, `2w`, `1m` or `1y` (also `2 weeks`, `1 month`) in days; months count 30 days
- * and years 365. Undefined for anything else, including `none`.
+ * A duration like `3d`, `2w`, `1m` or `1y` (also `2 weeks`, `1 month`): a whole positive count and a
+ * unit. The one parser behind due dates, repeats and cadences, so they all accept the same specs.
  */
-export function parseDuration(input: string | undefined): number | undefined {
-  const m = /^\s*(\d+(?:\.\d+)?)\s*(d|days?|w|weeks?|m|months?|y|years?)\s*$/i.exec(input ?? "");
+export function durationSpec(input: string | undefined): { n: number; unit: DurationUnit } | undefined {
+  const m = /^\s*(\d+)\s*(d|days?|w|weeks?|m|months?|y|years?)\s*$/i.exec(input ?? "");
   if (!m) return undefined;
-  const days = Number(m[1]) * DURATION_DAYS[m[2]!.toLowerCase()[0]!]!;
-  return days > 0 ? days : undefined;
+  const n = Number(m[1]);
+  return n > 0 ? { n, unit: m[2]!.toLowerCase()[0] as DurationUnit } : undefined;
+}
+
+/** A duration (see `durationSpec`) in days; months count 30 days and years 365. Undefined for anything else, including `none`. */
+export function parseDuration(input: string | undefined): number | undefined {
+  const spec = durationSpec(input);
+  return spec ? spec.n * DURATION_DAYS[spec.unit] : undefined;
+}
+
+/** Whether `s` is exactly a real calendar day, `YYYY-MM-DD` (not `2026-02-30`, not a timestamp). */
+export function isCalendarDay(s: string | undefined): boolean {
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const t = Date.parse(`${s}T00:00:00Z`);
+  return !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === s;
 }

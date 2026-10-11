@@ -63,3 +63,17 @@ describe("prompts", () => {
     expect(prompt).not.toContain("Rui Costa");
   });
 });
+
+describe("claims prompt (finding 7)", () => {
+  it("masks hidden facts as the summary step does", async () => {
+    const store = fixtureStore({
+      "characters/landlord.md": "---\ntype: character\ntitle: The landlord\nfacts:\n  salary: { value: 4200 EUR, status: canon, confidential: true }\n  phone: { value: +351 900 000 001, status: canon }\n---\n",
+      "inbox/home-finder/2026-09-27T100000-a.md": "---\nagent: home-finder\nkind: fact\nat: 2026-09-27T10:00:00Z\n---\nThe landlord called.\n",
+    });
+    const v = await Vault.load(store, { now });
+    const { prompt } = claimsPrompt(v, v.episodes[0]!, [v.resolve("landlord")!], []);
+    expect(prompt).toContain("salary=◐ confidential");
+    expect(prompt).not.toContain("4200");
+    expect(prompt).toContain("phone=+351 900 000 001");
+  });
+});

@@ -1,7 +1,7 @@
 import { VaultError } from "./errors.ts";
 import type { EpisodeData, FactValue, FieldDef } from "./schema.ts";
 import type { ResolvedKind, SchemaRegistry } from "./schema-registry.ts";
-import { slugify, truncate } from "./text.ts";
+import { isCalendarDay, slugify, truncate } from "./text.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
 /** Gist length when a `gist` kind doesn't set `gist_max`. */
@@ -46,7 +46,7 @@ function coerce(name: string, def: FieldDef, raw: unknown): FactValue {
     }
     case "date": {
       const s = String(raw).trim();
-      if (!/^\d{4}-\d{2}-\d{2}/.test(s) || Number.isNaN(Date.parse(s.slice(0, 10)))) throw bad("an ISO date (YYYY-MM-DD)");
+      if (!isCalendarDay(s)) throw bad("an ISO date (YYYY-MM-DD)");
       return s;
     }
     case "ref": {

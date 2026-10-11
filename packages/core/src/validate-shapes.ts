@@ -2,7 +2,7 @@ import type { Episode } from "./episode.ts";
 import type { EpisodeData, FactValue, FieldDef } from "./schema.ts";
 import type { ResolvedKind } from "./schema-registry.ts";
 import { isSecretRef } from "./secrets.ts";
-import { parseFactKey } from "./text.ts";
+import { isCalendarDay, parseFactKey } from "./text.ts";
 import type { Vault } from "./vault.ts";
 import { unwrapLink } from "./wikilink.ts";
 
@@ -18,7 +18,6 @@ export interface ShapeFinding {
   message: string;
 }
 
-const ISO_DAY = /^\d{4}-\d{2}-\d{2}/;
 const LINK = /^\[\[.+\]\]$/;
 
 /** Why `value` doesn't fit `def`'s kind, or undefined when it does. A `ref` fits when it resolves to a note. */
@@ -31,7 +30,7 @@ export function kindMismatch(vault: Vault, def: FieldDef, value: FactValue): str
     case "bool":
       return typeof value === "boolean" || /^(true|false|yes|no)$/i.test(s) ? undefined : "true or false";
     case "date":
-      return ISO_DAY.test(s) && !Number.isNaN(Date.parse(s.slice(0, 10))) ? undefined : "an ISO date";
+      return isCalendarDay(s) ? undefined : "an ISO date";
     case "enum":
       return (def.values ?? []).some((v) => v.toLowerCase() === s.toLowerCase()) ? undefined : `one of ${(def.values ?? []).join(", ") || "(no values declared)"}`;
     case "ref":

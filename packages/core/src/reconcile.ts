@@ -11,6 +11,15 @@ export interface IncomingFact {
   valid_from?: string;
   valid_until?: string;
   confidence?: number;
+  /** The report marks the value confidential: a claim it raises says so. */
+  confidential?: boolean;
+}
+
+/** A claim already in the open dispute about the field, ranked against the incoming source. */
+export interface DisputeClaimant {
+  authority: Authority;
+  /** Whether it comes from the incoming report's own source. */
+  sameAuthor: boolean;
 }
 
 export type Decision =
@@ -40,6 +49,8 @@ export interface ReconcileInput {
    * the humans pass it, since a missing `by` is the primary human; otherwise `by` must match.
    */
   sameAuthor?: boolean;
+  /** The open dispute's claims, when the existing fact is disputed: a human settles it only when no other claimant ranks as high. */
+  disputeClaims?: DisputeClaimant[];
 }
 
 export function sameValue(a: FactValue, b: FactValue): boolean {
@@ -66,7 +77,7 @@ export const MAX_WAS = 5;
  * | existing ↓ / incoming →                     | human               | authority | none        |
  * | ------------------------------------------- | ------------------- | --------- | ----------- |
  * | absent                                      | canon               | canon     | rumor       |
- * | same value                                  | confirm             | promote   | corroborate |
+ * | same value                                  | confirm³            | promote   | corroborate |
  * | differs, existing by human                  | see two humans ↓    | dispute   | dispute     |
  * | differs, existing authority                 | replace             | dispute   | keep        |
  * | differs, existing none                      | replace             | replace   | dispute     |
@@ -76,14 +87,20 @@ export const MAX_WAS = 5;
  * | two humans: incoming has the domain         | replace             |           |             |
  * | two humans: existing has the domain         | keep                |           |             |
  * | two humans: equal rank                      | dispute             |           |             |
- * | succession field, newer, rank ≥ existing,   | succeed: old value closed (`valid_until`) into  |
+ * | succession field, newer⁴, rank ≥ existing,  | succeed: old value closed (`valid_until`) into  |
  * |   existing not human-held²                  |   `was` with `why: succeeded`                   |
- * | succession field, older than existing       | backfill into `was`; current value stays        |
+ * | succession field, older⁴ than existing      | backfill into `was`; current value stays        |
+ * | existing retconned                          | as absent (the old value, and its `confidential`, carried over) |
  * | human_only field, incoming not human        | propose: fact untouched (same value corroborates) |
  * | different scopes (`field@scope`)            | never compared: each scope is its own key       |
  *
- * ¹ Unless the dispute's value is held by another human of equal or higher rank: then it adds a claim.
+ * ¹ Unless another source in the dispute (its value's holder, or any claimant) is a human of equal or
+ *   higher rank: then it adds a claim. A human repeating their own claim never settles a dispute with
+ *   an equal: that needs a ruling.
  * ² Succession never closes a human-held value (it disputes as above), except by that same human.
+ * ³ The fact's `by` moves to the incoming human only when they rank at least as high as its holder.
+ * ⁴ When either side's time is a bare date (`valid_from: 2026-09-27`), times compare by day, and the
+ *   same day counts as newer, not older.
  */
 export function reconcileFact(input: ReconcileInput): Decision {
   const { existing, incoming, incomingAuthority, existingAuthority, canonThreshold, def } = input;
@@ -102,13 +119,16 @@ export function reconcileFact(input: ReconcileInput): Decision {
       action: "create",
       fact: {
         ...fresh(incoming, trusted ? "canon" : "rumor"),
-        ...(existing ? { was: capWas([...(existing.was ?? []), priorOf(existing)]) } : {}),
+        // A retracted value that was confidential stays so when it's reported again.
+        ...(existing ? { ...keepConfidential(existing), was: capWas([...(existing.was ?? []), priorOf(existing)]) } : {}),
       },
     };
   }
 
   if (live.status === "disputed") {
-    if (humanIn && (RANK[incomingAuthority] > RANK[existingAuthority] || sameAuthor)) return replace(live, incoming, "canon", "human ruling settles the dispute");
+    const rival = (input.disputeClaims ?? []).some((c) => !c.sameAuthor && RANK[c.authority] >= RANK[incomingAuthority]);
+    const outranks = RANK[incomingAuthority] > RANK[existingAuthority] || sameAuthor;
+    if (humanIn && !rival && outranks) return replace(live, incoming, "canon", "human ruling settles the dispute");
     return { action: "dispute", fact: { ...live }, claims: [claimOf(incoming)] };
   }
 
@@ -123,17 +143,21 @@ export function reconcileFact(input: ReconcileInput): Decision {
     };
     if (fact.status === "rumor") fact.seen_by = [...seen];
     else delete fact.seen_by;
-    if (humanIn) fact.by = incoming.by;
+    // A human who agrees with a higher-ranked one doesn't take the value over.
+    if (humanIn && RANK[incomingAuthority] >= RANK[existingAuthority]) fact.by = incoming.by;
     return { action: "corroborate", fact, promoted: promote };
   }
 
   // Values differ.
   const newer = latest(live.at, incoming.at) === incoming.at;
   if (def?.succession) {
-    const inTime = incoming.valid_from ?? incoming.at;
-    const exTime = live.valid_from ?? live.at;
+    let inTime = incoming.valid_from ?? incoming.at;
+    let exTime = live.valid_from ?? live.at;
+    // A bare date says which day, not when on it: compare days, and the same day isn't older.
+    const coarse = !!exTime && (BARE_DAY.test(inTime) || BARE_DAY.test(exTime));
+    if (coarse) [inTime, exTime] = [inTime.slice(0, 10), exTime!.slice(0, 10)];
     if (exTime && inTime < exTime) return backfill(live, incoming);
-    const later = !exTime || inTime > exTime;
+    const later = !exTime || inTime > exTime || (coarse && inTime === exTime);
     if (later && RANK[incomingAuthority] >= RANK[existingAuthority] && (!humanHeld || sameAuthor)) {
       return succeed(live, incoming, trusted ? "canon" : "rumor");
     }
@@ -166,8 +190,17 @@ export function reconcileFact(input: ReconcileInput): Decision {
   return dispute(live, incoming);
 }
 
-function claimOf(f: { value: FactValue; by?: string; at?: string; src?: string[]; confidence?: number }): Claim {
-  return { value: f.value, by: f.by, at: f.at, src: [...(f.src ?? [])], ...(f.confidence !== undefined ? { confidence: f.confidence } : {}) };
+const BARE_DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+function claimOf(f: { value: FactValue; by?: string; at?: string; src?: string[]; confidence?: number; confidential?: boolean }): Claim {
+  return {
+    value: f.value,
+    by: f.by,
+    at: f.at,
+    src: [...(f.src ?? [])],
+    ...(f.confidence !== undefined ? { confidence: f.confidence } : {}),
+    ...(f.confidential ? { confidential: true } : {}),
+  };
 }
 
 function dispute(existing: Fact, incoming: IncomingFact): Decision {

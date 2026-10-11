@@ -284,28 +284,28 @@ describe("auditChanges: confidential values", () => {
   });
 
   it("count a fact marked confidential, and only new occurrences", async () => {
-    const note = "---\ntype: character\ntitle: Ana\nfacts:\n  salary: { value: 4200 EUR, status: canon, confidential: true }\n---\n%% hippo:begin summary %%\nEarns 4200 EUR.\n%% hippo:end summary %%\n\n## Notes\n";
-    const s = managedStore({ "characters/ana.md": note });
-    expect(await audit([{ path: "characters/ana.md", content: note.replace("Earns 4200 EUR.", "Earns 4200 EUR, works at Harbor University.") }], curator, [], s)).toEqual([]);
-    expect(await audit([{ path: "characters/ana.md", content: note.replace("Earns 4200 EUR.", "Earns 4200 EUR; 4200 EUR a month.") }], curator, [], s)).toEqual([
-      { path: "characters/ana.md", rule: "confidential value in a summary" },
+    const note = "---\ntype: character\ntitle: Case Officer\nfacts:\n  salary: { value: 4200 EUR, status: canon, confidential: true }\n---\n%% hippo:begin summary %%\nEarns 4200 EUR.\n%% hippo:end summary %%\n\n## Notes\n";
+    const s = managedStore({ "characters/case-officer.md": note });
+    expect(await audit([{ path: "characters/case-officer.md", content: note.replace("Earns 4200 EUR.", "Earns 4200 EUR, works at Harbor University.") }], curator, [], s)).toEqual([]);
+    expect(await audit([{ path: "characters/case-officer.md", content: note.replace("Earns 4200 EUR.", "Earns 4200 EUR; 4200 EUR a month.") }], curator, [], s)).toEqual([
+      { path: "characters/case-officer.md", rule: "confidential value in a summary" },
     ]);
   });
 
   it("ignore the chronicle's own dates and headers, and values too short or common to look for", async () => {
-    const ana = (value: string) => `---\ntype: character\ntitle: Ana\nfacts:\n  code: { value: "${value}", status: canon, confidential: true }\n---\n\n## Notes\n`;
+    const officer = (value: string) => `---\ntype: character\ntitle: Case Officer\nfacts:\n  code: { value: "${value}", status: canon, confidential: true }\n---\n\n## Notes\n`;
     const day = (text: string): Change => ({ path: DAY, content: `---\ntype: chronicle\ndate: 2026-09-27\n---\n# 2026-09-27\n\n> [!episode] 10:00 · [[home-finder]] · observation\n> ${text}\n\n^ep-x\n` });
-    const touch = (raw: string): Change => ({ path: "characters/ana.md", content: raw.replace("title: Ana", "title: Ana\ntags: [housing]") });
+    const touch = (raw: string): Change => ({ path: "characters/case-officer.md", content: raw.replace("title: Case Officer", "title: Case Officer\ntags: [housing]") });
     // A year: in every chronicle's frontmatter and heading, and in ordinary prose.
-    const year = managedStore({ "characters/ana.md": ana("2026") });
-    expect(await audit([touch(ana("2026")), day("Viewed a flat built in 2026.")], curator, [], year)).toEqual([]);
+    const year = managedStore({ "characters/case-officer.md": officer("2026") });
+    expect(await audit([touch(officer("2026")), day("Viewed a flat built in 2026.")], curator, [], year)).toEqual([]);
     // A distinctive value still counts, but not in the generated lines.
-    const date = managedStore({ "characters/ana.md": ana("2026-09-27") });
-    expect(await audit([touch(ana("2026-09-27")), day("Called the landlord.")], curator, [], date)).toEqual([]);
-    expect(await audit([touch(ana("2026-09-27")), day("Ana's code is 2026-09-27.")], curator, [], date)).toEqual([{ path: DAY, rule: "confidential value in the chronicle" }]);
+    const date = managedStore({ "characters/case-officer.md": officer("2026-09-27") });
+    expect(await audit([touch(officer("2026-09-27")), day("Called the landlord.")], curator, [], date)).toEqual([]);
+    expect(await audit([touch(officer("2026-09-27")), day("The officer's code is 2026-09-27.")], curator, [], date)).toEqual([{ path: DAY, rule: "confidential value in the chronicle" }]);
     // Six digits are an identifier, not a year.
-    const long = managedStore({ "characters/ana.md": ana("482913") });
-    expect(await audit([touch(ana("482913")), day("Her code is 482913.")], curator, [], long)).toEqual([{ path: DAY, rule: "confidential value in the chronicle" }]);
+    const long = managedStore({ "characters/case-officer.md": officer("482913") });
+    expect(await audit([touch(officer("482913")), day("Her code is 482913.")], curator, [], long)).toEqual([{ path: DAY, rule: "confidential value in the chronicle" }]);
   });
 
   it("come from every note when the chronicle or a summary is written, not only the notes touched", async () => {

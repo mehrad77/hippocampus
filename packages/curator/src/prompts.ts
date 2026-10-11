@@ -276,8 +276,10 @@ export function openQuestions(entities: Entity[]): { id: string; slug: string; q
 
 export function claimsPrompt(vault: Vault, ep: Episode, entities: Entity[], goals: Entity[], houseRules?: string) {
   const describe = (e: Entity) => {
+    // Hidden values (secrets, confidential facts, identity keys) stay masked, as in the summary step:
+    // the model needs the field names to reuse, not the values, and its answer may echo what it reads.
     const facts = Object.entries(e.fm.facts)
-      .map(([k, f]) => `${k}=${formatValue(f.value)}`)
+      .map(([k, f]) => `${k}=${formatValue(f.value, { confidential: isHiddenFact(vault.schema, e.fm.type, k, f) })}`)
       .join("; ");
     return `- ${e.slug} (${e.fm.type}: ${displayName(e)})${facts ? `\n    existing facts: ${facts}` : ""}`;
   };

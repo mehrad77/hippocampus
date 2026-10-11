@@ -202,7 +202,7 @@ describe("applyFact rows that need a vault", () => {
     expect(pc.fm.facts["greeting@lang:pt"]).toMatchObject({ value: "Olá", status: "canon" });
     expect(v.openDisputes()).toEqual([]);
     await applyFact(v, pc, "greeting", "Oi", { by: "home-finder", at: at2, src: ["ep-4"] }, { scope: "lang:pt" });
-    expect(v.openDisputes().map((d) => [d.slug, d.fm.field])).toEqual([["dispute-player-greeting-lang-pt", "greeting@lang:pt"]]);
+    expect(v.openDisputes().map((d) => [d.slug, d.fm.field])).toEqual([[expect.stringMatching(/^dispute-player-greeting-lang-pt-[0-9a-z]{6}$/), "greeting@lang:pt"]]);
   });
 
   it("ranks the human whose domain covers the entity or field above the other human", async () => {
@@ -243,5 +243,50 @@ describe("applyFact rows that need a vault", () => {
     const pc = v.resolve("player")!;
     await applyFact(v, pc, "phone", "+351 900 000 003", { by: "player", at: at1, src: ["ep-1"] }, { confidential: true, confidence: 0.9, validUntil: "2027-01-01" });
     expect(pc.fm.facts.phone).toMatchObject({ confidential: true, confidence: 0.9, valid_until: "2027-01-01" });
+  });
+});
+
+describe("review fixes: corroboration, disputes between humans, succession days, retcons", () => {
+  it("a human agreeing with a higher-ranked human doesn't take the value over", () => {
+    const d = run({ existing: fact("X", "player"), incoming: { value: "X", by: "partner", at: at2, src: ["ep-2"] }, incomingAuthority: "human", existingAuthority: "human_domain" });
+    expect(d.action).toBe("corroborate");
+    expect(d.fact.by).toBe("player");
+    // An equal or higher-ranked human does.
+    expect(run({ existing: fact("X", "player"), incoming: { value: "X", by: "partner", at: at2, src: [] }, incomingAuthority: "human_domain", existingAuthority: "human" }).fact.by).toBe("partner");
+  });
+
+  it("a human repeating their own claim doesn't settle a dispute an equal human has a claim in", () => {
+    const existing = fact("Alfama", "player", "disputed");
+    const incoming = { value: "Alfama", by: "player", at: at2, src: ["ep-3"] };
+    const rival = { disputeClaims: [{ authority: "human" as const, sameAuthor: true }, { authority: "human" as const, sameAuthor: false }] };
+    expect(decide({ existing, incoming, incomingAuthority: "human", existingAuthority: "human", sameAuthor: true, ...rival }).action).toBe("dispute");
+    // Alone in the dispute (the other side an agent), the human's word settles it.
+    const agent = { disputeClaims: [{ authority: "human" as const, sameAuthor: true }, { authority: "none" as const, sameAuthor: false }] };
+    expect(decide({ existing, incoming, incomingAuthority: "human", existingAuthority: "human", sameAuthor: true, ...agent }).action).toBe("replace");
+  });
+
+  it("applyFact: two humans of equal rank need a ruling", async () => {
+    const v = await twoHumans({ "locations/lisbon.md": "---\ntype: location\ntitle: Lisbon\n---\n" });
+    const e = v.resolve("lisbon")!;
+    await applyFact(v, e, "district", "Alfama", { by: "player", at: at0, src: ["ep-1"] });
+    expect((await applyFact(v, e, "district", "Belem", { by: "game-master", at: at1, src: ["ep-2"] })).decision).toBe("dispute");
+    expect((await applyFact(v, e, "district", "Alfama", { by: "player", at: at2, src: ["ep-3"] })).decision).toBe("dispute");
+    expect(e.fm.facts.district!.status).toBe("disputed");
+    expect(v.disputeFor("lisbon", "district")!.fm.status).toBe("open");
+  });
+
+  it("succession by bare date: the same day is newer, not older", () => {
+    const base = { incomingAuthority: "authority" as const, existingAuthority: "authority" as const, def: succession, sameAuthor: true };
+    const same = run({ ...base, existing: fact("Harbor University", "job-scout", "canon", "2026-09-27T08:00:00Z"), incoming: { value: "Lisbon Tech", by: "job-scout", at: "2026-09-27T10:00:00Z", valid_from: "2026-09-27", src: [] } });
+    expect(same.action).toBe("succeed");
+    expect(same.fact.value).toBe("Lisbon Tech");
+    const older = run({ ...base, existing: fact("Harbor University", "job-scout", "canon", "2026-09-27T08:00:00Z"), incoming: { value: "Lisbon Tech", by: "job-scout", at: "2026-09-27T10:00:00Z", valid_from: "2026-09-26", src: [] } });
+    expect(older.action).toBe("backfill");
+  });
+
+  it("re-reporting a retconned confidential value keeps it confidential", () => {
+    const d = run({ existing: { ...fact("4200 EUR", "player", "retconned"), confidential: true }, incoming: { value: "4300 EUR", by: "job-scout", at: at2, src: [] } });
+    expect(d.action).toBe("create");
+    expect(d.fact).toMatchObject({ value: "4300 EUR", confidential: true });
   });
 });

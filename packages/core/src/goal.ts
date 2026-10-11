@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Entity } from "./entity.ts";
 import { VaultError } from "./errors.ts";
 import { getRegion, parseChecklist, renderChecklist, setRegion, type ChecklistItem } from "./markdown.ts";
-import { localParts, normalizeName } from "./text.ts";
+import { durationSpec, isCalendarDay, localParts, normalizeName } from "./text.ts";
 import type { Vault } from "./vault.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
@@ -38,6 +38,8 @@ export const Repeat = z.preprocess(
   z.object({
     every: opt(z.coerce.string()),
     after_last: opt(z.coerce.string()),
+    /** Day of month a monthly or yearly repeat keeps to, once a short month has clamped its due date (31 → 28 → 31). */
+    day: opt(z.coerce.number().int().min(1).max(31)).catch(undefined),
   }),
 );
 export type Repeat = z.infer<typeof Repeat>;
@@ -72,7 +74,6 @@ export const Clock = z.object({
 /** @deprecated See `Clock`. */
 export type Clock = z.infer<typeof Clock>;
 
-const ISO_DAY = /^\d{4}-\d{2}-\d{2}/;
 const raw = (e: Pick<Entity, "fm">) => e.fm as Record<string, unknown>;
 
 /** A v1 note's `clocks:`, the valid ones. */
@@ -114,21 +115,27 @@ export function goalStateOf(vault: Vault, e: Entity): GoalState {
   return goalState(goalProps(e).status, vault.schema.type(e.fm.type)?.statuses);
 }
 
-/** `day` (YYYY-MM-DD) plus `spec` (`3d`, `2w`, `1m`, `1y`); months and years are calendar ones. Undefined for a bad spec. */
-export function addDuration(day: string, spec: string): string | undefined {
-  const m = /^\s*(\d+)\s*(d|days?|w|weeks?|m|months?|y|years?)\s*$/i.exec(spec);
-  if (!m || !ISO_DAY.test(day)) return undefined;
-  const n = Number(m[1]);
-  if (n <= 0) return undefined;
-  const unit = m[2]!.toLowerCase()[0]!;
-  const [y, mo, d] = day.slice(0, 10).split("-").map(Number) as [number, number, number];
+/**
+ * `day` (YYYY-MM-DD) plus `spec` (`3d`, `2w`, `1m`, `1y`); months and years are calendar ones.
+ * `anchorDay` is the day of month a monthly or yearly step keeps to (default: `day`'s), so a series
+ * started on the 31st goes 31 Jan → 28 Feb → 31 Mar instead of drifting to the 28th.
+ * Undefined for a bad spec or a day that isn't a calendar date.
+ */
+export function addDuration(day: string, spec: string, anchorDay?: number): string | undefined {
+  const step = durationSpec(spec);
+  if (!step || !isCalendarDay(day)) return undefined;
+  const { n, unit } = step;
+  const [y, mo, d] = day.split("-").map(Number) as [number, number, number];
   if (unit === "d" || unit === "w") return new Date(Date.UTC(y, mo - 1, d + n * (unit === "w" ? 7 : 1))).toISOString().slice(0, 10);
   const months = unit === "m" ? n : 12 * n;
   const first = new Date(Date.UTC(y, mo - 1 + months, 1));
   // 31 Jan + 1 month is the end of February, not 3 March.
   const lastDay = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
-  return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), Math.min(d, lastDay))).toISOString().slice(0, 10);
+  return new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), Math.min(anchorDay ?? d, lastDay))).toISOString().slice(0, 10);
 }
+
+/** An objective as one line: agent text can't break out of its checklist item. */
+const objectiveText = (text: string) => text.replace(/\s+/g, " ").trim();
 
 /** `interaction(with=[[x]])` → the kind and the entity; a bare `interaction` counts with the counterparty. */
 export function parseAfterLast(spec: string): { kind: string; with?: string } {
@@ -187,7 +194,7 @@ export function getObjectives(e: Pick<Entity, "body">): ChecklistItem[] {
 }
 
 export function setObjectives(e: Pick<Entity, "body">, items: ChecklistItem[]): void {
-  e.body = setRegion(e.body, "objectives", renderChecklist(items));
+  e.body = setRegion(e.body, "objectives", renderChecklist(items.map((i) => ({ ...i, text: objectiveText(i.text) })).filter((i) => i.text)));
 }
 
 export function matchObjective<T extends { text: string }>(items: T[], text: string): T | undefined {
@@ -235,11 +242,11 @@ export function applyGoalUpdate(vault: Vault, goal: Entity, u: GoalUpdate, by: s
     throw new VaultError(`unknown status "${u.status}" for ${goal.slug}; use one of ${known.join(", ")}`);
   }
   const due = u.due?.trim() || undefined;
-  if (due && !ISO_DAY.test(due)) throw new VaultError(`due must be an ISO date (YYYY-MM-DD), not "${u.due}"`);
+  if (due && !isCalendarDay(due)) throw new VaultError(`due must be an ISO date (YYYY-MM-DD), not "${u.due}"`);
   const every = u.repeat?.every?.trim() || undefined;
   const afterLast = u.repeat?.after_last?.trim() || undefined;
   const repeat = every || afterLast ? { every, after_last: afterLast } : undefined;
-  if (repeat && (!every || !addDuration("2000-01-01", every))) throw new VaultError(`repeat needs an interval like 1w, 2w, 1m or 1y${every ? `, not "${every}"` : ""}`);
+  if (repeat && (!every || !durationSpec(every))) throw new VaultError(`repeat needs an interval like 1w, 2w, 1m or 1y${every ? `, not "${every}"` : ""}`);
   const total = u.progress ? Math.round(u.progress.total ?? before.progress?.total ?? 0) : 0;
   if (u.progress && total < 1) throw new VaultError(`progress of ${goal.slug} needs a total (how many steps make it done)`);
 
@@ -258,14 +265,16 @@ export function applyGoalUpdate(vault: Vault, goal: Entity, u: GoalUpdate, by: s
       changes.push(`${key} ${value}`);
     }
   }
-  if (u.repeat !== undefined && JSON.stringify(before.repeat ?? null) !== JSON.stringify(repeat ?? null)) {
+  const same = (r: Repeat | undefined) => JSON.stringify(r ? { every: r.every, after_last: r.after_last } : null);
+  if (u.repeat !== undefined && same(before.repeat) !== same(repeat)) {
     fm.repeat = repeat ? Object.fromEntries(Object.entries(repeat).filter(([, v]) => v !== undefined)) : undefined;
     changes.push(repeat ? `repeat every ${every}${afterLast ? ` after ${afterLast}` : ""}` : "repeat none");
   }
 
   const objectives = getObjectives(goal);
   let touchedObjectives = false;
-  for (const text of u.complete ?? []) {
+  const lines = (xs: string[] | undefined) => (xs ?? []).map(objectiveText).filter(Boolean);
+  for (const text of lines(u.complete)) {
     const target = matchObjective(objectives, text);
     if (target && !target.done) {
       target.done = true;
@@ -277,7 +286,7 @@ export function applyGoalUpdate(vault: Vault, goal: Entity, u: GoalUpdate, by: s
       changes.push(`✓ ${text} (new)`);
     }
   }
-  for (const text of u.reopen ?? []) {
+  for (const text of lines(u.reopen)) {
     const target = matchObjective(objectives, text);
     if (target?.done) {
       target.done = false;
@@ -285,7 +294,7 @@ export function applyGoalUpdate(vault: Vault, goal: Entity, u: GoalUpdate, by: s
       changes.push(`○ ${target.text}`);
     }
   }
-  for (const text of u.add ?? []) {
+  for (const text of lines(u.add)) {
     if (!matchObjective(objectives, text)) {
       objectives.push({ text, done: false });
       touchedObjectives = true;
@@ -312,9 +321,19 @@ export function applyGoalUpdate(vault: Vault, goal: Entity, u: GoalUpdate, by: s
     fm.last_done = today;
     changes.push(`last_done ${today}`);
     const props = goalProps(goal);
-    const anchor = rolls.after_last ? later(lastContact(vault, props), today)! : props.due && ISO_DAY.test(props.due) ? props.due.slice(0, 10) : today;
-    const next = addDuration(anchor, rolls.every);
+    const fromDue = !rolls.after_last && isCalendarDay(props.due);
+    const anchor = rolls.after_last ? later(lastContact(vault, props), today)! : fromDue ? props.due! : today;
+    // Monthly and yearly repeats keep the day they started on, through short months.
+    const step = durationSpec(rolls.every);
+    const anchorDay = step && (step.unit === "m" || step.unit === "y") ? (before.repeat?.day ?? Number(anchor.slice(8, 10))) : undefined;
+    let next = addDuration(anchor, rolls.every, anchorDay);
+    // A goal done long after it was due comes back next time it's due from now, not on a date already past.
+    for (let i = 0; next && next <= today && i < 10_000; i++) next = addDuration(next, rolls.every, anchorDay);
     if (next && setDue(fm, next)) changes.push(`due ${next}`);
+    if (anchorDay !== undefined && next && Number(next.slice(8, 10)) !== anchorDay) {
+      const r = fm.repeat && typeof fm.repeat === "object" ? (fm.repeat as Record<string, unknown>) : { every: rolls.every };
+      fm.repeat = { ...r, day: anchorDay };
+    }
     for (const o of objectives) {
       if (!o.done) continue;
       o.done = false;

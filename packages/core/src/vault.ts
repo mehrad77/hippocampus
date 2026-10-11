@@ -11,7 +11,7 @@ import { loadSchema, type SchemaRegistry } from "./schema-registry.ts";
 import { isSecretRef } from "./secrets.ts";
 import { applyChanges, type Change, type CommitMeta, type VaultStore } from "./store.ts";
 import { channelOf, dataLine, gistMax } from "./kinds.ts";
-import { localParts, normalizeName, parseFactKey, slugify, truncate } from "./text.ts";
+import { hash, localParts, normalizeName, parseFactKey, slugify, truncate } from "./text.ts";
 import { link, unwrapLink } from "./wikilink.ts";
 
 export interface Dispute {
@@ -339,15 +339,56 @@ export class Vault {
     this.dirty.add(e.path);
   }
 
-  /** Dispute note name for a `facts:` key; a scoped key adds its scope (`dispute-x-greeting-lang-pt`). */
+  /**
+   * Dispute note name for a `facts:` key. A scoped key adds its scope and a short hash of the whole
+   * key (`dispute-x-greeting-lang-pt-1a2b3c`): slugs fold `lang:pt`, `lang-pt` and `lang.pt` (and the
+   * unscoped `greeting_lang_pt`) together, and each key needs a note of its own.
+   */
   disputeSlug(entity: string, field: string): string {
     const { field: base, scope } = parseFactKey(field);
-    return `dispute-${entity}-${base}${scope ? `-${slugify(scope)}` : ""}`.replace(/_/g, "-");
+    return `dispute-${entity}-${base}${scope ? `-${slugify(scope)}-${hash(field).slice(0, 6)}` : ""}`.replace(/_/g, "-");
+  }
+
+  /** Proposal note name for a `facts:` key (`proposal-x-greeting-lang-pt-1a2b3c`). */
+  proposalSlug(entity: string, field: string): string {
+    return this.disputeSlug(entity, field).replace(/^dispute-/, "proposal-");
+  }
+
+  /** Where a key's dispute (or proposal) note may live: its slug, that slug with a hash when taken by another key, and the slug older versions gave it. */
+  private noteSlugs(entity: string, field: string, kind: "dispute" | "proposal"): string[] {
+    const { field: base, scope } = parseFactKey(field);
+    const primary = this.disputeSlug(entity, field);
+    const legacy = `dispute-${entity}-${base}${scope ? `-${slugify(scope)}` : ""}`.replace(/_/g, "-");
+    return [primary, `${primary}-${hash(field).slice(0, 6)}`, legacy].map((s) => s.replace(/^dispute-/, `${kind}-`));
+  }
+
+  /** The dispute (or proposal) note about `field` of `entity`, if there is one: always one about that exact key. */
+  disputeFor(entity: string, field: string, kind: "dispute" | "proposal" = "dispute"): Dispute | undefined {
+    for (const slug of this.noteSlugs(entity, field, kind)) {
+      const d = this.disputes.get(slug);
+      if (d && d.fm.field === field && unwrapLink(d.fm.entity) === entity) return d;
+    }
+    return undefined;
+  }
+
+  /** The slug for a new note about `field`: the first candidate no other key's note holds. */
+  private freeSlug(entity: string, field: string, kind: "dispute" | "proposal"): string {
+    const [primary, hashed] = this.noteSlugs(entity, field, kind);
+    return this.disputes.has(primary!) ? hashed! : primary!;
+  }
+
+  /** Whether a dispute's claims or the fact it's about are confidential: then no value of it is shown. */
+  disputeHidden(d: Dispute, entity: Entity | undefined = this.resolve(d.fm.entity)): boolean {
+    if (d.fm.claims.some((c) => c.confidential)) return true;
+    if (!entity) return false;
+    const f = entity.fm.facts[d.fm.field];
+    const def = this.schema.fieldDef(entity.fm.type, d.fm.field);
+    return !!(f?.confidential || def?.confidential || def?.identity_key);
   }
 
   openDispute(entity: Entity, field: string, claims: Claim[]): Dispute {
-    const slug = this.disputeSlug(entity.slug, field);
-    let d = this.disputes.get(slug);
+    let d = this.disputeFor(entity.slug, field);
+    const slug = d?.slug ?? this.freeSlug(entity.slug, field, "dispute");
     const now = this.nowIso();
     if (!d) {
       d = {
@@ -366,17 +407,14 @@ export class Vault {
     }
     for (const c of claims) {
       const same = d.fm.claims.find((x) => String(x.value) === String(c.value) && x.by === c.by);
-      if (same) same.src = [...new Set([...same.src, ...c.src])];
-      else d.fm.claims.push(c);
+      if (same) {
+        same.src = [...new Set([...same.src, ...c.src])];
+        if (c.confidential) same.confidential = true;
+      } else d.fm.claims.push(c);
     }
-    d.body = renderDisputeBody(d, displayName(entity));
+    d.body = renderDisputeBody(d, displayName(entity), this.disputeHidden(d, entity));
     this.dirty.add(d.path);
     return d;
-  }
-
-  /** Proposal note name for a `facts:` key (`proposal-x-greeting-lang-pt`). */
-  proposalSlug(entity: string, field: string): string {
-    return this.disputeSlug(entity, field).replace(/^dispute-/, "proposal-");
   }
 
   /**
@@ -385,9 +423,9 @@ export class Vault {
    * as `already_present`; one the human declined before isn't raised again.
    */
   openProposal(entity: Entity, field: string, claim: Claim, evidence?: string): Dispute {
-    const slug = this.proposalSlug(entity.slug, field);
+    let d = this.disputeFor(entity.slug, field, "proposal");
+    const slug = d?.slug ?? this.freeSlug(entity.slug, field, "proposal");
     const now = this.nowIso();
-    let d = this.disputes.get(slug);
     if (!d) {
       d = {
         slug,
@@ -409,8 +447,10 @@ export class Vault {
       d.fm.state = "pending";
     }
     const same = d.fm.claims.find((x) => String(x.value) === String(claim.value) && x.by === claim.by);
-    if (same) same.src = [...new Set([...same.src, ...claim.src])];
-    else d.fm.claims.push(claim);
+    if (same) {
+      same.src = [...new Set([...same.src, ...claim.src])];
+      if (claim.confidential) same.confidential = true;
+    } else d.fm.claims.push(claim);
     if (evidence?.trim()) d.fm.evidence = evidence.trim();
     if (claim.confidence !== undefined) d.fm.confidence = claim.confidence;
     if (present) {
@@ -418,7 +458,7 @@ export class Vault {
       d.fm.status = "resolved";
       d.fm.resolved = now;
     }
-    d.body = renderDisputeBody(d, displayName(entity));
+    d.body = renderDisputeBody(d, displayName(entity), this.disputeHidden(d, entity));
     this.dirty.add(d.path);
     return d;
   }
@@ -453,7 +493,7 @@ export class Vault {
     // A proposal's or merge's note says where it stands; a conflict's body stays as it was.
     if (d.fm.kind === "proposal" || d.fm.kind === "merge") {
       const e = this.resolve(d.fm.entity);
-      d.body = renderDisputeBody(d, e ? displayName(e) : unwrapLink(d.fm.entity));
+      d.body = renderDisputeBody(d, e ? displayName(e) : unwrapLink(d.fm.entity), this.disputeHidden(d, e));
     }
     this.dirty.add(d.path);
   }
@@ -626,13 +666,15 @@ export function chronicleEntry(schema: SchemaRegistry, ep: Episode, text = ep.te
   return { kind, body: def.text === "gist" ? truncate(text, gistMax(def)) : text };
 }
 
-function claimLines(d: Dispute, show: (v: Claim["value"]) => string = String): string {
+function claimLines(d: Dispute, show: (v: Claim["value"]) => string): string {
   return d.fm.claims
     .map((c) => `- **${show(c.value)}** — ${c.by ? link(c.by) : "human"}${c.at ? ` on ${c.at.slice(0, 10)}` : ""}${c.src.length ? ` (${c.src.join(", ")})` : ""}`)
     .join("\n");
 }
 
-function renderDisputeBody(d: Dispute, entityName: string): string {
+/** A dispute note's body. `hidden` (a confidential claim or fact) masks every value, so the note shows none of them. */
+function renderDisputeBody(d: Dispute, entityName: string, hidden = false): string {
+  const show = (v: Claim["value"]) => formatValue(v, { confidential: hidden });
   const evidence = d.fm.evidence ? `\n> ${d.fm.evidence.replace(/\n/g, "\n> ")}\n` : "";
   if (d.fm.kind === "proposal") {
     const footer =
@@ -643,7 +685,7 @@ function renderDisputeBody(d: Dispute, entityName: string): string {
 
 Proposed value for **${d.fm.field}** of ${d.fm.entity}:
 
-${claimLines(d, (v) => formatValue(v))}
+${claimLines(d, show)}
 ${evidence}
 ${footer}
 `;
@@ -662,7 +704,7 @@ ${evidence}
 
 Sources disagree about **${d.fm.field}** of ${d.fm.entity}.
 
-${claimLines(d)}
+${claimLines(d, show)}
 
 > [!question] Ruling needed
 > Set \`ruling:\` in this note's properties to the correct value, and the next sleep will make it canon.
