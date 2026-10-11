@@ -16,6 +16,7 @@ import {
   fieldUsage,
   isSecretRef,
   migrate,
+  parseConfig,
   pickPreset,
   presetCatalog,
   readChronicle,
@@ -41,6 +42,7 @@ import { loadEnv } from "./env-file.ts";
 import { Git } from "./git.ts";
 import { assetRoot, expandHome, identityFile, indexKey, userEnvFile } from "./paths.ts";
 import { openIndex, openSearcher as searcherFor, openStore as storeFor } from "./stores.ts";
+import { boundAgent } from "./serve.ts";
 import { initVault, keygen, templateFiles } from "./vault-setup.ts";
 
 // Settings: the shell, then a gitignored .env in the working directory, then the user env file
@@ -164,8 +166,16 @@ program
         res.writeHead(404).end();
         return;
       }
-      const agent = url.searchParams.get("agent") ?? opts.agent;
-      const server = createHippoServer({ service, agent: agent ?? undefined, relay });
+      const humans = await store
+        .read(CONFIG_PATH)
+        .then((raw) => parseConfig(raw).humans.map((h) => h.id))
+        .catch(() => undefined);
+      const bound = boundAgent(humans, url.searchParams.get("agent"), opts.agent);
+      if ("refused" in bound) {
+        res.writeHead(403, { "content-type": "application/json" }).end(JSON.stringify({ error: bound.refused, code: "NOT_AN_AGENT" }));
+        return;
+      }
+      const server = createHippoServer({ service, agent: bound.agent, relay });
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on("close", () => void transport.close().then(() => server.close()));
       await server.connect(transport);
