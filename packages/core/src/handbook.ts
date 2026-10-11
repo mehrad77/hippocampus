@@ -197,6 +197,12 @@ introduce({ agent: "${id}", title: "${titleOf(id)}", lane: "what you handle, in 
 export function renderOnboarding(vault: Vault, agent: string): string {
   const toolsNote = `
 Use the MCP tools, and don't edit vault files yourself: \`remember\` files a memory, \`recall\` / \`get\` / \`ask_canon\` read memory, and \`update_goal\` records goal progress.
+
+If ${vault.config.human} asks how to set something up, answer from this (you can't change these yourself; only they can):
+- **Secrets recipient** (the public key that locks secret facts): ${vault.config.secrets.recipient ? "already set, so secret facts are stored." : "not set, so secret facts are held back until it is."} On the hosted app: dashboard → Setup → Secrets key → make a key in the browser, download the key file, lock the vault to it (or paste an existing \`age1…\` public key). On a local vault: \`hippo secrets keygen\`, or \`hippo secrets set age1…\`. Afterwards, send the held-back secrets again.
+- **Goal owner / who may change a goal's status:** dashboard → Goals → set the owner; or Agents → give the agent authority over the goal's domain.
+- **Agent authority and domains:** dashboard → Agents.
+- **Conflicts between memories:** dashboard → Disputes.
 `;
   return `${whoAmI(vault, agent)}${toolsNote}\n---\n\n${renderHandbook(vault).replace(/^---[\s\S]*?---\n/, "")}`;
 }

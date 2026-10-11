@@ -354,6 +354,8 @@ export interface Overview {
   lastSleep?: string;
   /** Domains the last sleep wanted that the config still lacks, for the human to add. */
   suggestedDomains?: string[];
+  /** Whether the vault has a secrets recipient: without one, secret facts are held back, not stored. */
+  secretsKey?: boolean;
   version: { vault: number; tool: number; status: "current" | "older" | "newer" };
   counts: {
     entities: number;
@@ -983,6 +985,7 @@ export async function overview(vault: Vault, read: ReadAs = {}): Promise<Overvie
     today: ctx.today,
     lastSleep,
     suggestedDomains: review.suggestedDomains,
+    secretsKey: !!config.secrets.recipient,
     version: { vault: config.version, tool: CURRENT_VAULT_VERSION, status: vaultVersionStatus(config) },
     counts: { entities: vault.entities.size, byType, facts, inbox: vault.episodes.length, disputes: vault.openDisputes().length, goals: questCounts, quests: questCounts },
     attention: {

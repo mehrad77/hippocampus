@@ -7,6 +7,7 @@ import {
   assertVaultVersion,
   buildVaultFiles,
   parseConfig,
+  setRecipient,
   validateVaultSettings,
   vaultVersionStatus,
   withTrailers,
@@ -192,6 +193,9 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
     if (files) await store.initialize(files, bootstrapCommit("chore: initialize Hippocampus vault"));
     else if (p.mode === "adopt") {
       const changes: Change[] = p.missing.map((path) => ({ path, content: TEMPLATE[path]! }));
+      // The key made in the browser during setup reaches an adopted vault too, unless it already has its own.
+      const raw = await store.read(CONFIG_PATH);
+      if (o.settings.recipient && raw !== undefined && !parseConfig(raw).secrets.recipient) changes.push({ path: CONFIG_PATH, content: setRecipient(raw, o.settings.recipient) });
       await store.apply(changes, bootstrapCommit("chore: add Hippocampus guardrail files"));
     }
   } catch (err) {

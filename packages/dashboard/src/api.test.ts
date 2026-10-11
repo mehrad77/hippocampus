@@ -1,4 +1,4 @@
-import { AuditError, HippoService, VaultVersionError, createIntroduction, parseDoc, renderIntroduction, type MemoryStore } from "@hippocampus/core";
+import { AuditError, HippoService, generateKeyPair, VaultVersionError, createIntroduction, parseDoc, renderIntroduction, type MemoryStore } from "@hippocampus/core";
 import { afterAll, describe, expect, it } from "vitest";
 import { SECRET_PLAINTEXT, now, richStore } from "./__fixtures__/vault.ts";
 import { createDashboardApi, type DashboardApiOptions } from "./api.ts";
@@ -81,7 +81,7 @@ describe("dashboard API: reads", () => {
       humans: ["player"],
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
-      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, authority: true, names: false, handOver: false, introductions: true, curator: false, upgrade: false, setup: "none" },
+      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, secrets: true, authority: true, names: false, handOver: false, introductions: true, curator: false, upgrade: false, setup: "none" },
     });
   });
 
@@ -253,6 +253,17 @@ describe("dashboard API: actions", () => {
     expect((await get("overview")).body.attention.unknownAgents).toEqual([]);
   });
 
+  it("secrets: sets the recipient once, refuses a bad or different key, and is a human-only action", async () => {
+    const { post, store } = harness();
+    const a = await generateKeyPair();
+    const b = await generateKeyPair();
+    expect(await post("actions/secrets", { recipient: "not-a-key" })).toMatchObject({ status: 400, body: { code: "VAULT" } });
+    expect(await post("actions/secrets", { recipient: a.recipient })).toMatchObject({ status: 200, body: { changed: true } });
+    expect(await store.read("_hippo/config.yaml")).toContain(a.recipient);
+    expect(await post("actions/secrets", { recipient: a.recipient })).toMatchObject({ status: 200, body: { changed: false } });
+    expect(await post("actions/secrets", { recipient: b.recipient })).toMatchObject({ status: 400, body: { code: "VAULT" } });
+  });
+
   it("domain: adds the new ones to the config, then lets an agent hold them", async () => {
     const { post, store, get } = harness();
     expect(await post("actions/domain", { ids: ["Health", "housing"] })).toMatchObject({ status: 200, body: { added: ["health"] } });
@@ -345,7 +356,7 @@ describe("dashboard API: errors", () => {
     expect((await get("session")).body).toEqual({
       mode: "setup",
       user: { login: "player" },
-      capabilities: { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, confidential: false, data: false, party: false, domains: false, authority: false, names: false, handOver: false, introductions: false, curator: false, upgrade: false, setup: "none" },
+      capabilities: { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, confidential: false, data: false, party: false, domains: false, secrets: false, authority: false, names: false, handOver: false, introductions: false, curator: false, upgrade: false, setup: "none" },
     });
     expect(await get("setup/status")).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
   });
@@ -371,14 +382,15 @@ describe("dashboard API: errors", () => {
   });
 
   it("501 when the source lacks a capability", async () => {
-    const { get, post } = harness({ source: (full) => ({ ...full, rule: undefined, addParty: undefined, addDomains: undefined, setAuthority: undefined, introduction: undefined, proposal: undefined, retract: undefined }) });
-    expect((await get("session")).body.capabilities).toEqual({ rule: false, goal: true, quest: true, proposal: false, retract: false, remember: true, confidential: true, data: true, party: false, domains: false, authority: false, names: false, handOver: false, introductions: false, curator: false, upgrade: false, setup: "none" });
+    const { get, post } = harness({ source: (full) => ({ ...full, rule: undefined, addParty: undefined, addDomains: undefined, setSecretsRecipient: undefined, setAuthority: undefined, introduction: undefined, proposal: undefined, retract: undefined }) });
+    expect((await get("session")).body.capabilities).toEqual({ rule: false, goal: true, quest: true, proposal: false, retract: false, remember: true, confidential: true, data: true, party: false, domains: false, secrets: false, authority: false, names: false, handOver: false, introductions: false, curator: false, upgrade: false, setup: "none" });
     expect(await post("actions/proposal", { dispute: "x", decision: "decline" })).toMatchObject({ status: 501 });
     expect(await post("actions/retract", { entity: "migration-agency", field: "phone" })).toMatchObject({ status: 501 });
     expect(await post("actions/upgrade-vault", {})).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
     expect(await post("actions/rule", { dispute: "dispute-migration-agency-office-address", claim: 0 })).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
     expect(await post("actions/party", { id: "job-scout", title: "Job Scout" })).toMatchObject({ status: 501 });
     expect(await post("actions/domain", { ids: ["health"] })).toMatchObject({ status: 501 });
+    expect(await post("actions/secrets", { recipient: "age1x" })).toMatchObject({ status: 501 });
     expect(await post("actions/authority", { agent: "home-finder", domains: [] })).toMatchObject({ status: 501 });
     expect(await post("actions/introduction", { agent: "job-scout", decision: "dismiss" })).toMatchObject({ status: 501 });
     expect(await get("curator")).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });

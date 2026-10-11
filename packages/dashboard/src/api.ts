@@ -116,6 +116,7 @@ const PartyBody = z.object({
 });
 
 const DomainBody = z.object({ ids: z.array(text(60)).min(1).max(20) });
+const SecretsBody = z.object({ recipient: text(100) });
 
 const AuthorityBody = z.object({ agent: text(63), domains: z.array(text(60)).max(20) });
 
@@ -215,6 +216,8 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
             return json(200, await need(source.addParty, "adding party members").call(source, PartyBody.parse(body), via));
           case "actions/domain":
             return json(200, await need(source.addDomains, "adding domains").call(source, DomainBody.parse(body).ids, via));
+          case "actions/secrets":
+            return json(200, await need(source.setSecretsRecipient, "setting the secrets key").call(source, SecretsBody.parse(body).recipient, via));
           case "actions/hand-over":
             return json(200, await need(source.handOver, "handing names over").call(source, HandOverBody.parse(body).agent, via));
           case "actions/authority": {

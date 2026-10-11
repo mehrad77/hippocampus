@@ -1,4 +1,4 @@
-import { SLUG, presetCatalog, validTimezone, type HumanSetting, type VaultSettings } from "@hippocampus/core";
+import { AGE_RECIPIENT, SLUG, presetCatalog, validTimezone, type HumanSetting, type VaultSettings } from "@hippocampus/core";
 import { HttpError, type HostedGitLab, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSetupPort, type HostedSetupStatus, type HostedVault, type SetupItem } from "@hippocampus/dashboard";
 import { isConnectApp, keySnippets } from "@hippocampus/dashboard/connect";
 import { GitHubStore } from "@hippocampus/store-github";
@@ -372,7 +372,7 @@ export function initRequest(body: unknown, login?: string): VaultSettings & { re
   const presets = b.presets === undefined ? [] : slugs(b.presets, "presets");
   for (const p of presets) if (!Object.hasOwn(PRESETS, p)) bad(`presets: "${p}" isn't one; choose from ${Object.keys(PRESETS).sort().join(", ")}`);
   // An age X25519 recipient: `age1` and 58 bech32 characters.
-  if (b.recipient !== undefined && (typeof b.recipient !== "string" || !/^age1[02-9ac-hj-np-z]{58}$/.test(b.recipient))) bad("recipient: an age public key (age1…)");
+  if (b.recipient !== undefined && (typeof b.recipient !== "string" || !AGE_RECIPIENT.test(b.recipient))) bad("recipient: an age public key (age1…)");
   return {
     repoId: b.repoId as number,
     provider: (b.provider as Provider | undefined) ?? "github",

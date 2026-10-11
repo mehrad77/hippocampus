@@ -435,7 +435,7 @@ describe("VaultRuntime: dashboard", () => {
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
       account: { status: "approved", admin: false },
-      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, authority: true, names: true, handOver: true, introductions: true, curator: true, upgrade: true, setup: "hosted" },
+      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, secrets: true, authority: true, names: true, handOver: true, introductions: true, curator: true, upgrade: true, setup: "hosted" },
     });
 
     const r = await api("POST", "actions/remember", { text: "My residence card arrives next week." });
@@ -499,7 +499,7 @@ describe("VaultRuntime: dashboard humans", () => {
     expect(repo.files()["_hippo/config.yaml"]).toMatch(/^domains: \[.*side-project\]$/m);
 
     const viewer = await session(user("viewer", "flatmate"));
-    expect(viewer.body.capabilities).toMatchObject({ remember: false, rule: false, goal: false, party: false, domains: false });
+    expect(viewer.body.capabilities).toMatchObject({ remember: false, rule: false, goal: false, party: false, domains: false, secrets: false });
     const write = await runtime.dashboard(new Request(`${ORIGIN}/dashboard/api/actions/remember`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "x" }) }), user("viewer", "flatmate"));
     expect(write.status).toBe(501);
     expect((await post("actions/domain", { ids: ["garden"] }, user("viewer", "flatmate"))).status).toBe(501);
