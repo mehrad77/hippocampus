@@ -1,6 +1,6 @@
 import { isMap, isScalar, isSeq, parse as parseYaml, parseDocument, type Document } from "yaml";
 import { z } from "zod";
-import { CONFIG_PATH, parseConfig, renderConfig } from "./config.ts";
+import { CONFIG_PATH, parseConfig, renderConfig, scalarValue, unionList } from "./config.ts";
 import { VaultError } from "./errors.ts";
 import { HANDBOOK_PATH, renderHandbook } from "./handbook.ts";
 import { humanText, parseDoc, renderDoc } from "./markdown.ts";
@@ -148,25 +148,6 @@ export function appendSections(body: string, sections: string): { body: string; 
   return { body: `${body.replace(/\s+$/, "")}\n\n${parts.join("\n\n")}\n`, added };
 }
 
-/** Add `items` to a YAML list at `key` (made flow-style when new), skipping ones `same` finds. Returns whether it changed. */
-function unionList(doc: Document, key: string, items: unknown[], same: (node: unknown, item: unknown) => boolean): boolean {
-  if (!items.length) return false;
-  let seq = doc.get(key, true);
-  if (!isSeq(seq)) {
-    seq = doc.createNode([], { flow: true });
-    doc.set(key, seq);
-  }
-  let changed = false;
-  for (const item of items) {
-    if ((seq as { items: unknown[] }).items.some((n) => same(n, item))) continue;
-    const node = doc.createNode(item, { flow: true });
-    (seq as { items: unknown[] }).items.push(node);
-    changed = true;
-  }
-  return changed;
-}
-
-const scalarValue = (n: unknown) => (isScalar(n) ? String(n.value) : undefined);
 const relationName = (n: unknown) => (isMap(n) ? scalarValue(n.get("name", true)) : scalarValue(n));
 
 /**

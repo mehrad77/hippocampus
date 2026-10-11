@@ -1,8 +1,10 @@
-import { isMap, isScalar, parse as parseYaml, parseDocument, stringify as stringifyYaml, type Document } from "yaml";
+import { isMap, isScalar, isSeq, parse as parseYaml, parseDocument, stringify as stringifyYaml, type Document } from "yaml";
 import { VaultError } from "./errors.ts";
 import { HippoConfig, type HumanDef } from "./schema.ts";
 
 export const CONFIG_PATH = "_hippo/config.yaml";
+/** Ids of the human, agents and domains: lowercase letters, digits and dashes. */
+export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 /** The human's house rules for the curator, in plain words; appended to every curator prompt. */
 export const CURATOR_RULES_PATH = "_hippo/curator.md";
 
@@ -98,3 +100,37 @@ export function linkHuman(raw: string, id: string, logins: HumanLogins, create?:
 
 /** No line folding, so the template's one-line flow maps and lists stay on one line. */
 export const renderConfig = (doc: Document) => doc.toString({ lineWidth: 0, flowCollectionPadding: false });
+
+/** Add `items` to a YAML list at `key` (made flow-style when new), skipping ones `same` finds. Returns whether it changed. */
+export function unionList(doc: Document, key: string, items: unknown[], same: (node: unknown, item: unknown) => boolean): boolean {
+  if (!items.length) return false;
+  let seq = doc.get(key, true);
+  if (!isSeq(seq)) {
+    seq = doc.createNode([], { flow: true });
+    doc.set(key, seq);
+  }
+  let changed = false;
+  for (const item of items) {
+    if ((seq as { items: unknown[] }).items.some((n) => same(n, item))) continue;
+    const node = doc.createNode(item, { flow: true });
+    (seq as { items: unknown[] }).items.push(node);
+    changed = true;
+  }
+  return changed;
+}
+
+export const scalarValue = (n: unknown) => (isScalar(n) ? String(n.value) : undefined);
+
+/** Domain ids as given: trimmed, lowercased, each once. Throws on one that isn't an id. */
+export function domainIds(ids: string[]): string[] {
+  const out = [...new Set(ids.map((d) => d.trim().toLowerCase()).filter(Boolean))];
+  for (const d of out) if (!SLUG.test(d)) throw new VaultError(`domain "${d}" must be lowercase letters, digits and dashes`);
+  return out;
+}
+
+/** The config (raw YAML) with `ids` added to `domains:`, comments kept; `raw` itself when it has them all. */
+export function addDomains(raw: string, ids: string[]): string {
+  const doc = parseDocument(raw);
+  const changed = unionList(doc, "domains", domainIds(ids), (n, d) => scalarValue(n)?.toLowerCase() === d);
+  return changed ? renderConfig(doc) : raw;
+}

@@ -113,6 +113,8 @@ export interface DashboardSource {
   /** Absent: `remember` takes every field. A source that doesn't answers 501 for the ones it lacks. */
   rememberFields?: RememberFields;
   addParty?(input: NewPartyMember, via?: string): Promise<{ slug: string; path: string }>;
+  /** Add domains to the vault's config: the ones that were new. */
+  addDomains?(ids: string[], via?: string): Promise<{ added: string[] }>;
   introduction?(input: IntroductionDecision, via?: string): Promise<IntroductionResult>;
   /** The agent-run sleep (hosted): its open run and history, and aborting a stuck run. */
   curator?: { status(): Promise<CuratorStatus>; abort(run: string, via?: string): Promise<CuratorStatus> };
@@ -158,6 +160,8 @@ export interface Capabilities {
   /** `remember` takes a kind's structured `data`. */
   data: boolean;
   party: boolean;
+  /** Add domains to the vault (`POST actions/domain`). */
+  domains: boolean;
   /** Approve or dismiss agents' introductions. */
   introductions: boolean;
   /** Which Session Zero backend answers `/setup/*`. */
@@ -182,7 +186,7 @@ export interface SessionInfo extends Partial<Omit<SourceInfo, "mode">> {
 
 /** A source with every write taken out: what a viewer of a shared vault gets. */
 export function readOnlySource(source: DashboardSource): DashboardSource {
-  const { rule: _r, goal: _g, quest: _q, proposal: _p, retract: _x, remember: _m, rememberFields: _f, addParty: _a, introduction: _i, curator: _c, upgradeVault: _u, ...reads } = source;
+  const { rule: _r, goal: _g, quest: _q, proposal: _p, retract: _x, remember: _m, rememberFields: _f, addParty: _a, addDomains: _d, introduction: _i, curator: _c, upgradeVault: _u, ...reads } = source;
   return reads;
 }
 
@@ -197,6 +201,7 @@ export function capabilities(source: DashboardSource | undefined, setup: SetupKi
     confidential: !!source?.remember && source.rememberFields?.confidential !== false,
     data: !!source?.remember && source.rememberFields?.data !== false,
     party: !!source?.addParty,
+    domains: !!source?.addDomains,
     introductions: !!source?.introduction,
     curator: !!source?.curator,
     upgrade: !!source?.upgradeVault,

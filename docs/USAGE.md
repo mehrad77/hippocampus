@@ -92,6 +92,12 @@ npx @mehrad77/hippocampus -v ~/vaults/my-memory preset add developer
 
 `preset add` copies what the vault doesn't have, merges the preset's fields into your existing types, adds its domains and relations to the config, appends its sections to your note when they're missing, and commits exactly those files. It never replaces a file you have unless you pass `--force`.
 
+**Domains** can grow later too. `domain add` lists new ones under `domains:` in the config (keeping its comments), refreshes `HANDBOOK.md` and commits both; `domain list` shows them. On the dashboard, the Agents page has the same field.
+
+```bash
+npx @mehrad77/hippocampus -v ~/vaults/my-memory domain add health side-project
+```
+
 ## 2. Put it in a private repo
 
 Create an **empty private** repository on GitHub, then:

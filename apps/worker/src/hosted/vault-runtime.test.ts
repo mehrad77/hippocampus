@@ -404,12 +404,15 @@ describe("VaultRuntime: dashboard", () => {
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
       account: { status: "approved", admin: false },
-      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, introductions: true, curator: true, upgrade: true, setup: "hosted" },
+      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, introductions: true, curator: true, upgrade: true, setup: "hosted" },
     });
 
     const r = await api("POST", "actions/remember", { text: "My residence card arrives next week." });
     expect(r.status).toBe(200);
     expect(r.body.path).toMatch(/^inbox\/player\//);
+    expect(trailers(repo.log()[0]!.message)).toContain("Hippo-Actor: human");
+    expect(await api("POST", "actions/domain", { ids: ["pets"] })).toMatchObject({ status: 200, body: { added: ["pets"] } });
+    expect(repo.log()[0]!.message).toMatch(/^config\(player via @player\): add domain pets/);
     expect(trailers(repo.log()[0]!.message)).toContain("Hippo-Actor: human");
     expect((await api("POST", "setup/vault", {})).status).toBe(501);
   });
@@ -455,15 +458,20 @@ describe("VaultRuntime: dashboard humans", () => {
     };
     const member = await session(user("member", "flatmate"));
     expect(member.body.actor).toEqual({ kind: "human", id: "flatmate" });
-    expect(member.body.capabilities).toMatchObject({ remember: true, upgrade: false, curator: false });
+    expect(member.body.capabilities).toMatchObject({ remember: true, domains: true, upgrade: false, curator: false });
     // Their human was taken out of the config: no seat, no fallback to the primary human.
     expect(await session(user("member", "nobody"))).toMatchObject({ status: 403, body: { code: "NO_HUMAN" } });
     expect(await session(user("member"))).toMatchObject({ status: 403 });
+    const post = (path: string, body: unknown, u: DashboardUser) =>
+      runtime.dashboard(new Request(`${ORIGIN}/dashboard/api/${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }), u);
+    expect((await post("actions/domain", { ids: ["side-project"] }, user("member", "flatmate"))).status).toBe(200);
+    expect(repo.files()["_hippo/config.yaml"]).toMatch(/^domains: \[.*side-project\]$/m);
 
     const viewer = await session(user("viewer", "flatmate"));
-    expect(viewer.body.capabilities).toMatchObject({ remember: false, rule: false, goal: false, party: false });
+    expect(viewer.body.capabilities).toMatchObject({ remember: false, rule: false, goal: false, party: false, domains: false });
     const write = await runtime.dashboard(new Request(`${ORIGIN}/dashboard/api/actions/remember`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "x" }) }), user("viewer", "flatmate"));
     expect(write.status).toBe(501);
+    expect((await post("actions/domain", { ids: ["garden"] }, user("viewer", "flatmate"))).status).toBe(501);
     const before = repo.log().length;
     expect(await runtime.linkHuman("flatmate", { github: "someone-else" }, "@player")).toEqual({ changed: true });
     expect(repo.log()).toHaveLength(before + 1);
