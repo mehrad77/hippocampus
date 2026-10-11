@@ -70,7 +70,7 @@ export interface BootstrapOptions {
   settings: VaultSettings;
   /** An example campaign laid over the template (`example-relocation`). */
   seed?: string;
-  /** Presets added to a new vault, in order (names of `PRESETS`). An adopted vault keeps what it has. */
+  /** Presets added to a new vault, in order (names of `PRESETS`). Refused for a repo that already holds a vault. */
   presets?: string[];
   /** The vault's clock while building, for reproducible output. */
   now?: Date;
@@ -94,8 +94,11 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
   } catch (err) {
     throw new HttpError(400, (err as Error).message, "INVALID");
   }
-  const seed = o.seed === undefined ? undefined : SEEDS[o.seed];
+  const seed = o.seed === undefined || !Object.hasOwn(SEEDS, o.seed) ? undefined : SEEDS[o.seed];
   if (o.seed !== undefined && !seed) throw new HttpError(400, `seed: unknown "${o.seed}"; choose from ${Object.keys(SEEDS).join(", ")}`, "INVALID");
+
+  const unknown = o.presets?.find((n) => !Object.hasOwn(PRESETS, n));
+  if (unknown !== undefined) throw new HttpError(400, `presets: unknown "${unknown}"; choose from ${Object.keys(PRESETS).sort().join(", ")}`, "INVALID");
 
   const name = o.repo.fullName;
   const token = o.app.tokenSource(o.installationId, { repositoryIds: [o.repo.id], permissions: VAULT_PERMISSIONS });
@@ -112,8 +115,11 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
   const p = info.empty ? ({ mode: "initialize" } as const) : plan(await store.list());
   if (p.mode === "refuse") throw new HttpError(409, `${info.fullName} already has files; pick an empty repo (or one with only a README, LICENSE or .gitignore).`, "NOT_EMPTY");
   if (p.mode === "adopt") {
+    // Presets shape a new vault; an existing one gets them from its owner (`hippo preset add`), who can review the changes.
+    if (o.presets?.length)
+      throw new HttpError(400, `${info.fullName} already holds a vault, and presets apply only to new vaults. Pick it again without presets, then add them with \`hippo preset add\` in a clone.`, "PRESETS_NEW_ONLY");
     try {
-      // An older vault is adopted as it is and migrated when it's opened; a newer one needs a newer app.
+      // An older vault is adopted as it is and upgraded when its owner clicks Upgrade; a newer one needs a newer app.
       const config = parseConfig(await store.read(CONFIG_PATH));
       if (vaultVersionStatus(config) === "newer") assertVaultVersion(config);
     } catch (err) {

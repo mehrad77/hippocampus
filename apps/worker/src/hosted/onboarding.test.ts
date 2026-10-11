@@ -33,6 +33,8 @@ describe("initRequest", () => {
     expect(bad({ humans: [{ id: "player", github: "not a login" }] })).toThrow(/GitHub login/);
     expect(bad({ presets: ["pirates"] })).toThrow(/presets: "pirates" isn't one; choose from business, developer/);
     expect(bad({ presets: "people" })).toThrow(/presets/);
+    expect(bad({ presets: ["constructor"] })).toThrow(/presets: "constructor" isn't one/);
+    expect(bad({ seed: "toString" })).toThrow(/seed/);
   });
 
   it("takes bundled presets, each once", () => {
