@@ -115,7 +115,7 @@ describe("bootstrapVault", () => {
     await adopt(await addRepo("player/keyless", 9010, existing), recipient);
     expect(parseConfig(gh.at("player/keyless").files()["_hippo/config.yaml"]!).secrets.recipient).toBe(recipient);
     const keyed = { ...existing, "_hippo/config.yaml": setRecipient(existing["_hippo/config.yaml"]!, other.recipient) };
-    await adopt(await addRepo("player/keyed", 9011, keyed), recipient);
+    expect((await adopt(await addRepo("player/keyed", 9011, keyed), recipient)).recipientKept).toBe(true);
     expect(parseConfig(gh.at("player/keyed").files()["_hippo/config.yaml"]!).secrets.recipient).toBe(other.recipient);
   });
 

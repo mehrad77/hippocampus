@@ -200,7 +200,7 @@ Use the MCP tools, and don't edit vault files yourself: \`remember\` files a mem
 
 If ${vault.config.human} asks how to set something up, answer from this (you can't change these yourself; only they can):
 - **Secrets recipient** (the public key that locks secret facts): ${vault.config.secrets.recipient ? "already set, so secret facts are stored." : "not set, so secret facts are held back until it is."} On the hosted app: dashboard → Setup → Secrets key → make a key in the browser, download the key file, lock the vault to it (or paste an existing \`age1…\` public key). On a local vault: \`hippo secrets keygen\`, or \`hippo secrets set age1…\`. Afterwards, send the held-back secrets again.
-- **Goal owner / who may change a goal's status:** dashboard → Goals → set the owner; or Agents → give the agent authority over the goal's domain.
+- **Goal owner / who may change a goal's status in the nightly consolidation:** dashboard → Goals → set the owner; or Agents → give the agent authority over the goal's domain.
 - **Agent authority and domains:** dashboard → Agents.
 - **Conflicts between memories:** dashboard → Disputes.
 `;

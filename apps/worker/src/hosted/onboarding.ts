@@ -194,7 +194,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
         now: now(),
       });
       await changed(result.vault.id);
-      return { vault: hostedVault(result.vault, settings), mode: result.mode };
+      return { vault: hostedVault(result.vault, settings), mode: result.mode, ...(result.recipientKept ? { recipientKept: true } : {}) };
     }
     // A retry on the same repo can go on with the vault's own installation once the pending one has expired.
     const existing = vaults.find((v) => v.repoId === req.repoId && v.provider === "github");
@@ -215,7 +215,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
     });
     await clearPendingInstallation(kv, account.id);
     await changed(result.vault.id);
-    return { vault: hostedVault(result.vault, settings), mode: result.mode };
+    return { vault: hostedVault(result.vault, settings), mode: result.mode, ...(result.recipientKept ? { recipientKept: true } : {}) };
   }
 
   /** The vault the request picked, if the caller's role there allows `what` (viewers manage nothing). */

@@ -849,6 +849,7 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
     if (picked === undefined) return;
     const res = await action.run(() => postJson<HostedInitResult>("/setup/init", initRequest(draft, picked, { adopt: !!repo?.adoptable, provider: host })));
     if (!res) return;
+    if (res.recipientKept) toast("This vault already had its own secrets key, so the one you just made was not used. Keep using the key file that goes with the vault's.", "info");
     toast(res.mode === "adopted" ? `Adopted ${res.vault.fullName}: your existing vault is connected.` : v(`${res.vault.fullName} is your vault now.`, `${res.vault.fullName} holds the campaign now.`), "ok");
     setIdentity(undefined);
     clearDraft();

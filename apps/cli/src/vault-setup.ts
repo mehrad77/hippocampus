@@ -1,10 +1,9 @@
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { CONFIG_PATH, applyChanges, buildVaultFiles, generateKeyPair, parseConfig, renderConfig, validatePresetNames, validateVaultSettings, type HumanSetting, type VaultStore } from "@hippocampus/core";
+import { CONFIG_PATH, HippoService, buildVaultFiles, generateKeyPair, parseConfig, validatePresetNames, validateVaultSettings, type HumanSetting, type VaultStore } from "@hippocampus/core";
 import { PRESETS } from "@hippocampus/template";
 import { identityToRecipient } from "age-encryption";
-import { parseDocument } from "yaml";
 import { Git } from "./git.ts";
 import { expandHome } from "./paths.ts";
 
@@ -151,11 +150,8 @@ export async function keygen(opts: { store: VaultStore; identityFile: string; re
     recipient = pair.recipient;
     created = true;
   }
-  const doc = parseDocument(config);
-  if (doc.getIn(["secrets", "recipient"]) !== recipient) {
-    doc.setIn(["secrets", "recipient"], recipient);
-    await applyChanges(opts.store, [{ path: CONFIG_PATH, content: renderConfig(doc) }], { message: "chore: set the secrets recipient" });
-  }
+  // Through the service, so the Handbook (which tells agents whether secrets are stored) follows the config.
+  await new HippoService(opts.store).setSecretsRecipient(recipient, { replace: true });
   return { identityFile: opts.identityFile, recipient, created };
 }
 

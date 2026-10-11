@@ -9,6 +9,9 @@ import { ConfirmDialog, ErrorCallout, Facts, Field, ToneTag, useAction } from ".
 import { identityFileName, identityFileText } from "./hosted.ts";
 import { truncateKey } from "./model.ts";
 
+// What the server accepts as a public key (core's AGE_RECIPIENT). Checked here too, so a pasted private key is never sent.
+const PUBLIC_KEY = /^age1[02-9ac-hj-np-z]{58}$/;
+
 /**
  * The secrets key on an existing vault: make one in this browser (only the public half goes to the vault) or paste
  * a public key you already have. Without a key, agents' secret facts are held back instead of stored.
@@ -27,7 +30,9 @@ export function SecretsPanel({ vaultName }: { vaultName: string }) {
   const [replacing, setReplacing] = useState(false);
   const [makeError, setMakeError] = useState<unknown>();
 
-  const file = identityFileName(vaultName);
+  // A replacement must not download over the old key file, which still opens the secrets saved before it.
+  const file = replacing ? identityFileName(vaultName).replace(/\.agekey$/, `-${new Date().toISOString().slice(0, 10)}.agekey`) : identityFileName(vaultName);
+  const pastedProblem = !pasted.trim() ? undefined : /AGE-SECRET-KEY/i.test(pasted) ? "That is a private key. Never paste it anywhere: nothing was sent. Paste the public key (age1…) instead." : !PUBLIC_KEY.test(pasted.trim()) ? "A public key starts with age1 and is 62 characters long." : undefined;
   const url = useMemo(() => (identity ? URL.createObjectURL(new Blob([identityFileText(identity)], { type: "application/octet-stream" })) : undefined), [identity]);
   useEffect(() => () => (url ? URL.revokeObjectURL(url) : undefined), [url]);
 
@@ -102,8 +107,9 @@ export function SecretsPanel({ vaultName }: { vaultName: string }) {
                   <Field label="Public key (starts with age1)">
                     {(f) => <input id={f.id} className="input mono" value={pasted} onChange={(e) => setPasted(e.target.value)} placeholder="age1…" autoComplete="off" spellCheck={false} aria-describedby={f.describedBy} />}
                   </Field>
+                  {pastedProblem && <p className="sz-problem" role="status">{pastedProblem}</p>}
                   <div className="row">
-                    <button type="button" className="btn" disabled={action.busy || !pasted.trim()} onClick={() => void save(pasted.trim())}>
+                    <button type="button" className="btn" disabled={action.busy || !pasted.trim() || !!pastedProblem} onClick={() => void save(pasted.trim())}>
                       Use this key
                     </button>
                   </div>

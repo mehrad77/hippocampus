@@ -142,6 +142,8 @@ function target(o: BootstrapOptions): Target {
 export interface BootstrapResult {
   vault: VaultRecord;
   mode: "initialized" | "adopted";
+  /** Adopted a vault that already had a different secrets recipient: the one made at setup was not used. */
+  recipientKept?: boolean;
 }
 
 /**
@@ -189,13 +191,16 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
   const files = built && t.provider === "gitlab" ? Object.fromEntries(Object.entries(built).filter(([path]) => !path.startsWith(".github/"))) : built;
 
   const { vault } = await o.registry.claimVault({ accountId: o.accountId, ...(o.owner ? { owner: o.owner } : {}), provider: t.provider, installationId: t.installationId, repoId: info.id, fullName: info.fullName, branch: info.branch });
+  let recipientKept = false;
   try {
     if (files) await store.initialize(files, bootstrapCommit("chore: initialize Hippocampus vault"));
     else if (p.mode === "adopt") {
       const changes: Change[] = p.missing.map((path) => ({ path, content: TEMPLATE[path]! }));
       // The key made in the browser during setup reaches an adopted vault too, unless it already has its own.
       const raw = await store.read(CONFIG_PATH);
-      if (o.settings.recipient && raw !== undefined && !parseConfig(raw).secrets.recipient) changes.push({ path: CONFIG_PATH, content: setRecipient(raw, o.settings.recipient) });
+      const held = raw === undefined ? undefined : parseConfig(raw).secrets.recipient;
+      if (o.settings.recipient && raw !== undefined && !held) changes.push({ path: CONFIG_PATH, content: setRecipient(raw, o.settings.recipient) });
+      recipientKept = !!o.settings.recipient && !!held && held !== o.settings.recipient;
       await store.apply(changes, bootstrapCommit("chore: add Hippocampus guardrail files"));
     }
   } catch (err) {
@@ -203,7 +208,7 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
     throw t.explain(err, info.fullName);
   }
   const ready = (await o.registry.setVaultStatus(vault.id, "ready"))!;
-  return { vault: ready, mode: files ? "initialized" : "adopted" };
+  return { vault: ready, mode: files ? "initialized" : "adopted", ...(recipientKept ? { recipientKept } : {}) };
 }
 
 /** GitHub's refusals, in words that say what to do about them. */

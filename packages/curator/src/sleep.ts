@@ -292,9 +292,10 @@ export async function redactRun(vault: Vault, store: VaultStore, evidence: Map<s
 export function finishRun(vault: Vault, report: SleepReport, failures: Failures = {}): void {
   // Counted first: the review reports it.
   report.remaining = vault.episodes.length;
+  // The review lists them too, and the relay has already carried its units' warnings over.
+  for (const w of vault.warnings) if (!report.warnings.includes(w)) report.warnings.push(w);
   vault.writeFile(REVIEW_PATH, renderReview(vault, report, nextFailures(vault, report, failures)));
   vault.writeFile(HANDBOOK_PATH, renderHandbook(vault));
-  report.warnings.push(...vault.warnings);
 }
 
 /** The human's house rules (`_hippo/curator.md`) without frontmatter or comments, or undefined when there are none. */
@@ -737,9 +738,10 @@ function applyCommitment(vault: Vault, c: Commitment, ep: Episode, report: Episo
   }
   const due = isoDay(c.due);
   if (c.due && !due) report.notes.push(`${goal.slug}: due date isn't an ISO date; left unset`);
-  // A promise that names no owner belongs to the agent that reported it, when that agent is one of the party: otherwise
+  // A new promise that names no owner belongs to the agent that reported it, when that agent is one of the party: otherwise
   // nobody could mark it done (only the owner, or an agent with authority over it, may), and it waits on the human forever.
-  const owner = c.owner ?? (vault.actorMember(ep.agent) ? ep.agent : undefined);
+  // An existing goal keeps whoever it had, or nobody: a later mention must not hand it to an agent the human never chose.
+  const owner = c.owner ?? (isNew && vault.actorMember(ep.agent) ? ep.agent : undefined);
   // What someone already set on a goal stays: a later mention of the same promise only fills gaps.
   const set = isNew ? {} : goalProps(goal);
   const update: GoalUpdate = {
@@ -848,7 +850,7 @@ function renderReview(vault: Vault, report: SleepReport, failures: Failures): st
   const steps = renderNextSteps(nextSteps(report));
   const failed = report.failed.map((f) => {
     const n = failures[f.id]?.attempts ?? 1;
-    return `- \`${f.path}\` — ${f.error.slice(0, 160)} (failed ${n} night${n === 1 ? "" : "s"} in a row${n >= SET_ASIDE_AFTER ? `; tried last from now on, so newer memories aren't held up` : ""})`;
+    return `- \`${f.path}\` — ${reasonOf(f.error)} (failed ${n} night${n === 1 ? "" : "s"} in a row${n >= SET_ASIDE_AFTER ? `; tried last from now on, so newer memories aren't held up` : ""})`;
   });
   const orphans = found.orphans.map((r) => `- ${link(r.slug)} (${r.type}: ${r.title})`);
   const section = (title: string, items: string[]) => `## ${title}\n\n${items.length ? items.join("\n") : "- (none)"}\n`;

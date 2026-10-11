@@ -250,7 +250,9 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     const v = pick(request);
     if (v?.status !== "ready") return { mode: "setup", user: { login: LOGIN }, account, capabilities: { ...capabilities(undefined, "hosted"), setup: "hosted" } };
     const info = await source.info();
-    const shared = v.role === "viewer" ? readOnlySource(source) : source;
+    const { setSecretsRecipient: _key, ...member } = source;
+    // Only the owner sets the secrets key: it decides who can read the vault's secrets.
+    const shared = v.role === "viewer" ? readOnlySource(source) : (v.role ?? "owner") === "owner" ? source : member;
     return { ...info, mode: "worker", vault: { kind: v.provider === "gitlab" ? "gitlab" : "github", repo: v.fullName, branch: v.branch, ...(v.url ? { url: v.url } : {}) }, user: { login: LOGIN }, account, capabilities: { ...capabilities(shared, "hosted"), curator: (v.role ?? "owner") === "owner" } };
   }
 

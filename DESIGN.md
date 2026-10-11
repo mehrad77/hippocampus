@@ -198,10 +198,10 @@ Each step is a small, schema-validated LLM call, so small local models can cope.
    - A `human_only` field takes only a human's word: anyone else's value becomes a **proposal** for the human.
 6. **Kind reducers.** By behaviour, deterministically: contact `stats` for interactions, the decision log, open and answered questions, and commitments that become goals (of the kind's `goal_type`, or the default goal type), updating an open goal with the same title and counterparty instead of duplicating it.
 7. **Apply** in memory, then **chronicle** the episode (secrets and confidential values redacted; a gist kind keeps only its gist; a data-only kind gets a data line) and remove it from the inbox. A confidential episode's words never reach the chronicle, summaries, guidelines or objectives.
-8. **Summaries** for touched notes, then regenerate `HANDBOOK.md` and `_hippo/review.md` (disputes, proposals, possible duplicates, new guidelines, rumors, stale canon, shape notes, failures).
+8. **Summaries** for touched notes, then regenerate `HANDBOOK.md` and `_hippo/review.md` (what to do next, disputes, proposals, goal status changes not applied, possible duplicates, new guidelines, rumors, stale canon, shape notes, failures, warnings). The `next` steps (secrets recipient missing, goal status ignored, failed memories, disputes, suggested domains) are also returned by the relay's `done` report, so an agent can tell the person what to do instead of improvising.
 9. **Audit**, then **commit** as *Hippocampus* with `Hippo-Actor: curator` and `Hippo-Model` trailers, staging only the curator's paths, and push. The audit refuses the flush if it would break the curator's rules, for example a secret or confidential value appearing in plain text.
 
-If an episode fails, it stays in the inbox for the next night. The vault's house rules (`_hippo/curator.md`, plain words the human edits) are added to every step's instructions.
+If an episode fails, it stays in the inbox for the next night. The review's frontmatter records how many nights each one failed in a row and the rule it tripped (never a path or value); after three nights it is tried last, so it can't keep newer memories out of the batch, but it is never dropped. The vault's house rules (`_hippo/curator.md`, plain words the human edits) are added to every step's instructions.
 
 ## 4b. Agent-run sleep (the relay)
 
@@ -217,7 +217,7 @@ The hosted app has no model of its own. Instead, an agent holding a **curator ke
 
 ## 5. Secrets
 
-Fields flagged secret by the model, by the episode (`secret: true`), or by the type (`fields.<name>.secret`) are stored as `secret://<entity>/<field>`. The value is encrypted with `age` to `secrets/<entity>/<field>.age`. Encrypting needs only the public recipient in `_hippo/config.yaml`, so the curator can store secrets but never read them back. `hippo secrets show` decrypts with the private identity from `~/.config/hippocampus/`. On the hosted app, the key pair is generated in the browser during setup; only the public recipient is sent, and the person downloads the identity file.
+Fields flagged secret by the model, by the episode (`secret: true`), or by the type (`fields.<name>.secret`) are stored as `secret://<entity>/<field>`. The value is encrypted with `age` to `secrets/<entity>/<field>.age`. Encrypting needs only the public recipient in `_hippo/config.yaml`, so the curator can store secrets but never read them back. `hippo secrets show` decrypts with the private identity from `~/.config/hippocampus/`. On the hosted app, the key pair is generated in the browser during setup; only the public recipient is sent, and the person downloads the identity file. A vault that skipped the key, or lost the file, can add or replace it later from Setup → Secrets key (owner only; replacing needs an explicit confirmation, since secrets stored under the old key stay locked to it), or with `hippo secrets set`. Until a recipient is set, secret facts are held back and the sleep report says so.
 
 **Confidential** is a softer tier: values stay in the note (the human reads them in Obsidian) but are kept out of search, summaries, the chronicle and prompts other than the extraction itself, and masked in every read model except for a bound caller with authority. Identity keys (emails, phone numbers, repo urls) are confidential by definition.
 

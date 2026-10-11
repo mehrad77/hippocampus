@@ -49,7 +49,7 @@ export function nextSteps(report: SleepReport): NextStep[] {
     out.push({
       code: "goal-no-owner",
       count: unowned,
-      say: `Ignored: ${plural(unowned, "goal status change")}. Only a goal's owner, or an agent with authority over it, can mark it done, blocked or failed, and these goals have neither.`,
+      say: `Ignored: ${plural(unowned, "goal status change")}. Only a goal's owner, or an agent with authority over it, can mark it done, blocked or failed through the nightly consolidation, and the agents that tried were neither.`,
       fix: "On the dashboard's Goals page set an owner on each goal, or on the Agents page grant the agent authority over the goal's domain.",
     });
 

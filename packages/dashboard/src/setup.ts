@@ -410,6 +410,8 @@ export interface HostedInitResult {
   vault: HostedVault;
   /** `initialized`: the template went in; `adopted`: an existing vault got only its missing guardrail files. */
   mode: "initialized" | "adopted";
+  /** Adopted a vault that already has a different secrets recipient: the key made at setup was not used. */
+  recipientKept?: boolean;
 }
 
 export interface HostedKeyRequest {

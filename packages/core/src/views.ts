@@ -726,7 +726,7 @@ export function failuresOf(raw: unknown): Failures {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
   for (const [id, f] of Object.entries(raw)) {
     const { attempts, reason } = (f ?? {}) as { attempts?: unknown; reason?: unknown };
-    if (/^ep-[\w-]+$/.test(id) && Number.isInteger(attempts) && (attempts as number) > 0) out[id] = { attempts: attempts as number, reason: typeof reason === "string" ? reason.slice(0, 200) : "" };
+    if (/^[\w.-]{1,100}$/.test(id) && Number.isInteger(attempts) && (attempts as number) > 0) out[id] = { attempts: attempts as number, reason: typeof reason === "string" ? reason.slice(0, 200) : "" };
   }
   return out;
 }
@@ -734,7 +734,13 @@ export function failuresOf(raw: unknown): Failures {
 /** What the last sleep recorded about episodes that keep failing. Empty before any sleep, or when none did. */
 export async function readFailures(store: Pick<VaultStore, "read">): Promise<Failures> {
   const raw = await store.read(REVIEW_PATH);
-  return raw ? failuresOf(parseDoc(raw).data.failures) : {};
+  if (!raw) return {};
+  // Only sleep rewrites the review, so one it can't parse (a merge left markers in it) must not stop sleep: it counts as no history.
+  try {
+    return failuresOf(parseDoc(raw).data.failures);
+  } catch {
+    return {};
+  }
 }
 
 /**

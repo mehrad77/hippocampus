@@ -489,7 +489,7 @@ describe("VaultRuntime: dashboard humans", () => {
     };
     const member = await session(user("member", "flatmate"));
     expect(member.body.actor).toEqual({ kind: "human", id: "flatmate" });
-    expect(member.body.capabilities).toMatchObject({ remember: true, domains: true, upgrade: false, curator: false });
+    expect(member.body.capabilities).toMatchObject({ remember: true, domains: true, secrets: false, upgrade: false, curator: false });
     // Their human was taken out of the config: no seat, no fallback to the primary human.
     expect(await session(user("member", "nobody"))).toMatchObject({ status: 403, body: { code: "NO_HUMAN" } });
     expect(await session(user("member"))).toMatchObject({ status: 403 });
@@ -537,6 +537,9 @@ describe("VaultRuntime: an older vault waits for its owner's Upgrade", () => {
   });
 
   it("upgrades once when the owner clicks, as the migration actor, leaving the inbox alone", async () => {
+    // The secrets key decides who can read the vault's secrets: a member can't set or replace it.
+    expect((await post("actions/secrets", { recipient: `age1${"q".repeat(58)}`, replace: true }, user("member", "flatmate"))).status).toBe(501);
+    expect(repo.files()["_hippo/config.yaml"]).not.toContain("age1qqqq");
     const { repo, api, connect, logged } = await setup({ files: V1_FILES });
     const r = await upgrade(api);
     expect(r.status).toBe(200);
