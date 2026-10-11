@@ -32,6 +32,8 @@ export interface HostedSetupDeps {
 const MAX_CHECKED = 8;
 /** GitHub's login rule: alphanumerics and single inner dashes, up to 39 characters. */
 const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+/** A GitLab username: letters, digits, `_`, `-` and `.`, starting and ending with a letter, digit or `_`. */
+const GITLAB_LOGIN = /^[A-Za-z0-9_](?:[A-Za-z0-9_.-]{0,253}[A-Za-z0-9_])?$/;
 const READ_ONLY = { metadata: "read", contents: "read" } as const;
 
 const REASONS: Record<DisconnectReason, string> = {
@@ -157,12 +159,14 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       if (!found) throw new HttpError(409, "Connect your GitLab account first.", "NO_GITLAB_CONNECTION");
       const project = found.projects.find((p) => p.id === req.repoId);
       if (!project) throw new HttpError(404, "That isn't one of your GitLab projects with write access (Developer or better), in your personal namespace. Pick another.", "NOT_FOUND");
+      // The person setting the vault up is its primary human by their GitLab username too, unless the request links one.
+      const humans = req.humans && !req.humans.some((h) => h.gitlab) ? [{ ...req.humans[0]!, gitlab: found.login }, ...req.humans.slice(1)] : req.humans;
       const result = await bootstrapVault({
         gitlab: g,
         registry,
         accountId: account.id,
         repo: { id: project.id, fullName: project.fullName, branch: project.defaultBranch },
-        settings: settingsOf,
+        settings: { ...settingsOf, humans },
         seed: req.seed,
         presets: req.presets,
         now: now(),
@@ -286,8 +290,9 @@ export function initRequest(body: unknown, login?: string): VaultSettings & { re
       const id = typeof o.id === "string" ? o.id.trim().toLowerCase() : "";
       if (!SLUG.test(id)) bad(`humans[${i}].id: an id in the vault, lowercase letters, digits and dashes (like player)`);
       const github = o.github === undefined ? undefined : typeof o.github === "string" && GITHUB_LOGIN.test(o.github.trim()) ? o.github.trim() : bad(`humans[${i}].github: a GitHub login`);
+      const gitlab = o.gitlab === undefined ? undefined : typeof o.gitlab === "string" && GITLAB_LOGIN.test(o.gitlab.trim()) ? o.gitlab.trim() : bad(`humans[${i}].gitlab: a GitLab username`);
       const domains = slugs(o.domains, `humans[${i}].domains`);
-      return { id, ...(github ? { github } : {}), ...(domains.length ? { domains } : {}) };
+      return { id, ...(github ? { github } : {}), ...(gitlab ? { gitlab } : {}), ...(domains.length ? { domains } : {}) };
     });
   } else {
     const id = typeof b.human === "string" ? b.human.trim().toLowerCase() : "";

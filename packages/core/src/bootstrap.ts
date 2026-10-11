@@ -20,7 +20,7 @@ export function validTimezone(tz: string): boolean {
 }
 
 /** A human as the settings give it; `domains` may be left out. */
-export type HumanSetting = Pick<HumanDef, "id" | "github"> & { domains?: string[] };
+export type HumanSetting = Pick<HumanDef, "id" | "github" | "gitlab"> & { domains?: string[] };
 
 /** The campaign settings a new vault's `_hippo/config.yaml` is filled in with. */
 export interface VaultSettings {

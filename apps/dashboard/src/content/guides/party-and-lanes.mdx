@@ -78,7 +78,7 @@ The humans are listed under `humans:` in `_hippo/config.yaml`:
 
 ```yaml
 humans:
-  - { id: player, domains: [finance, housing], github: player-gh }
+  - { id: player, domains: [finance, housing], github: player-gh, gitlab: player-gl }
   - { id: partner, domains: [health] }
 ```
 
@@ -87,8 +87,9 @@ humans:
 | `id` | The human's id. It can't be used as an agent id |
 | `domains` | Where this human outranks the other humans. Leave it empty in a vault with one human |
 | `github` | The GitHub login, so the hosted dashboard knows which human signed in |
+| `gitlab` | The GitLab username, the same for a vault kept on GitLab (matched against the GitLab account you connected) |
 
-The first one is the **primary** human: facts with no `by` are theirs, and the local dashboard acts as them unless you start it with `hippo dashboard --as <human>`. On the hosted app, the signed-in GitHub account maps to the human with that `github` login, else to the primary one.
+The first one is the **primary** human: facts with no `by` are theirs, and the local dashboard acts as them unless you start it with `hippo dashboard --as <human>`. On the hosted app, the signed-in person maps to the human with their `github` login; on a GitLab vault, the human with their connected GitLab username as `gitlab` comes first. Otherwise it's the primary human. Setting up a vault fills these in for you.
 
 A human's word outranks every agent everywhere, whatever the tags say. Between humans, the one with the domain wins, and two humans without it open a dispute; see <Link guide="precedence-and-disputes">Precedence and disputes</Link>. Facts written by a human's id and memories a human scribes count as theirs. Humans don't need a sheet in `party/`. Your own note in `characters/` (`characters/player.md` in the example) is about you as a person, not about permissions.
 

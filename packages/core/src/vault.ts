@@ -228,10 +228,9 @@ export class Vault {
     return humans.find((h) => h.id.toLowerCase() === key);
   }
 
-  /** The human a GitHub login belongs to (their `github:`), else the primary human. */
-  humanFor(login: string | undefined): HumanDef {
-    const key = login?.toLowerCase();
-    return (key && this.config.humans.find((h) => h.github?.toLowerCase() === key)) || this.config.humans[0]!;
+  /** The human a login on `host` belongs to (their `github:` or `gitlab:`), else the primary human. */
+  humanFor(login: string | undefined, host: "github" | "gitlab" = "github"): HumanDef {
+    return humanByLogin(this.config.humans, login, host) ?? this.config.humans[0]!;
   }
 
   /**
@@ -709,4 +708,10 @@ ${claimLines(d, show)}
 > [!question] Ruling needed
 > Set \`ruling:\` in this note's properties to the correct value, and the next sleep will make it canon.
 `;
+}
+
+/** The human whose `github:` (or `gitlab:`) is `login`, ignoring case; logins are case-insensitive on both hosts. */
+export function humanByLogin(humans: readonly HumanDef[], login: string | undefined, host: "github" | "gitlab"): HumanDef | undefined {
+  const key = login?.trim().toLowerCase();
+  return key ? humans.find((h) => h[host]?.toLowerCase() === key) : undefined;
 }

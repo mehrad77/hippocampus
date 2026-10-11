@@ -67,11 +67,11 @@ npx @mehrad77/hippocampus init ~/vaults/my-campaign --seed example-relocation
 | `--timezone`, `--domains` | Chronicle days, and the lanes agents can hold authority over |
 
 Then:
-- check `_hippo/config.yaml`: `name`, `humans` (give a human `domains` to make them the authority there, and `github:` for the hosted dashboard), `timezone`, `domains`
+- check `_hippo/config.yaml`: `name`, `humans` (give a human `domains` to make them the authority there, and `github:` or, for a vault on GitLab, `gitlab:` for the hosted dashboard), `timezone`, `domains`
 - replace the example party in `party/` with your agents, one note each, with `lane` and `authority` domains
 - open the folder in Obsidian and install the Dataview community plugin for the dashboards
 
-**Humans.** Everyone listed under `humans` outranks every agent; between humans, the one whose `domains` cover a field wins, and otherwise they dispute. The first is the primary human: a value without `by` is theirs, and the dashboard acts as them unless `hippo dashboard --as <id>` (or, on the hosted app, the signed-in GitHub login) says otherwise.
+**Humans.** Everyone listed under `humans` outranks every agent; between humans, the one whose `domains` cover a field wins, and otherwise they dispute. The first is the primary human: a value without `by` is theirs, and the dashboard acts as them unless `hippo dashboard --as <id>` (or, on the hosted app, the signed-in GitHub login, or the connected GitLab username on a GitLab vault) says otherwise.
 
 **Types and kinds.** What the vault holds is written down in it: one note per entity type in `_hippo/schema/types/` (folder, fields, statuses, description and `## Is` / `## Is not` examples the curator reads) and one per episode kind in `_hippo/schema/kinds/`. Edit them like any note. A field can be `human_only` (agents can only propose a value), `secret`, `confidential`, an `identity_key` (an email or url that says two notes are one thing), `succession` (a new employer closes the old one), or `recurs: yearly` (a birthday in the briefing). `hippo validate` lists notes that don't fit, as advice.
 

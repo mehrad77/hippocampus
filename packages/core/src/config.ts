@@ -38,8 +38,8 @@ export function canonicalRelation(config: Pick<HippoConfig, "relations" | "relat
 }
 
 /** `humans:` in place of a legacy `human:` key, keeping that key's comment and position. */
-export function setHumans(doc: Document, humans: (Pick<HumanDef, "id" | "github"> & { domains?: string[] })[]): void {
-  const compact = humans.map((h) => ({ id: h.id, ...(h.domains?.length ? { domains: h.domains } : {}), ...(h.github ? { github: h.github } : {}) }));
+export function setHumans(doc: Document, humans: (Pick<HumanDef, "id" | "github" | "gitlab"> & { domains?: string[] })[]): void {
+  const compact = humans.map((h) => ({ id: h.id, ...(h.domains?.length ? { domains: h.domains } : {}), ...(h.github ? { github: h.github } : {}), ...(h.gitlab ? { gitlab: h.gitlab } : {}) }));
   const node = doc.createNode(compact);
   for (const item of node.items) if (isMap(item)) item.flow = true;
   const legacy = isMap(doc.contents) ? doc.contents.items.find((p) => isScalar(p.key) && p.key.value === "human") : undefined;

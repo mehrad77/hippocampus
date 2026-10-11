@@ -175,6 +175,7 @@ export interface HumanView {
   id: string;
   domains: string[];
   github?: string;
+  gitlab?: string;
 }
 
 /** A field of a type or of a kind's `data:`, as the dashboard needs it (forms, badges). */
@@ -805,7 +806,7 @@ export function schemaView(vault: Vault): SchemaView {
 }
 
 export function humansView(vault: Vault): HumanView[] {
-  return vault.config.humans.map((h) => ({ id: h.id, domains: h.domains, ...(h.github ? { github: h.github } : {}) }));
+  return vault.config.humans.map((h) => ({ id: h.id, domains: h.domains, ...(h.github ? { github: h.github } : {}), ...(h.gitlab ? { gitlab: h.gitlab } : {}) }));
 }
 
 /** The effective cadence of `e` (own, else inherited or from its groups) and how overdue contact is on `today`. */

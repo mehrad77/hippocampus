@@ -10,7 +10,7 @@ import { HippoService } from "./service.ts";
 import { Vault, VaultError } from "./vault.ts";
 
 const now = () => new Date("2026-09-27T12:00:00.000Z");
-const HUMANS = "humans:\n  - { id: player, domains: [housing] }\n  - { id: game-master, domains: [residency], github: GM-Login }\n";
+const HUMANS = "humans:\n  - { id: player, domains: [housing] }\n  - { id: game-master, domains: [residency], github: GM-Login, gitlab: gm.lab }\n";
 const twoHumans = (extra: Record<string, string> = {}) => fixtureStore({ "_hippo/config.yaml": CONFIG.replace("humans: [{ id: player }]\n", HUMANS), ...extra });
 
 describe("config", () => {
@@ -24,7 +24,7 @@ describe("config", () => {
     const c = parseConfig(`version: 1\nname: Harbor term\ncampaign: old\nhuman: someone-else\n${HUMANS}`);
     expect(c.name).toBe("Harbor term");
     expect(c.humans.map((h) => h.id)).toEqual(["player", "game-master"]);
-    expect(c.humans[1]).toEqual({ id: "game-master", domains: ["residency"], github: "GM-Login" });
+    expect(c.humans[1]).toEqual({ id: "game-master", domains: ["residency"], github: "GM-Login", gitlab: "gm.lab" });
     expect(c.human).toBe("player");
     expect(parseConfig("humans: [player, game-master]\n").humans).toEqual([
       { id: "player", domains: [] },
@@ -56,6 +56,10 @@ describe("humans", () => {
     expect(v.humanFor("gm-login").id).toBe("game-master");
     expect(v.humanFor("someone").id).toBe("player");
     expect(v.humanFor(undefined).id).toBe("player");
+    // A GitLab username matches `gitlab:` only; GitHub logins and GitLab usernames are separate namespaces.
+    expect(v.humanFor("GM.Lab", "gitlab").id).toBe("game-master");
+    expect(v.humanFor("gm-login", "gitlab").id).toBe("player");
+    expect(v.humanFor("gm.lab").id).toBe("player");
   });
 
   it("refuses every human as an agent id", async () => {

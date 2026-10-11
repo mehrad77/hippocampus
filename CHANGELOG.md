@@ -12,7 +12,7 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 - **Generic building blocks** (vault format v2): a vault's entity types and episode kinds are notes in `_hippo/schema/`, and code checks capabilities (`goal`, `actor`, `arc`), never type names.
   - Types `extend` types; fields are typed and may be `human_only`, `secret`, `confidential`, `identity_key`, `succession`, `recurs: yearly` or owned by a lane `domain`. Validation is advice: shape notes in the morning review and `hippo validate`.
   - Kinds give an episode a behaviour (observation, fact, decision, question, task, interaction), a text policy (required, optional, gist, forbidden), typed `data`, and whether it counts as contact. A data-only episode is curated without the model.
-  - **Several humans** (`humans:`, each with `domains` and a `github:` login); the one whose domains cover a field outranks the others.
+  - **Several humans** (`humans:`, each with `domains`, a `github:` login and, for vaults on GitLab, a `gitlab:` username); the one whose domains cover a field outranks the others.
   - **Fact qualifiers:** scoped keys (`greeting@lang:pt`), `valid_from`/`valid_until`, `confidence`; succession closes an old value into its history instead of disputing it.
   - **Proposals** for `human_only` fields, and **merge proposals** when an identity key (an email, a repo url) shows two notes are one thing.
   - **Managed memory:** guidelines (scoped, rumor until corroborated), a decision log, open questions and contact stats on any note; `extends:` and inheritable notes pass on defaults, guidelines and a contact cadence; briefings list overdue contacts.

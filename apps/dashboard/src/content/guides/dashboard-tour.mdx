@@ -55,7 +55,7 @@ The commands stay the same in both looks: the nightly update is still `hippo sle
 | `hippo dashboard`, in or with `-v` a vault folder | The local folder | You, the primary human, or the one you name with `--as <human>` |
 | `hippo --github you/my-vault dashboard` | The GitHub repo, no checkout (token in `HIPPO_GITHUB_TOKEN`) | You; each action is one commit |
 | `hippo dashboard --mcp https://…/mcp` | Any Hippocampus MCP server (token in `HIPPO_MCP_TOKEN`) | The token's agent, within its scopes |
-| `/dashboard/` on the hosted app | Your vault repo, behind GitHub sign-in | The human whose `github` matches your login, else the primary one; rulings and new agents also name your GitHub login |
+| `/dashboard/` on the hosted app | Your vault repo, behind GitHub sign-in | The human whose `github` matches your login (on a GitLab vault, whose `gitlab` matches your connected GitLab username), else the primary one; rulings and new agents also name your GitHub login |
 | `hippo dashboard --demo` | A fictional example, in memory | Nobody: it's a sandbox, gone when you stop it |
 
 **Over MCP** the dashboard reads through resources that agent hosts don't list, and writes through the same tools agents use. New notes and goal edits are filed as the token's agent. Rulings belong to the human, so they aren't available there. Whatever a source can't do, the dashboard simply hides.

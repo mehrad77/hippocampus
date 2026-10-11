@@ -9,6 +9,7 @@ timezone: Europe/Lisbon
 
 # The humans this memory belongs to; the first is the primary one. Their word outranks every agent,
 # and `ruling:` in disputes is theirs. A human's `domains` rank them above the other humans there.
+# `github:` (or `gitlab:`, for a vault on GitLab) is their login there, so the hosted dashboard knows who signed in.
 humans:
   - { id: player }
 

@@ -78,13 +78,13 @@ describe("buildVaultFiles", () => {
     const files = await buildVaultFiles(template, {
       humans: [
         { id: "student", domains: ["housing"] },
-        { id: "game-master", domains: [], github: "gm-login" },
+        { id: "game-master", domains: [], github: "gm-login", gitlab: "gm.lab" },
       ],
     });
     const raw = files[CONFIG_PATH]!;
     expect(raw).toContain("# The humans this memory belongs to;");
     expect(raw).not.toMatch(/^human:/m);
-    expect(raw).toMatch(/^humans:\n {2}- \{ ?id: student, domains: \[ ?housing ?\] ?\}\n {2}- \{ ?id: game-master, github: gm-login ?\}$/m);
+    expect(raw).toMatch(/^humans:\n {2}- \{ ?id: student, domains: \[ ?housing ?\] ?\}\n {2}- \{ ?id: game-master, github: gm-login, gitlab: gm\.lab ?\}$/m);
     const vault = await Vault.load(new MemoryStore(files));
     expect(vault.config.humans.map((h) => h.id)).toEqual(["student", "game-master"]);
     expect(vault.config.human).toBe("student");

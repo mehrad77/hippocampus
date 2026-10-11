@@ -142,6 +142,20 @@ describe("a vault on GitLab", () => {
     expect(log[0]!.message).toContain("Hippo-Actor: bootstrap");
   });
 
+  it("links the person's GitLab username to the primary human, and tells the dashboard who they are on GitLab", async () => {
+    const ctx = await setup();
+    // Their GitLab username differs from their GitHub login, so the project lives in their own GitLab namespace.
+    ctx.gl.addUser("player-gl", 4600);
+    await ctx.gl.addProject({ fullName: "player-gl/vault", id: 600, empty: true });
+    await ctx.h.connectGitLab(ctx.visit, "player-gl");
+    expect((await init(ctx.h, ctx.visit, { repoId: 600 })).status).toBe(200);
+    const config = ctx.gl.files("main", ctx.gl.projects.get(600)!)["_hippo/config.yaml"]!;
+    expect(config).toMatch(/- \{ ?id: player, github: player, gitlab: player-gl ?\}/);
+    await ctx.h.api(ctx.visit, "overview");
+    const call = ctx.h.vaults.calls.filter((c) => c.method === "dashboard").at(-1);
+    expect(call?.user).toMatchObject({ login: "player", gitlab: "player-gl" });
+  });
+
   it("registers the project id under its provider, and configures the vault's object for GitLab", async () => {
     const { h, result } = await ready();
     const vault = (await h.registry.vault(result.vault.id))!;

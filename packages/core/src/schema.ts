@@ -330,6 +330,8 @@ export const HumanDef = z.object({
   domains: stringList.default([]),
   /** GitHub login, so the hosted dashboard knows which human is signed in. */
   github: opt(z.coerce.string()),
+  /** GitLab username, the same for a vault kept on GitLab (matched against the connected GitLab account). */
+  gitlab: opt(z.coerce.string()),
 });
 export type HumanDef = z.infer<typeof HumanDef>;
 

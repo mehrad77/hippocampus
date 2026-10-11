@@ -1,4 +1,4 @@
-import { AuditError, CONFIG_PATH, CURRENT_VAULT_VERSION, HippoService, StoreConflictError, Vault, displayName, migrate, parseConfig, vaultVersionStatus, type HippoConfig, type SearcherFactory } from "@hippocampus/core";
+import { AuditError, CONFIG_PATH, CURRENT_VAULT_VERSION, HippoService, humanByLogin, StoreConflictError, Vault, displayName, migrate, parseConfig, vaultVersionStatus, type HippoConfig, type SearcherFactory } from "@hippocampus/core";
 import { SleepRelay, type RunStore } from "@hippocampus/curator/relay";
 import { HttpError, createDashboardApi, errorResponse, json, serviceSource, type DashboardSource, type ErrorReport, type SourceInfo, type VaultUpgrade } from "@hippocampus/dashboard";
 import { HippoIndex, doSql, type DurableSqlLike, type SqlStorageLike } from "@hippocampus/index";
@@ -48,7 +48,10 @@ export interface VaultGrant {
 
 /** The signed-in owner on the dashboard. */
 export interface DashboardUser {
+  /** The GitHub login the person signed in with. */
   login: string;
+  /** Their connected GitLab username, for a vault on GitLab. */
+  gitlab?: string;
   account: { status: "waitlisted" | "approved"; admin: boolean };
 }
 
@@ -452,7 +455,7 @@ export class VaultRuntime {
       const gitlab = this.meta.provider === "gitlab";
       const url = `${(gitlab ? this.d.gitlab!.webUrl : (this.d.webUrl ?? "https://github.com")).replace(/\/$/, "")}/${repo}`;
       const vault = { kind: gitlab ? ("gitlab" as const) : ("github" as const), repo, branch: this.meta.branch, url };
-      const human = await this.humanOf(user.login);
+      const human = await this.humanOf(user);
       const upgradeVault = () => this.upgrade();
       const source: DashboardSource =
         status === "older" && config
@@ -471,12 +474,16 @@ export class VaultRuntime {
     }
   }
 
-  /** The human a signed-in GitHub login is (their `github:` in the config), else the primary human; undefined when the config doesn't load. */
-  private async humanOf(login: string): Promise<string | undefined> {
+  /**
+   * Which human the signed-in person is: on a GitLab vault, the one whose `gitlab:` is their connected
+   * GitLab username; else the one whose `github:` is their GitHub login; else the primary human.
+   * Undefined when the config doesn't load.
+   */
+  private async humanOf(user: DashboardUser): Promise<string | undefined> {
     try {
       const { humans } = parseConfig(await this.reads().read(CONFIG_PATH));
-      const key = login.toLowerCase();
-      return (humans.find((h) => h.github?.toLowerCase() === key) ?? humans[0])?.id;
+      const onGitLab = this.meta.provider === "gitlab" ? humanByLogin(humans, user.gitlab, "gitlab") : undefined;
+      return (onGitLab ?? humanByLogin(humans, user.login, "github") ?? humans[0])?.id;
     } catch {
       return undefined;
     }

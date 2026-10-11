@@ -218,7 +218,7 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
         if (!(await rateLimit(deps.limits?.api, `account:${caller.account.id}`))) throw new HttpError(429, "Too many requests; slow down a little.", "RATE_LIMITED");
       }
       const stub = await stubFor(vaultMeta(caller.vault));
-      const res = await stub.dashboard(withoutCredentials(request), dashboardUser(caller));
+      const res = await stub.dashboard(withoutCredentials(request), await dashboardUser(caller));
       await log(route, started, res.status, vault);
       return res;
     } catch (err) {
@@ -228,8 +228,10 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
     }
   }
 
-  function dashboardUser({ account }: Caller): DashboardUser {
-    return { login: account.login, account: { status: account.status === "approved" ? "approved" : "waitlisted", admin: settings.admins.has(account.id) } };
+  async function dashboardUser({ account, vault }: Caller): Promise<DashboardUser> {
+    // On a GitLab vault the human may be named by their GitLab username, from the connected GitLab account.
+    const gitlab = vault?.provider === "gitlab" ? (await routes.registry.gitlabCredential(account.id))?.gitlabLogin : undefined;
+    return { login: account.login, ...(gitlab ? { gitlab } : {}), account: { status: account.status === "approved" ? "approved" : "waitlisted", admin: settings.admins.has(account.id) } };
   }
 
   return {

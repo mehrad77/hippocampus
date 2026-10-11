@@ -32,6 +32,8 @@ describe("initRequest", () => {
     expect(bad({ humans: [] })).toThrow(/humans/);
     expect(bad({ humans: ["player", "Player"] })).toThrow(/each id once/);
     expect(bad({ humans: [{ id: "player", github: "not a login" }] })).toThrow(/GitHub login/);
+    expect(bad({ humans: [{ id: "player", gitlab: "-not.a.login" }] })).toThrow(/GitLab username/);
+    expect(initRequest({ ...BASE, name: "Harbor term", humans: [{ id: "player", gitlab: "player.gl" }] }).humans).toEqual([{ id: "player", gitlab: "player.gl" }]);
     expect(bad({ presets: ["pirates"] })).toThrow(/presets: "pirates" isn't one; choose from business, developer/);
     expect(bad({ presets: "people" })).toThrow(/presets/);
     expect(bad({ presets: ["constructor"] })).toThrow(/presets: "constructor" isn't one/);
