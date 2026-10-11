@@ -1,14 +1,11 @@
 import { parseDocument } from "yaml";
-import { CONFIG_PATH, renderConfig, setHumans } from "./config.ts";
+import { CONFIG_PATH, SLUG, renderConfig, setHumans } from "./config.ts";
 import { HANDBOOK_PATH, renderHandbook } from "./handbook.ts";
 import { parseDoc, renderDoc } from "./markdown.ts";
 import { applyPresets } from "./presets.ts";
 import type { HumanDef } from "./schema.ts";
 import { MemoryStore, type VaultStore } from "./store.ts";
 import { Vault } from "./vault.ts";
-
-/** Ids of the human, agents and domains: lowercase letters, digits and dashes. */
-export const SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 export function validTimezone(tz: string): boolean {
   try {

@@ -1,5 +1,5 @@
 import { actorProps } from "./actor.ts";
-import { CONFIG_PATH, linkHuman, type HumanLogins } from "./config.ts";
+import { CONFIG_PATH, addDomains, domainIds, linkHuman, type HumanLogins } from "./config.ts";
 import { displayName, formatValue, getHumanGuidelines, getSummary, type Entity } from "./entity.ts";
 import { applyGoalUpdate, getObjectives, goalProps, goalStateOf, legacyClocks, nextDue, type Clock, type GoalState, type GoalUpdate, type Progress, type Repeat } from "./goal.ts";
 import { createEpisode, type NewEpisode } from "./episode.ts";
@@ -11,7 +11,7 @@ import { humanText } from "./markdown.ts";
 import { addPartyMember, applyRuling, assertAgentId, declineProposal, isSecretField, questToGoalUpdate, retractFact, type NewPartyMember, type QuestUpdate } from "./ops.ts";
 import { miniSearcher, type SearcherFactory } from "./search.ts";
 import type { DecisionEntry, DisputeKind, FactStatus, FactValue, Guideline, ProposalState, QuestionEntry, Stats } from "./schema.ts";
-import { StoreConflictError, type VaultStore } from "./store.ts";
+import { StoreConflictError, bufferedStore, type VaultStore } from "./store.ts";
 import { fold, isoDate, localParts, parseFactKey, truncate } from "./text.ts";
 import { ACTOR_TRAILER, actorTrailer, withTrailers } from "./trailers.ts";
 import { Vault, VaultError } from "./vault.ts";
@@ -725,6 +725,27 @@ export class HippoService {
         .map(([host, login]) => (login ? `${host} @${login}` : `no ${host}`))
         .join(", ");
       return { message: signed(`config(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): ${id}: ${what}`), result: { changed: true } };
+    });
+  }
+
+  /**
+   * The human adds domains to the vault's `domains:` (the lanes humans and agents can hold), and the
+   * Handbook that lists them follows. Returns the ones that were new, and the commit message.
+   */
+  async addDomains(ids: string[], opts: { via?: string } = {}): Promise<{ added: string[]; message?: string }> {
+    return this.mutate<{ added: string[]; message?: string }>(async (vault) => {
+      const raw = await vault.store.read(CONFIG_PATH);
+      if (raw === undefined) throw new VaultError(`no ${CONFIG_PATH}; is this a vault?`);
+      const known = new Set(vault.config.domains.map((d) => d.toLowerCase()));
+      const added = domainIds(ids).filter((d) => !known.has(d));
+      const next = addDomains(raw, added);
+      if (next === raw) return { message: "", result: { added: [] } };
+      // The Handbook reads the config the vault was loaded with, so render it from one that has the new list.
+      const after = await Vault.load(bufferedStore(vault.store, [{ path: CONFIG_PATH, content: next }]).store, this.opts);
+      vault.writeFile(CONFIG_PATH, next);
+      vault.writeFile(HANDBOOK_PATH, renderHandbook(after));
+      const message = signed(`config(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): add domain${added.length > 1 ? "s" : ""} ${added.join(", ")}`);
+      return { message, result: { added, message } };
     });
   }
 

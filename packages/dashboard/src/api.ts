@@ -115,6 +115,8 @@ const PartyBody = z.object({
   host: z.string().max(120).optional(),
 });
 
+const DomainBody = z.object({ ids: z.array(text(60)).min(1).max(20) });
+
 const CuratorBody = z.object({ abort: text(100) });
 
 const IntroductionBody = z.object({
@@ -205,6 +207,8 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
             return json(200, await need(source.remember, "remembering").call(source, RememberBody.parse(body)));
           case "actions/party":
             return json(200, await need(source.addParty, "adding party members").call(source, PartyBody.parse(body), via));
+          case "actions/domain":
+            return json(200, await need(source.addDomains, "adding domains").call(source, DomainBody.parse(body).ids, via));
           case "actions/introduction":
             return json(200, await need(source.introduction, "introductions").call(source, IntroductionBody.parse(body), via));
           case "actions/curator":

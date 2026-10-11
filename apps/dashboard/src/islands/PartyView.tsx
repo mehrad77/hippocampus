@@ -13,7 +13,7 @@ import { PageGate } from "../ui/PageGate.tsx";
 import { Dialog, Empty, Panel, RelTime, SkeletonPanel } from "../ui/Parts.tsx";
 import { errorMessage, settle, useHashTarget } from "../ui/play/actions.ts";
 import { PageHead } from "../ui/play/Bits.tsx";
-import { agentIdProblem, goalsOf, initials } from "../ui/play/model.ts";
+import { agentIdProblem, domainDraft, goalsOf, initials } from "../ui/play/model.ts";
 import { ConfirmDialog, DomainChips, Field } from "./setup/common.tsx";
 
 export default function PartyView() {
@@ -92,6 +92,8 @@ function Party({ session }: { session: SessionInfo }) {
       {intros.length > 0 && <Introductions items={intros} canDecide={session.capabilities.introductions} onApprove={setApproving} onDismiss={setDismissing} />}
 
       {strangers.length > 0 && <Strangers ids={strangers} canAdd={canAdd} onAdd={(id) => setAdding({ id })} />}
+
+      <Domains canAdd={session.capabilities.domains} />
 
       {canAdd && <AddMemberDialog open={!!adding} initialId={adding?.id ?? ""} party={o.party} human={human} humans={people} onClose={() => setAdding(null)} />}
       {session.capabilities.introductions && (
@@ -283,6 +285,93 @@ function Strangers({ ids, canAdd, onAdd }: { ids: string[]; canAdd: boolean; onA
   );
 }
 
+// ── Domains ───────────────────────────────────────────────────────────────
+
+/** The vault's domains (`domains:` in the config), and a field to add more for a human who may. */
+function Domains({ canAdd }: { canAdd: boolean }) {
+  const { v, look } = useTerms();
+  const catalog = useResource<Catalog>("/catalog");
+  const [draft, setDraft] = useState("");
+  const [tried, setTried] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const id = useId();
+  const domains = catalog.data?.domains ?? [];
+  const { ids, problem } = domainDraft(draft, domains, look);
+
+  const submit = async (e: React.SyntheticEvent) => {
+    e.preventDefault();
+    setTried(true);
+    if (problem) return;
+    setBusy(true);
+    try {
+      const res = await postJson<{ added: string[] }>("/actions/domain", { ids });
+      toast(res.added.length ? `Added ${res.added.join(", ")}.` : v("The vault already has those areas.", "The vault already has those domains."), "ok");
+      setDraft("");
+      setTried(false);
+      await settle();
+    } catch (err) {
+      toast(errorMessage(err), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel title={v("Areas", "Domains")} icon="map" id="domains" aside={catalog.data ? plural(domains.length, v("area", "domain")) : undefined}>
+      <p className="small">
+        {v(
+          "Areas of your life, like housing or career. You make an agent responsible for some of them, and a person's areas decide whose word counts when two of you disagree.",
+          "The lanes of the campaign, like housing or career. Agents hold authority over some of them, and a player's domains decide whose word wins between players.",
+        )}
+      </p>
+      {catalog.error && !catalog.data ? (
+        <span className="field-error small">{catalog.error.message}</span>
+      ) : domains.length ? (
+        <div className="row" role="list" aria-label={v("Areas", "Domains")}>
+          {domains.map((d) => (
+            <span key={d} className="chip" role="listitem">
+              {d}
+            </span>
+          ))}
+        </div>
+      ) : (
+        catalog.data && <p className="small muted">{v("No areas yet.", "No domains yet.")}</p>
+      )}
+      {canAdd ? (
+        <form className="row" onSubmit={submit} noValidate style={{ marginTop: 12, alignItems: "flex-start" }}>
+          <div className="field" style={{ flex: "1 1 240px" }}>
+            <label htmlFor={id} className="sr-only">
+              {v("New areas", "New domains")}
+            </label>
+            <input
+              id={id}
+              className="input"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              maxLength={300}
+              placeholder="health, side-project"
+              aria-invalid={tried && !!problem}
+              aria-describedby={tried && problem ? `${id}-err` : undefined}
+            />
+            {tried && problem && (
+              <span id={`${id}-err`} className="field-error small" role="status">
+                {problem}
+              </span>
+            )}
+          </div>
+          <button type="submit" className="btn" disabled={busy || !draft.trim()}>
+            <Icon name="plus" size={16} /> {busy ? "Adding…" : "Add"}
+          </button>
+        </form>
+      ) : (
+        <p className="small muted">
+          To add one, list it under <code>domains:</code> in <code>_hippo/config.yaml</code>.
+        </p>
+      )}
+    </Panel>
+  );
+}
+
 // ── Introductions ─────────────────────────────────────────────────────────
 
 /** `POST actions/introduction`, then refetch everything that shows the party. */
@@ -440,9 +529,8 @@ function ApproveDialog({ intro, human, onClose }: { intro: IntroductionView | nu
             </>
           ) : (
             <span className="hint">
-              {v("No areas are defined in ", "No domains are defined in ")}
-              <code>_hippo/config.yaml</code>
-              {v(" yet, so it's added without any.", " yet, so it joins without authority.")}
+              {v("No areas yet, so it's added without any. Add some under Areas on this page first, or in ", "No domains yet, so it joins without authority. Add some under Domains on this page first, or in ")}
+              <code>_hippo/config.yaml</code>.
             </span>
           )}
         </div>
@@ -632,9 +720,8 @@ function AddMemberDialog({ open, initialId, party, human, humans, onClose }: { o
             </>
           ) : (
             <span className="hint">
-              {v("No areas are defined in ", "No domains are defined in ")}
-              <code>_hippo/config.yaml</code>
-              {v(" yet, so it's added without any.", " yet, so it joins without authority.")}
+              {v("No areas yet, so it's added without any. Add some under Areas on this page first, or in ", "No domains yet, so it joins without authority. Add some under Domains on this page first, or in ")}
+              <code>_hippo/config.yaml</code>.
             </span>
           )}
         </div>
