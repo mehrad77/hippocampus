@@ -68,6 +68,11 @@ export class VaultHost extends DurableObject<HostedEnv> {
     return this.host.addParty(input, via);
   }
 
+  /** Link (or unlink, with `null`) a person's logins to one of the vault's humans; `create` adds the human. */
+  linkHuman(id: string, logins: { github?: string | null; gitlab?: string | null }, via: string, create?: { domains?: string[] }): Promise<{ changed: boolean }> {
+    return this.host.linkHuman(id, logins, via, create);
+  }
+
   /** Stop serving; storage stays until `destroy`. */
   disconnect(reason: string): Promise<void> {
     return this.host.disconnect(reason);

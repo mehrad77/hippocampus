@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HostedStatus } from "../../lib/types.ts";
-import { canAddVault, draftProblems, draftReady, forNewVault, hostedDefaultStep, hostedLock, hostedProvider, hostedRepos, hostedStepDef, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, repoVerdict, type HostedContext } from "./hosted.ts";
+import { canAddVault, freeHumans, humanIdFor, inviteProblem, draftProblems, draftReady, forNewVault, hostedDefaultStep, hostedLock, hostedProvider, hostedRepos, hostedStepDef, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, repoVerdict, type HostedContext } from "./hosted.ts";
 
 const base: HostedStatus = {
   kind: "hosted",
@@ -162,6 +162,8 @@ describe("adding another vault", () => {
     expect(canAddVault(two)).toEqual({ ok: true });
     expect(canAddVault({ ...two, vaults: [ready.vault!, ready.vault!] })).toMatchObject({ ok: false, why: expect.stringContaining("2 vaults") });
     expect(canAddVault(base).ok).toBe(false);
+    // Vaults shared with them don't count.
+    expect(canAddVault({ ...two, vaults: [ready.vault!, { ...ready.vault!, id: "v2", role: "member" }] })).toEqual({ ok: true });
   });
 });
 
@@ -191,5 +193,19 @@ describe("campaign draft", () => {
     expect(identityFileName("Ação!")).toBe("hippocampus-acao.agekey");
     expect(identityFileName("")).toBe("hippocampus-vault.agekey");
     expect(identityFileText("AGE-SECRET-KEY-1EXAMPLE \n")).toBe("AGE-SECRET-KEY-1EXAMPLE\n");
+  });
+});
+
+describe("sharing", () => {
+  it("offers the humans nobody holds yet, never the inviter's own", () => {
+    expect(freeHumans(["player", "flatmate", "game-master"], [{}, { human: "game-master" }], "player")).toEqual(["flatmate"]);
+  });
+
+  it("turns a login into a human id, and checks the invite form", () => {
+    expect(humanIdFor("Game_Master")).toBe("game-master");
+    expect(inviteProblem({ login: "@game-master", human: "game-master" })).toBeUndefined();
+    expect(inviteProblem({ login: "", human: "game-master" })).toBeUndefined();
+    expect(inviteProblem({ login: "not a login", human: "game-master" })).toMatch(/GitHub username/);
+    expect(inviteProblem({ login: "", human: "Game Master" })).toMatch(/lowercase/);
   });
 });

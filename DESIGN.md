@@ -170,7 +170,7 @@ Agents get small, verb-oriented tools. The human gets a different view: everythi
 - **One API, two runtimes.** `packages/dashboard` is a web-standard `Request → Response` router over a `DashboardSource` port:
   - Sources: a `HippoService` (local dir, `--github`, a hosted vault, the demo) or an MCP client.
   - `hippo dashboard` serves it on 127.0.0.1 with a launch-token cookie, a Host allowlist and same-origin JSON writes.
-  - The hosted app serves it behind GitHub sign-in; each account reaches only its own vaults' Durable Objects, and each request names one (`x-hippo-vault`, else the one used last).
+  - The hosted app serves it behind GitHub sign-in; each account reaches only the vaults it owns or that were shared with it, and each request names one (`x-hippo-vault`, else the one used last).
   - The UI (`apps/dashboard`, Astro + React islands) is one static build served by both, with a hash-based CSP.
 - **Session Zero.** The dashboard is also the setup path. A `SetupPort` per runtime does what the machine can do:
   - Locally: create the vault (with presets), forge keys, save curator settings to `~/.config/hippocampus/env`, install the launchd job, and rehearse a dry-run sleep.

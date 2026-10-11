@@ -91,6 +91,18 @@ humans:
 
 The first one is the **primary** human: facts with no `by` are theirs, and the local dashboard acts as them unless you start it with `hippo dashboard --as <human>`. On the hosted app, the signed-in person maps to the human with their `github` login; on a GitLab vault, the human with their connected GitLab username as `gitlab` comes first. Otherwise it's the primary human. Setting up a vault fills these in for you.
 
+### Sharing a vault (hosted app)
+
+On the hosted app, a vault's owner shares it from **Setup → People → Invite someone**: by GitHub username (only they can accept, and they see the invite when they sign in) or as a link that works once. Each person joins as **a human of their own**, either one already in `humans:` or a new one added when they accept, with their login written onto it.
+
+| Role | Can |
+| --- | --- |
+| Owner | Everything: invites and removes people, the repository, every key, curation |
+| Member | Adds memories, settles disputes and approves agents as their own human; makes keys for their own agents |
+| Viewer | Reads everything, changes nothing |
+
+Someone you share with is never the primary human by accident: they act only as the human they were invited as. Removing them, or their leaving, revokes the keys they made and the apps they connected for that vault; their human and everything they wrote stay. An invite also lets a person into the hosted app without waiting for an admin.
+
 A human's word outranks every agent everywhere, whatever the tags say. Between humans, the one with the domain wins, and two humans without it open a dispute; see <Link guide="precedence-and-disputes">Precedence and disputes</Link>. Facts written by a human's id and memories a human scribes count as theirs. Humans don't need a sheet in `party/`. Your own note in `characters/` (`characters/player.md` in the example) is about you as a person, not about permissions.
 
 ## Strangers at the table

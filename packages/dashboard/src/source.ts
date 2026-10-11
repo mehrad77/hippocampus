@@ -180,6 +180,12 @@ export interface SessionInfo extends Partial<Omit<SourceInfo, "mode">> {
   error?: { code: string; message: string };
 }
 
+/** A source with every write taken out: what a viewer of a shared vault gets. */
+export function readOnlySource(source: DashboardSource): DashboardSource {
+  const { rule: _r, goal: _g, quest: _q, proposal: _p, retract: _x, remember: _m, rememberFields: _f, addParty: _a, introduction: _i, curator: _c, upgradeVault: _u, ...reads } = source;
+  return reads;
+}
+
 export function capabilities(source: DashboardSource | undefined, setup: SetupKind): Capabilities {
   return {
     rule: !!source?.rule,

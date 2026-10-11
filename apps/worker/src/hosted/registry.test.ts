@@ -1,7 +1,7 @@
 import { HttpError } from "@hippocampus/dashboard";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "../auth.ts";
-import { MAX_VAULTS_PER_USER, Registry, agentId, isLive, keyRequest, ulid } from "./registry.ts";
+import { MAX_PENDING_APP_INVITES, MAX_VAULTS_PER_USER, Registry, agentId, isLive, keyRequest, ulid } from "./registry.ts";
 import { nodeSqlite } from "@hippocampus/index/node";
 import { migrate, registryDb } from "./testing.ts";
 
@@ -297,4 +297,105 @@ it("makes ULIDs that sort by time", () => {
   const b = ulid(new Date("2026-10-01T00:00:01Z"), new Uint8Array(16).fill(255));
   expect(a).toHaveLength(26);
   expect(a < b).toBe(true);
+});
+
+describe("sharing", () => {
+  const SCOUT = { id: 5150, login: "job-scout" };
+  async function shared() {
+    const s = await setup();
+    const player = await s.registry.signIn(PLAYER, { admin: true });
+    const gm = await s.registry.signIn(GM);
+    const { vault } = await s.registry.claimVault({ accountId: PLAYER.id, installationId: 55, repoId: 9001, fullName: "player/vault", branch: "main" });
+    await s.registry.setVaultStatus(vault.id, "ready");
+    return { ...s, player, gm, vault };
+  }
+  const gh = (login: string) => [{ provider: "github" as const, login }];
+
+  it("seats whoever accepts a vault invite, approves them, and records who invited them", async () => {
+    const { registry, player, gm, vault } = await shared();
+    expect(gm.status).toBe("waitlisted");
+    const { token, invite } = await registry.createInvite({ vaultId: vault.id, role: "member", human: "game-master", createdBy: player.user });
+    expect(token).toMatch(/^hinv_/);
+    expect(invite.id).toBe(await hashToken(token));
+    expect((await registry.inviteForToken(token))?.vaultId).toBe(vault.id);
+    expect(JSON.stringify(await registry.db.all("SELECT * FROM invites"))).not.toContain(token);
+
+    await registry.acceptInvite(invite, gm, gh("game-master"));
+    const after = (await registry.account(GM.id))!;
+    expect(after).toMatchObject({ status: "approved", invitedBy: player.user });
+    expect((await registry.vaultsOf(after)).map((v) => [v.fullName, v.role, v.human])).toEqual([["player/vault", "member", "game-master"]]);
+    expect((await registry.members(vault.id)).map((m) => [m.login, m.role])).toEqual([
+      ["player", "owner"],
+      ["game-master", "member"],
+    ]);
+    // Once only.
+    expect((await err(registry.acceptInvite(invite, after, gh("game-master")))).code).toBe("ALREADY_MEMBER");
+    expect(await registry.referrals()).toEqual([{ from: player.user, to: gm.user, at: expect.any(String), vault: vault.id }]);
+    // The member's vault doesn't count against their own limit.
+    expect(await registry.ownedVaults(after)).toEqual([]);
+  });
+
+  it("lets only the named login accept, and only while open", async () => {
+    const { registry, player, gm, vault, clock } = await shared();
+    const scout = await registry.signIn(SCOUT);
+    const { invite } = await registry.createInvite({ vaultId: vault.id, role: "viewer", login: { provider: "github", login: "Game-Master" }, createdBy: player.user });
+    expect((await registry.invitesFor(gh("game-master"))).map((i) => i.id)).toEqual([invite.id]);
+    expect((await err(registry.acceptInvite(invite, scout, gh("job-scout")))).code).toBe("WRONG_ACCOUNT");
+    expect((await err(registry.acceptInvite(invite, player, gh("player")))).code).toBe("WRONG_ACCOUNT");
+    clock.advance(8 * 24 * 3600_000);
+    expect(registry.isOpen((await registry.invite(invite.id))!)).toBe(false);
+    expect((await err(registry.acceptInvite(invite, gm, gh("game-master")))).code).toBe("INVITE_GONE");
+    const { invite: again } = await registry.createInvite({ vaultId: vault.id, role: "viewer", createdBy: player.user });
+    await registry.revokeInvite(again.id);
+    expect((await err(registry.acceptInvite(again, gm, gh("game-master")))).code).toBe("INVITE_GONE");
+    await registry.setAccountStatus(GM.id, "denied");
+    const { invite: third } = await registry.createInvite({ createdBy: player.user });
+    expect((await err(registry.acceptInvite(third, (await registry.account(GM.id))!, gh("game-master")))).code).toBe("DENIED");
+  });
+
+  it("invites to the app alone, capped per person unless admin, and stoppable", async () => {
+    const { registry, player, gm } = await shared();
+    const { invite } = await registry.createInvite({ createdBy: player.user });
+    await registry.acceptInvite(invite, gm, gh("game-master"));
+    const member = (await registry.account(GM.id))!;
+    expect(member).toMatchObject({ status: "approved", invitedBy: player.user, canInvite: true });
+    expect(await registry.vaultsOf(member)).toEqual([]);
+    for (let i = 0; i < MAX_PENDING_APP_INVITES; i++) await registry.createInvite({ createdBy: gm.user });
+    expect((await err(registry.createInvite({ createdBy: gm.user }))).code).toBe("TOO_MANY_INVITES");
+    for (let i = 0; i < MAX_PENDING_APP_INVITES + 1; i++) await registry.createInvite({ createdBy: player.user }, { admin: true });
+    await registry.setCanInvite(gm.user, false);
+    expect((await registry.people()).find((p) => p.user === gm.user)).toMatchObject({ login: "game-master", invitedBy: player.user, canInvite: false });
+    expect(await registry.acceptedInvites(player.user)).toBe(1);
+  });
+
+  it("changes roles, and removes a member with the keys they made", async () => {
+    const { registry, player, gm, vault } = await shared();
+    const { invite } = await registry.createInvite({ vaultId: vault.id, role: "member", human: "game-master", createdBy: player.user });
+    await registry.acceptInvite(invite, gm, gh("game-master"));
+    const { key: theirs } = await registry.mintKey(vault.id, keyRequest({ kind: "agent" }), gm.user);
+    const { key: mine } = await registry.mintKey(vault.id, keyRequest({ kind: "agent" }), player.user);
+    expect((await registry.keys(vault.id, gm.user)).map((k) => k.id)).toEqual([theirs.id]);
+    expect((await err(registry.revokeKey(vault.id, mine.id, gm.user))).status).toBe(404);
+    await registry.setMemberRole(vault.id, gm.user, "viewer");
+    expect((await registry.vaultsOf(gm))[0]?.role).toBe("viewer");
+    expect((await err(registry.setMemberRole(vault.id, player.user, "viewer"))).status).toBe(404);
+    expect(await registry.removeMember(vault.id, player.user)).toBeUndefined();
+    expect(await registry.removeMember(vault.id, gm.user)).toEqual({ human: "game-master" });
+    expect(await registry.keyByHash(theirs.id)).toBeUndefined();
+    expect(await registry.keyByHash(mine.id)).toBeDefined();
+    expect(await registry.vaultsOf(gm)).toEqual([]);
+    expect(await registry.roleIn(PLAYER.id, vault.id)).toBe("owner");
+    expect(await registry.roleIn(GM.id, vault.id)).toBeUndefined();
+  });
+
+  it("forgets a vault's members and open invites with it, but keeps the referral graph", async () => {
+    const { registry, player, gm, vault } = await shared();
+    const { invite } = await registry.createInvite({ vaultId: vault.id, role: "member", createdBy: player.user });
+    await registry.acceptInvite(invite, gm, gh("game-master"));
+    const { invite: open } = await registry.createInvite({ vaultId: vault.id, role: "member", createdBy: player.user });
+    await registry.removeVault(vault.id);
+    expect(await registry.vaultsOf(gm)).toEqual([]);
+    expect(registry.isOpen((await registry.invite(open.id))!)).toBe(false);
+    expect(await registry.referrals()).toHaveLength(1);
+  });
 });

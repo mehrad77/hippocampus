@@ -7,6 +7,7 @@ import type { HostedVaults } from "../lib/types.ts";
 import { switchVault } from "../lib/vault.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { useMenu } from "../ui/useMenu.ts";
+import { ownedCount } from "./setup/hosted.ts";
 
 /** A vault's short name: its repo, without the owner. */
 const repoName = (fullName: string) => fullName.split("/").pop() ?? fullName;
@@ -67,11 +68,12 @@ export function VaultItems({ vaults, onPick }: { vaults: HostedVaults; onPick: (
             <span className="usermenu__item">
               <span>{repoName(x.fullName)}</span>
               {x.status !== "ready" && <span className="small muted"> · {x.status === "bootstrapping" ? "setting up" : "disconnected"}</span>}
+              {x.status === "ready" && x.role && x.role !== "owner" && <span className="small muted"> · shared</span>}
             </span>
           </button>
         </li>
       ))}
-      {vaults.vaults.length < vaults.limit && (
+      {ownedCount(vaults.vaults) < vaults.limit && (
         <li>
           <a href={`${href.page("setup")}?add#create`} onClick={onPick}>
             <Icon name="plus" size={18} /> {v("Add a vault", "Open another campaign")}

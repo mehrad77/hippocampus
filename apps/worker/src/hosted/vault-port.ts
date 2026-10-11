@@ -20,6 +20,8 @@ export interface VaultStub {
   party(): Promise<PartyMember[]>;
   /** `via` is who asked, like `@player`, for the commit. */
   addParty(input: { id: string; title: string; lane?: string; authority?: string[] }, via: string): Promise<{ slug: string }>;
+  /** Link (or unlink, with `null`) a person's logins to one of the vault's humans: someone joining or leaving it. */
+  linkHuman(id: string, logins: { github?: string | null; gitlab?: string | null }, via: string, create?: { domains?: string[] }): Promise<{ changed: boolean }>;
   disconnect(reason: string): Promise<void>;
   /** Wipe the vault's Durable Object (account deletion). The repo stays. */
   destroy(): Promise<void>;

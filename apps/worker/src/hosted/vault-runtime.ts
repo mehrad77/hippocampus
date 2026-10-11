@@ -1,6 +1,6 @@
-import { AuditError, CONFIG_PATH, CURRENT_VAULT_VERSION, HippoService, humanByLogin, StoreConflictError, Vault, displayName, migrate, parseConfig, vaultVersionStatus, type HippoConfig, type SearcherFactory } from "@hippocampus/core";
+import { AuditError, CONFIG_PATH, CURRENT_VAULT_VERSION, HippoService, humanByLogin, StoreConflictError, Vault, displayName, migrate, parseConfig, vaultVersionStatus, type HippoConfig, type HumanLogins, type SearcherFactory } from "@hippocampus/core";
 import { SleepRelay, type RunStore } from "@hippocampus/curator/relay";
-import { HttpError, createDashboardApi, errorResponse, json, serviceSource, type DashboardSource, type ErrorReport, type SourceInfo, type VaultUpgrade } from "@hippocampus/dashboard";
+import { HttpError, createDashboardApi, errorResponse, json, readOnlySource, serviceSource, type DashboardSource, type ErrorReport, type SourceInfo, type VaultUpgrade } from "@hippocampus/dashboard";
 import { HippoIndex, doSql, type DurableSqlLike, type SqlStorageLike } from "@hippocampus/index";
 import { createHippoServer, type Scope } from "@hippocampus/mcp";
 import { GitHubStore, SnapshotCache, SqliteBlobCache, type BlobCache } from "@hippocampus/store-github";
@@ -46,13 +46,17 @@ export interface VaultGrant {
   keyKind?: "agent" | "curator" | "bound";
 }
 
-/** The signed-in owner on the dashboard. */
+/** The signed-in person on the dashboard: the vault's owner, or someone it's shared with. */
 export interface DashboardUser {
   /** The GitHub login the person signed in with. */
   login: string;
   /** Their connected GitLab username, for a vault on GitLab. */
   gitlab?: string;
   account: { status: "waitlisted" | "approved"; admin: boolean };
+  /** Their role in this vault; absent means owner (a Worker from before sharing). */
+  role?: "owner" | "member" | "viewer";
+  /** For someone the vault is shared with: the human they are in it, by id. */
+  human?: string;
 }
 
 /** `ctx.storage` of a SQLite-backed Durable Object, as far as a vault uses it. */
@@ -458,11 +462,17 @@ export class VaultRuntime {
       const url = `${(gitlab ? this.d.gitlab!.webUrl : (this.d.webUrl ?? "https://github.com")).replace(/\/$/, "")}/${repo}`;
       const vault = { kind: gitlab ? ("gitlab" as const) : ("github" as const), repo, branch: this.meta.branch, url };
       const human = await this.humanOf(user);
+      const role = user.role ?? "owner";
+      // Someone the vault is shared with acts only as their own human: never the primary one by default.
+      if (role !== "owner" && !human) return json(403, { error: "You aren't one of this vault's humans anymore. Ask its owner to invite you again.", code: "NO_HUMAN" });
       const upgradeVault = () => this.upgrade();
-      const source: DashboardSource =
+      const full: DashboardSource =
         status === "older" && config
           ? awaitingUpgrade(config, { mode: "worker", vault }, human, upgradeVault)
           : { ...serviceSource(this.service(), { mode: "worker", vault }, { curator: this.curator, ...(human ? { human } : {}) }), upgradeVault };
+      // Viewers only read; only the owner upgrades the vault or runs the curator's controls.
+      const { upgradeVault: _upgrade, curator: _curator, ...shared } = full;
+      const source = role === "viewer" ? readOnlySource(full) : role === "member" ? shared : full;
       const api = createDashboardApi({
         basePath: DASHBOARD_API,
         source: () => source,
@@ -484,6 +494,7 @@ export class VaultRuntime {
   private async humanOf(user: DashboardUser): Promise<string | undefined> {
     try {
       const { humans } = parseConfig(await this.reads().read(CONFIG_PATH));
+      if (user.human || (user.role && user.role !== "owner")) return humans.find((h) => h.id === user.human)?.id;
       const onGitLab = this.meta.provider === "gitlab" ? humanByLogin(humans, user.gitlab, "gitlab") : undefined;
       return (onGitLab ?? humanByLogin(humans, user.login, "github") ?? humans[0])?.id;
     } catch {
@@ -499,6 +510,12 @@ export class VaultRuntime {
       .withCapability("actor")
       .map((e) => ({ id: e.slug, title: displayName(e) }))
       .sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /** Links (or, with `null`, unlinks) a person's logins to one of the vault's humans: someone joining or leaving a shared vault. */
+  async linkHuman(id: string, logins: HumanLogins, via: string, create?: { domains?: string[] }): Promise<{ changed: boolean }> {
+    await this.ready();
+    return this.service().linkHuman(id, logins, { via, ...(create ? { create } : {}) });
   }
 
   /** Seats an agent, as the human (the consent page's "new agent"). */
@@ -662,6 +679,10 @@ export class HostedVault {
 
   async addParty(input: { id: string; title: string; lane?: string; authority?: string[] }, via: string): Promise<{ slug: string }> {
     return this.require().addParty(input, via);
+  }
+
+  async linkHuman(id: string, logins: HumanLogins, via: string, create?: { domains?: string[] }): Promise<{ changed: boolean }> {
+    return this.require().linkHuman(id, logins, via, create);
   }
 
   /** Stop serving; storage stays until `destroy`, so a reconnect picks up where it left off. */

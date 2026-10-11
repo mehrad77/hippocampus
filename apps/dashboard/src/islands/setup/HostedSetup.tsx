@@ -17,6 +17,7 @@ import { HealthChecklist } from "./Health.tsx";
 import { forNewVault, parseHostedStep, VAULT_TONE } from "./hosted.ts";
 import { HostedKeysPanel } from "./HostedKeys.tsx";
 import { HostedOnboarding } from "./HostedOnboarding.tsx";
+import { AppInvitesPanel, IncomingInvites, MembersPanel } from "./HostedSharing.tsx";
 import { HostedVaultsPanel } from "./HostedVaults.tsx";
 
 const SECTION: Record<string, string> = { access: "#account", install: "#sz-repo", vault: "#sz-repo", keys: "#sz-keys" };
@@ -28,9 +29,20 @@ const SECTION: Record<string, string> = { access: "#account", install: "#sz-repo
 export function HostedSetup({ session, status }: { session: SessionInfo; status: HostedStatus }) {
   const hash = useHash();
   const ready = status.vault?.status === "ready";
-  if (addingVaultNow(location.search, hash)) return <HostedOnboarding session={session} status={forNewVault(status)} adding footer={<AccountPanel session={session} status={status} />} />;
+  const footer = (
+    <>
+      {status.account.status === "approved" && <AppInvitesPanel />}
+      <AccountPanel session={session} status={status} />
+    </>
+  );
+  if (addingVaultNow(location.search, hash)) return <HostedOnboarding session={session} status={forNewVault(status)} adding footer={footer} />;
   if (ready && !parseHostedStep(hash)) return <HostedManage session={session} status={status} hash={hash} />;
-  return <HostedOnboarding session={session} status={status} footer={<AccountPanel session={session} status={status} />} />;
+  return (
+    <>
+      <IncomingInvites />
+      <HostedOnboarding session={session} status={status} footer={footer} />
+    </>
+  );
 }
 
 function HostedManage({ session, status, hash }: { session: SessionInfo; status: HostedStatus; hash: string }) {
@@ -59,6 +71,7 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
         </span>
       </header>
 
+      <IncomingInvites />
       {status.items.length > 0 && <HealthChecklist items={status.items} linkFor={(id) => SECTION[id]} defaultOpen={false} />}
 
       <div className="grid grid--2">
@@ -90,9 +103,11 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
       </div>
 
       <HostedVaultsPanel status={status} />
-      <HostedKeysPanel status={status} />
-      {session.capabilities.curator && <CuratorPanel commits={links ? { url: links.commits, host: links.host } : undefined} />}
+      <MembersPanel session={session} status={status} />
+      {vault.role !== "viewer" && <HostedKeysPanel status={status} />}
+      {vault.role === "owner" && session.capabilities.curator && <CuratorPanel commits={links ? { url: links.commits, host: links.host } : undefined} />}
       <AppsPanel />
+      <AppInvitesPanel />
       <AccountPanel session={session} status={status} />
       <Personalization />
     </div>
