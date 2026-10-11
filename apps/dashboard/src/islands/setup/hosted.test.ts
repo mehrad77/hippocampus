@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HostedStatus } from "../../lib/types.ts";
-import { draftProblems, draftReady, hostedDefaultStep, hostedLock, hostedProvider, hostedRepos, hostedStepDef, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, repoVerdict, type HostedContext } from "./hosted.ts";
+import { canAddVault, draftProblems, draftReady, forNewVault, hostedDefaultStep, hostedLock, hostedProvider, hostedRepos, hostedStepDef, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, repoVerdict, type HostedContext } from "./hosted.ts";
 
 const base: HostedStatus = {
   kind: "hosted",
@@ -124,6 +124,44 @@ describe("repo picker", () => {
     expect(repoVerdict({ id: 3, fullName: "player/dotfiles", private: true, empty: false, adoptable: false })).toMatchObject({ usable: false, tag: "Has files" });
     expect(repoVerdict({ id: 4, fullName: "player/maybe", private: true, empty: false })).toMatchObject({ usable: true, tone: "warn" });
     expect(repoVerdict({ id: 5, fullName: "player/unchecked", private: true })).toMatchObject({ usable: true, tag: "Not checked" });
+  });
+});
+
+describe("adding another vault", () => {
+  const two: HostedStatus = {
+    ...ready,
+    installation: { id: 7, repos: [{ id: 1, fullName: "player/lisbon-arc", private: true }, { id: 2, fullName: "player/harbor-notes", private: true, empty: true }] },
+    vaults: [ready.vault!],
+    vaultLimit: 2,
+    keys: [{ id: "k", kind: "agent", scopes: ["read"], label: "Any agent", created: "2026-10-01T00:00:00Z" }],
+    items: [
+      { id: "access", title: "Access", state: "done", detail: "approved", how: "performed" },
+      { id: "keys", title: "Agent keys", state: "done", detail: "1 key", how: "performed" },
+    ],
+  };
+
+  it("starts the wizard fresh beside a ready vault, at the repo picker", () => {
+    const fresh = forNewVault(two);
+    expect(fresh.vault).toBeUndefined();
+    expect(fresh.keys).toBeUndefined();
+    expect(fresh.items.map((i) => i.id)).toEqual(["access"]);
+    expect(hostedDefaultStep(ctx(fresh))).toBe("repo");
+    expect(hostedStepState("agents", ctx(fresh))).toBe("locked");
+  });
+
+  it("marks repos that are vaults already, and refuses them", () => {
+    const repos = hostedRepos(ctx(forNewVault(two)));
+    expect(repos.map((r) => [r.fullName, !!r.yours])).toEqual([
+      ["player/lisbon-arc", true],
+      ["player/harbor-notes", false],
+    ]);
+    expect(repoVerdict(repos[0]!)).toMatchObject({ usable: false, tag: "Already yours" });
+  });
+
+  it("stops at the limit, and before approval", () => {
+    expect(canAddVault(two)).toEqual({ ok: true });
+    expect(canAddVault({ ...two, vaults: [ready.vault!, ready.vault!] })).toMatchObject({ ok: false, why: expect.stringContaining("2 vaults") });
+    expect(canAddVault(base).ok).toBe(false);
   });
 });
 

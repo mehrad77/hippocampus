@@ -14,7 +14,7 @@ We aim to acknowledge reports within a few days, and to credit reporters who wan
 | --- | --- | --- |
 | Your vault repo on GitHub or GitLab | Every note, the inbox, the chronicle, disputes, age-encrypted secrets | You. It's your private repo |
 | Your age identity (key file) | The only thing that can decrypt secrets | You. It never reaches the app |
-| The hosted app's registry (D1) | Your GitHub id and login, your access note, your vault's repo name and status, a SHA-256 hash of each key with its label and scopes; for a GitLab vault, your GitLab username and your GitLab OAuth tokens, sealed (AES-256-GCM under `HIPPO_TOKEN_KEY`, bound to your account id) | The operator |
+| The hosted app's registry (D1) | Your GitHub id and login (and your GitLab username, once connected), an id of its own for you, your access note, your vaults' repo names and status, a SHA-256 hash of each key with its label and scopes; for a GitLab vault, your GitLab username and your GitLab OAuth tokens, sealed (AES-256-GCM under `HIPPO_TOKEN_KEY`, bound to your account id) | The operator |
 | Your vault's Durable Object | A search index (note text, and embeddings if on), a cache of the repo's files, sleep runs in progress, the current installation token | The operator |
 | KV (`OAUTH_KV`) | Sign-in sessions, OAuth clients and grants (a grant's details are stored encrypted) | The operator |
 | Logs | Route name, status, timing and a hashed vault id per request | The operator |
@@ -35,15 +35,15 @@ If you can't accept this, run the CLI locally, or [run your own instance](docs/U
 
 ## Keys and what each can do
 
-Keys are shown once when minted. Only their SHA-256 hash is stored, and revoking one stops it at once. Each kind's scopes are fixed by the server, whatever the key row says.
+Keys are shown once when minted. Only their SHA-256 hash is stored, and revoking one stops it at once. Each kind's scopes are fixed by the server, whatever the key row says. A key opens exactly one vault: at another vault's address (`/mcp/<vault id>`) it's refused, naming only its own vault.
 
 | Kind | Scopes | Notes |
 | --- | --- | --- |
-| Agent key | `read`, `remember`, `quest` | Any agent; each names itself per call. An agent can only file under its own id's inbox folder, so it can't rewrite another agent's memories, but it can claim any unused id |
-| Single-agent key | `read` plus `remember` and/or `quest` | Bound to one agent id; commits under another id are refused |
+| Agent key | `read`, `remember`, `goal` | Any agent; each names itself per call. An agent can only file under its own id's inbox folder, so it can't rewrite another agent's memories, but it can claim any unused id |
+| Single-agent key | `read` plus `remember` and/or `goal` | Bound to one agent id; commits under another id are refused |
 | Curator key | `read`, `curate` | Runs sleep. **It sees every new memory in full, including secret values in plain text**, so whoever holds it, and its model's provider, do too |
 
-OAuth connectors (Claude.ai, ChatGPT) get a grant for one agent id and the scopes you approve on the consent page. Approving `curate` gives the app what a curator key gives. They're listed under your account and can be disconnected there.
+OAuth connectors (Claude.ai, ChatGPT) get a grant for one vault, one agent id and the scopes you approve on the consent page. Approving `curate` gives the app what a curator key gives. They're listed under your account and can be disconnected there.
 
 Agent ids are exact slugs. The vault's human id and the reserved ids `human`, `curator`, `unknown` and `hippocampus` are refused, so an agent can't pass itself off as you or the curator. A memory is capped at 8 KB.
 
@@ -61,7 +61,7 @@ Limits:
 
 Every commit Hippocampus makes names its actor in a `Hippo-Actor` trailer (`agent:<id>`, `curator`, `human` or `bootstrap`), with `Hippo-Model`, `Hippo-Curator` and `Hippo-Run` where they apply.
 
-- **Before a hosted commit**, the app checks the trailer against the caller's actual credentials (a key can't commit as the curator or the human), then audits the change set against what that actor may do (`packages/core/src/audit.ts`). Agents may only add files to their own inbox folder, or edit quests with the `quest` scope. The curator may not touch human prose, facts the human set, the config, the party, `.github/` or `.gitlab-ci.yml` and `.gitlab/`, and may not write a secret value in plain text anywhere. A refused change is never committed.
+- **Before a hosted commit**, the app checks the trailer against the caller's actual credentials (a key can't commit as the curator or the human), then audits the change set against what that actor may do (`packages/core/src/audit.ts`). Agents may only add files to their own inbox folder, or edit goals with the `goal` scope (`quest`, its old name, still works). The curator may not touch human prose, facts the human set, the config, the party, `.github/` or `.gitlab-ci.yml` and `.gitlab/`, and may not write a secret value in plain text anywhere. A refused change is never committed.
 - **Before `hippo sleep` writes**, it runs the same audit on its own changes.
 - **Afterwards**, the vault's CI runs `hippo audit` daily over the last day's commits. It prints commit, path and rule, never content.
 

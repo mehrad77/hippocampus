@@ -353,8 +353,8 @@ async function main(): Promise<void> {
     const r = await player.api("setup/init", { method: "POST", json: {}, headers: { origin: "https://evil.example" } });
     check(r.status === 403, `status ${r.status}`);
   });
-  await step("POST setup/init bootstraps the vault from the example-relocation seed", async () => {
-    const r = await player.post<{ vault: { status: string; fullName: string } }>("setup/init", {
+  const playerVault = await step("POST setup/init bootstraps the vault from the example-relocation seed", async () => {
+    const r = await player.post<{ vault: { id: string; status: string; fullName: string } }>("setup/init", {
       repoId: PLAYER.repo,
       campaign: "Lisbon relocation",
       human: "player",
@@ -364,6 +364,7 @@ async function main(): Promise<void> {
     });
     check(r.status === 200, `status ${r.status} ${JSON.stringify(r.body)}`);
     check(r.body.vault.status === "ready" && r.body.vault.fullName === "player/vault", JSON.stringify(r.body));
+    return r.body.vault.id;
   });
   await step("the session and overview now come from the vault's Durable Object", async () => {
     const s = await player.api<{ mode: string }>("session");
@@ -486,7 +487,7 @@ async function main(): Promise<void> {
   const gmKey = await step("game-master installs the app, sets up a vault and mints a key", async () => {
     const status = await gm.api<{ installUrl: string }>("setup/status");
     await gm.visit(status.body.installUrl);
-    const init = await gm.post<{ vault: { status: string; fullName: string } }>("setup/init", {
+    const init = await gm.post<{ vault: { id: string; status: string; fullName: string } }>("setup/init", {
       repoId: GM.repo,
       name: "Harbor term",
       humans: [{ id: "game-master" }],
@@ -494,8 +495,10 @@ async function main(): Promise<void> {
       domains: ["university"],
     });
     check(init.status === 200 && init.body.vault.fullName === "game-master/vault" && init.body.vault.status === "ready", `${init.status} ${JSON.stringify(init.body)}`);
-    const key = await gm.post<{ token: string }>("setup/keys", { kind: "agent" });
+    const key = await gm.post<{ token: string; snippets: { code: string }[] }>("setup/keys", { kind: "agent" });
     check(key.status === 200 && key.body.token?.startsWith("hippo_"), `keys ${key.status}`);
+    // The snippets name the vault's own address and server, so two vaults in one app never mix.
+    check(key.body.snippets[0]!.code.includes(`hippo-vault ${origin}/mcp/${init.body.vault.id}`), `snippet: ${key.body.snippets[0]?.code.replace(/hippo_\S+/, "hippo_…")}`);
     return key.body.token;
   });
   await step("each key sees only its own campaign", async () => {
@@ -515,6 +518,25 @@ async function main(): Promise<void> {
     } finally {
       await gmAgent.close();
     }
+  });
+
+  await step("a key at its own vault's address works; at another vault's, 403 wrong_vault", async () => {
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const headers = { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${keys.agent}` };
+    const own = await fetch(`${origin}/mcp/${playerVault}`, { method: "POST", headers, body });
+    check(own.status === 200, `own address: ${own.status}`);
+    await own.body?.cancel();
+    const gmVault = (await gm.api<{ vaults: { id: string }[] }>("vaults")).body.vaults[0]!.id;
+    const wrong = await fetch(`${origin}/mcp/${gmVault}`, { method: "POST", headers, body });
+    const why = (await wrong.json()) as { error?: string; error_description?: string };
+    check(wrong.status === 403 && why.error === "wrong_vault", `another vault's address: ${wrong.status} ${JSON.stringify(why)}`);
+    check(!why.error_description?.includes("game-master"), "the refusal named the other vault");
+  });
+  await step("GET vaults lists the person's own vaults only", async () => {
+    const mine = await player.api<{ vaults: { id: string; fullName: string; role: string }[]; current?: string }>("vaults");
+    check(mine.status === 200 && mine.body.vaults.length === 1 && mine.body.vaults[0]!.fullName === "player/vault" && mine.body.current === playerVault, JSON.stringify(mine.body));
+    const sneak = await player.api("overview", { headers: { "x-hippo-vault": (await gm.api<{ vaults: { id: string }[] }>("vaults")).body.vaults[0]!.id } });
+    check(sneak.status === 404, `player asking for game-master's vault: ${sneak.status}`);
   });
 
   await agent.close();

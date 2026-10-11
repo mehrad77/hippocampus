@@ -420,8 +420,10 @@ export class VaultRuntime {
       await this.keepAlarm();
       await this.ready();
       const store = this.store(grantPrincipal(grant));
+      // Named by its repo: loading the vault for its title would cost listing tools a full read.
       const server = createHippoServer({
         service: this.serviceOver(store),
+        vault: { id: this.meta.vaultId, name: this.meta.fullName },
         agent: grant.agent,
         scopes: grant.scopes,
         relay: grant.scopes.includes("curate") ? this.relay : undefined,

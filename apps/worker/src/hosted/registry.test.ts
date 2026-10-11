@@ -1,8 +1,9 @@
 import { HttpError } from "@hippocampus/dashboard";
 import { describe, expect, it } from "vitest";
 import { hashToken } from "../auth.ts";
-import { Registry, agentId, isLive, keyRequest, ulid } from "./registry.ts";
-import { registryDb } from "./testing.ts";
+import { MAX_VAULTS_PER_USER, Registry, agentId, isLive, keyRequest, ulid } from "./registry.ts";
+import { nodeSqlite } from "@hippocampus/index/node";
+import { migrate, registryDb } from "./testing.ts";
 
 const PLAYER = { id: 4242, login: "player" };
 const GM = { id: 7, login: "game-master" };
@@ -65,24 +66,91 @@ describe("accounts", () => {
   });
 });
 
+describe("users and identities", () => {
+  it("gives each account a user of our own and a GitHub identity, and keeps them in step", async () => {
+    const { registry } = await setup();
+    const account = await registry.signIn(PLAYER);
+    expect(account.user).toMatch(/^u_[0-9a-f]{20}$/);
+    expect(await registry.identities(account.user)).toEqual([{ provider: "github", login: "player" }]);
+    // Renames follow the identity; the user stays.
+    const renamed = await registry.signIn({ ...PLAYER, login: "player-renamed" });
+    expect(renamed.user).toBe(account.user);
+    expect(await registry.identities(account.user)).toEqual([{ provider: "github", login: "player-renamed" }]);
+    await registry.setAccountStatus(PLAYER.id, "approved");
+    await registry.bumpEpoch(PLAYER.id);
+    const [legacy] = await registry.db.all<{ status: string; session_epoch: number }>("SELECT status, session_epoch FROM accounts WHERE id = ?", [PLAYER.id]);
+    const [user] = await registry.db.all<{ status: string; session_epoch: number; name: string }>("SELECT status, session_epoch, name FROM users WHERE id = ?", [account.user]);
+    expect(user).toEqual({ ...legacy, name: "player-renamed" });
+    expect(await registry.accountByUser(account.user)).toMatchObject({ id: PLAYER.id, status: "approved", epoch: 1 });
+  });
+
+  it("makes a user for an account the previous Worker signed up", async () => {
+    const { registry } = await setup();
+    await registry.db.all("INSERT INTO accounts (id, login, status, created, updated) VALUES (?, ?, 'approved', ?, ?)", [GM.id, GM.login, "2026-10-01T00:00:00Z", "2026-10-01T00:00:00Z"]);
+    const account = (await registry.account(GM.id))!;
+    expect(account).toMatchObject({ id: GM.id, login: "game-master", status: "approved" });
+    expect(await registry.identities(account.user)).toEqual([{ provider: "github", login: "game-master" }]);
+    expect((await registry.account(GM.id))!.user).toBe(account.user);
+  });
+
+  it("records a GitLab connection as an identity, and forgets it on disconnect", async () => {
+    const { registry } = await setup();
+    const account = await registry.signIn(PLAYER);
+    await registry.saveGitLabCredential({ accountId: PLAYER.id, gitlabUserId: 77, gitlabLogin: "player-gl", secret: "sealed" });
+    expect(await registry.identities(account.user)).toEqual([
+      { provider: "github", login: "player" },
+      { provider: "gitlab", login: "player-gl" },
+    ]);
+    await registry.deleteGitLabCredential(PLAYER.id);
+    expect(await registry.identities(account.user)).toEqual([{ provider: "github", login: "player" }]);
+  });
+});
+
+it("backfills users, identities and owners from the previous Worker's rows", async () => {
+  const db = await migrate(nodeSqlite(":memory:"), { to: "0003_gitlab.sql" });
+  const at = "2026-09-01T00:00:00.000Z";
+  await db.batch([
+    { sql: "INSERT INTO accounts (id, login, status, note, session_epoch, created, updated) VALUES (4242, 'player', 'approved', 'hi', 3, ?, ?)", params: [at, at] },
+    { sql: "INSERT INTO accounts (id, login, status, created, updated) VALUES (7, 'game-master', 'waitlisted', ?, ?)", params: [at, at] },
+    { sql: "INSERT INTO vaults (id, account_id, installation_id, repo_id, full_name, branch, status, created, updated) VALUES ('01JVAULT000000000000000000', 4242, 55, 9001, 'player/vault', 'main', 'ready', ?, ?)", params: [at, at] },
+    { sql: "INSERT INTO gitlab_credentials (account_id, gitlab_user_id, gitlab_login, secret, updated) VALUES (4242, 77, 'player-gl', 'sealed', ?)", params: [at] },
+  ]);
+  await migrate(db, { from: "0003_gitlab.sql" });
+  const registry = new Registry(db);
+  const player = (await registry.account(4242))!;
+  expect(player).toMatchObject({ id: 4242, login: "player", status: "approved", note: "hi", epoch: 3 });
+  expect(await registry.identities(player.user)).toEqual([
+    { provider: "github", login: "player" },
+    { provider: "gitlab", login: "player-gl" },
+  ]);
+  expect((await registry.vaultsOf(player)).map((v) => v.owner)).toEqual([player.user]);
+  const gm = (await registry.account(7))!;
+  expect(gm.user).not.toBe(player.user);
+  expect(gm.status).toBe("waitlisted");
+});
+
 describe("vaults", () => {
   const vault = { accountId: PLAYER.id, installationId: 55, repoId: 9001, fullName: "player/vault", branch: "main" };
 
-  it("allows one vault per account and one account per repo", async () => {
+  it("lets one person have several vaults, each repo once, up to the limit", async () => {
     const { registry } = await setup();
-    await registry.signIn(PLAYER);
+    const player = await registry.signIn(PLAYER);
     await registry.signIn(GM, { admin: true });
     const { vault: v } = await registry.claimVault(vault);
-    expect(v).toMatchObject({ status: "bootstrapping", fullName: "player/vault", repoId: 9001 });
+    expect(v).toMatchObject({ status: "bootstrapping", fullName: "player/vault", repoId: 9001, owner: player.user });
     expect(v.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
     await registry.setVaultStatus(v.id, "ready");
-    expect((await err(registry.claimVault({ ...vault, repoId: 9002, fullName: "player/other" }))).code).toBe("HAS_VAULT");
+    expect((await err(registry.claimVault(vault))).code).toBe("ALREADY_VAULT");
     expect((await err(registry.claimVault({ ...vault, accountId: GM.id }))).code).toBe("REPO_TAKEN");
-    expect((await registry.vaultsByInstallation(55)).map((x) => x.id)).toEqual([v.id]);
+    const { vault: second } = await registry.claimVault({ ...vault, repoId: 9002, fullName: "player/harbor-notes" });
+    expect((await registry.vaultsOf(player)).map((x) => x.id)).toEqual([v.id, second.id]);
+    for (let i = 3; i <= MAX_VAULTS_PER_USER; i++) await registry.claimVault({ ...vault, repoId: 9000 + i, fullName: `player/v${i}` });
+    expect((await err(registry.claimVault({ ...vault, repoId: 9999, fullName: "player/one-too-many" }))).code).toBe("VAULT_LIMIT");
+    expect((await registry.vaultsByInstallation(55)).map((x) => x.id)).toContain(v.id);
     expect((await registry.vaults())[0]).toMatchObject({ login: "player", fullName: "player/vault" });
   });
 
-  it("takes back a disconnected vault on the same repo with its keys, and replaces one on another repo", async () => {
+  it("takes back a disconnected vault on the same repo with its keys, after a stale bootstrap", async () => {
     const { registry, clock } = await setup();
     await registry.signIn(PLAYER);
     const { vault: v } = await registry.claimVault(vault);
@@ -94,14 +162,31 @@ describe("vaults", () => {
     expect(again).toEqual({ vault: expect.objectContaining({ id: v.id, installationId: 56, status: "bootstrapping" }) });
     expect((await registry.vault(v.id))!.reason).toBeUndefined();
     expect((await registry.keys(v.id)).map((k) => k.id)).toEqual([key.id]);
-    // A bootstrap in progress blocks others, until it's stale.
+    // A bootstrap in progress blocks a retry, until it's stale.
     expect((await err(registry.claimVault(vault))).code).toBe("BUSY");
     clock.advance(6 * 60_000);
-    await registry.setVaultStatus(v.id, "disconnected", "bootstrap_failed");
-    const other = await registry.claimVault({ ...vault, repoId: 9002, fullName: "player/other" });
-    expect(other.replaced).toBe(v.id);
+    expect((await registry.claimVault(vault)).vault.id).toBe(v.id);
+  });
+
+  it("removes a vault with its keys, and forgets it as the last one used", async () => {
+    const { registry } = await setup();
+    const player = await registry.signIn(PLAYER);
+    const { vault: v } = await registry.claimVault(vault);
+    const { key } = await registry.mintKey(v.id, keyRequest({ kind: "agent" }));
+    await registry.setLastVault(player.user, v.id);
+    expect((await registry.account(PLAYER.id))!.lastVault).toBe(v.id);
+    await registry.removeVault(v.id);
     expect(await registry.vault(v.id)).toBeUndefined();
     expect(await registry.keyByHash(key.id)).toBeUndefined();
+    expect((await registry.account(PLAYER.id))!.lastVault).toBeUndefined();
+  });
+
+  it("counts a vault the previous Worker made (no owner) as its account's", async () => {
+    const { registry } = await setup();
+    const player = await registry.signIn(PLAYER);
+    const { vault: v } = await registry.claimVault(vault);
+    await registry.db.all("UPDATE vaults SET owner = NULL WHERE id = ?", [v.id]);
+    expect((await registry.vaultsOf(player)).map((x) => x.id)).toEqual([v.id]);
   });
 });
 

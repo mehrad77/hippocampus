@@ -184,7 +184,7 @@ describe("a vault on GitLab", () => {
     const body = (await res.json()) as { code: string; error: string };
     expect(body.code).toBe("PUBLIC_REPO");
     expect(body.error).toMatch(/not private.*Internal isn't enough/s);
-    expect(await h.registry.vaultOf(PLAYER.id)).toBeUndefined();
+    expect((await h.registry.vaultsOf((await h.registry.account(PLAYER.id))!))[0]).toBeUndefined();
   });
 
   it("refuses a project that isn't one of the person's own", async () => {

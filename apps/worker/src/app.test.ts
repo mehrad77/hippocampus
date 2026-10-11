@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { VAULT_HEADER, type HostedVaults } from "@hippocampus/dashboard";
 import { configProblem } from "./app.ts";
 import { ORIGIN } from "./hosted/testing.ts";
 import { GM, PLAYER, SCOUT, hostedApp } from "./testing/hosted-app.ts";
@@ -228,5 +229,72 @@ describe("vault changes reach the Durable Object", () => {
     const scout = await h.readyAccount(SCOUT);
     await h.post(player.visit, "account/delete", { confirm: "player" });
     expect(h.vaults.to(scout.vault).map((c) => c.method)).not.toContain("destroy");
+  });
+});
+
+describe("several vaults", () => {
+  it("lets a person switch between their vaults, and remembers the last one", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const harbor = await h.addVault(player.visit, PLAYER, { name: "harbor-notes", id: 9101 });
+    const listed = (await (await h.api(player.visit, "vaults")).json()) as HostedVaults;
+    expect(listed.vaults.map((v) => [v.fullName, v.role])).toEqual([
+      ["player/vault", "owner"],
+      ["player/harbor-notes", "owner"],
+    ]);
+    expect(listed.current).toBe(player.vault);
+    const on = (vault: string) => ({ headers: { [VAULT_HEADER]: vault } });
+    expect(await (await h.api(player.visit, "overview", on(harbor))).json()).toMatchObject({ vault: harbor });
+    // A new tab without the header opens the vault used last.
+    expect(await (await h.api(player.visit, "overview")).json()).toMatchObject({ vault: harbor });
+    expect((await (await h.api(player.visit, "vaults")).json()) as HostedVaults).toMatchObject({ current: harbor });
+    // Someone else's vault, or a made-up one, is no vault at all.
+    const gm = await h.readyAccount(GM);
+    const theirs = await h.api(player.visit, "overview", on(gm.vault));
+    expect(theirs.status).toBe(404);
+    expect(await theirs.json()).toMatchObject({ code: "NO_VAULT" });
+    expect(h.vaults.to(gm.vault, "dashboard")).toEqual([]);
+  });
+
+  it("removes one vault, with its keys and object, only when its name is typed", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const harbor = await h.addVault(player.visit, PLAYER, { name: "harbor-notes", id: 9101 });
+    const token = await h.mintKey(harbor, { kind: "agent" });
+    expect((await h.post(player.visit, "setup/vaults/remove", { id: harbor, confirm: "player/vault" })).status).toBe(400);
+    expect((await h.post(player.visit, "setup/vaults/remove", { id: harbor, confirm: "player/harbor-notes" })).status).toBe(200);
+    expect(h.vaults.to(harbor, "destroy")).toHaveLength(1);
+    expect(await h.registry.keyForToken(token)).toBeUndefined();
+    expect(h.vaults.to(player.vault, "destroy")).toEqual([]);
+    expect(((await (await h.api(player.visit, "vaults")).json()) as HostedVaults).vaults.map((v) => v.id)).toEqual([player.vault]);
+    // The repo is the person's own: nothing was written to it.
+    expect(h.gh.at("player/harbor-notes").files()["_hippo/config.yaml"]).toBeDefined();
+  });
+
+  it("refuses a key at another vault's address, naming only the key's own", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const harbor = await h.addVault(player.visit, PLAYER, { name: "harbor-notes", id: 9101 });
+    const token = await h.mintKey(player.vault, { kind: "agent" });
+    expect((await h.callMcp(token, undefined, {}, `/mcp/${player.vault}`)).status).toBe(200);
+    const wrong = await h.callMcp(token, undefined, {}, `/mcp/${harbor}`);
+    expect(wrong.status).toBe(403);
+    const body = (await wrong.json()) as { error: string; error_description: string };
+    expect(body.error).toBe("wrong_vault");
+    expect(body.error_description).toContain("player/vault");
+    expect(body.error_description).not.toContain("harbor-notes");
+    expect(h.vaults.to(harbor, "mcp")).toEqual([]);
+    expect((await h.callMcp(token, undefined, {}, "/mcp/not-a-vault")).status).toBe(404);
+    // The plain address still works: the key decides.
+    expect((await h.callMcp(token)).status).toBe(200);
+  });
+
+  it("wipes every vault's object when the account is deleted", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const harbor = await h.addVault(player.visit, PLAYER, { name: "harbor-notes", id: 9101 });
+    expect((await h.post(player.visit, "account/delete", { confirm: "player" })).status).toBe(200);
+    expect(h.vaults.to(player.vault, "destroy")).toHaveLength(1);
+    expect(h.vaults.to(harbor, "destroy")).toHaveLength(1);
   });
 });

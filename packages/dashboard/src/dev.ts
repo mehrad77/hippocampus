@@ -60,10 +60,15 @@ export function devMiddleware(opts: { basePath: string; vaultDir?: string; hoste
     const path = url.split("?")[0] ?? url;
     const mine = path.startsWith(`${opts.basePath}/`) || (hosted && (path.startsWith(`${site}/auth/`) || path === `${site}/` || path === site));
     if (!mine) return next();
+    const stripped = req.url;
     req.url = url;
     app ??= build();
     const response = await (await app)(toRequest(req, `http://${req.headers.host ?? "localhost"}`));
-    if (!response) return next();
+    if (!response) {
+      // Not ours after all (the signed-in home page): Astro serves it, from the URL as it gave it to us.
+      req.url = stripped;
+      return next();
+    }
     await sendResponse(res, response);
   };
 }

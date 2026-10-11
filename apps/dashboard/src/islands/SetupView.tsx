@@ -7,6 +7,8 @@ import { PageGate } from "../ui/PageGate.tsx";
 import { SkeletonPanel } from "../ui/Parts.tsx";
 import { Personalization } from "../ui/Personalization.tsx";
 import { ErrorCallout } from "./setup/common.tsx";
+import { addingVaultNow } from "../lib/vault.ts";
+import { statusKey } from "./setup/hosted.ts";
 import { HostedSetup } from "./setup/HostedSetup.tsx";
 import { LocalWizard } from "./setup/LocalWizard.tsx";
 import { describeError } from "./setup/model.ts";
@@ -22,7 +24,7 @@ export default function SetupView() {
 function SessionZero({ session }: { session: SessionInfo }) {
   const { t } = useTerms();
   const kind = session.capabilities.setup;
-  const status = useResource<SetupStatus | HostedStatus>(kind === "none" ? null : "/setup/status");
+  const status = useResource<SetupStatus | HostedStatus>(kind === "none" ? null : kind === "hosted" ? statusKey(addingVaultNow(location.search, location.hash)) : "/setup/status");
   if (kind === "none") return <NoSetup session={session} />;
   if (status.error && !status.data) {
     if (describeError(status.error).unsupported) return <NoSetup session={session} />;

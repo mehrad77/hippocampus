@@ -7,16 +7,19 @@ import { bootstrapVault } from "./bootstrap.ts";
 import { curatorActionsEnabled, setCuratorActions } from "./curator-actions.ts";
 import type { GitHubApp, InstallationRepo } from "./github-app.ts";
 import { GitLabAuthError, type GitLabAccess, type GitLabProject } from "./gitlab.ts";
-import { keyRequest, type Account, type DisconnectReason, type Provider, type KeyKind, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
+import { MAX_VAULTS_PER_USER, keyRequest, type DisconnectReason, type Provider, type KeyKind, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
 import { clearPendingInstallation, pendingInstallation, type SessionKV } from "./session.ts";
 import { GITLAB_CONNECT_PATH } from "./gitlab.ts";
+import type { Caller } from "./routes.ts";
 import { installUrl, newRepoUrl, oauthUrlOf, type HostedSettings } from "./settings.ts";
 
 // Session Zero on the hosted app, for one signed-in account: from the waitlist, through installing
-// the GitHub App on a private repo, to a vault in that repo and keys for its agents.
+// the GitHub App on a private repo, to a vault in that repo and keys for its agents. A person can
+// have several vaults; keys and the rest act on the one the request picked (`caller.vault`).
 
 export interface HostedSetupDeps {
-  account: Account;
+  /** The signed-in person, their vaults, and the one this request is about. */
+  caller: Caller;
   settings: HostedSettings;
   registry: Registry;
   app: GitHubApp;
@@ -24,8 +27,12 @@ export interface HostedSetupDeps {
   gitlab?: GitLabAccess;
   kv: SessionKV;
   now?: () => Date;
-  /** Something about a vault changed (created, replaced, a key revoked): drop whatever is cached for it. */
+  /** Something about a vault changed (created, a key revoked): drop whatever is cached for it. */
   onVaultChanged?: (vaultId: string) => void | Promise<void>;
+  /** Wipe a removed vault's Durable Object. */
+  destroyVault?: (vaultId: string) => Promise<void>;
+  /** Revoke the account's connector grants for a removed vault. */
+  revokeVaultGrants?: (accountId: number, vaultId: string) => Promise<void>;
 }
 
 /** Checking emptiness costs a few requests per repo, so only this many get checked. */
@@ -47,10 +54,13 @@ const REASONS: Record<DisconnectReason, string> = {
 };
 
 export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
-  const { account, settings, registry, app, kv, gitlab } = deps;
+  const { settings, registry, app, kv, gitlab } = deps;
+  const { account, vaults } = deps.caller;
+  const vault = deps.caller.vault;
   const now = deps.now ?? (() => new Date());
   const publicUrl = settings.publicUrl;
-  const mcpUrl = `${publicUrl}/mcp`;
+  // The picked vault's own address; the plain one (whichever vault the key opens) before there is one.
+  const mcpUrl = vault ? vaultMcpUrl(publicUrl, vault.id) : `${publicUrl}/mcp`;
   const changed = async (id: string | undefined) => {
     if (id) await deps.onVaultChanged?.(id);
   };
@@ -112,9 +122,10 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
     }
   }
 
-  async function status(): Promise<HostedSetupStatus> {
-    const vault = await registry.vaultOf(account.id);
-    const pending = account.status === "approved" && vault?.status !== "ready" ? await pendingInstallation(kv, account.id) : undefined;
+  /** With `adding`, the person is setting up another vault, so the GitLab projects are listed even beside a ready one. */
+  async function status(url?: URL): Promise<HostedSetupStatus> {
+    const adding = url?.searchParams.has("add") ?? false;
+    const pending = account.status === "approved" ? await pendingInstallation(kv, account.id) : undefined;
     const [installation, keys, curatorActions] = await Promise.all([
       pending
         ? listRepos(pending.installationId, false).then(
@@ -127,7 +138,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       // GitHub Actions only: a GitLab vault has no workflow to read.
       vault?.status === "ready" && vault.provider === "github" && account.status === "approved" ? curatorActionsEnabled(app, vault).catch(() => undefined) : undefined,
     ]);
-    const gitlabInfo = gitlab && account.status === "approved" && vault?.status !== "ready" ? await gitlabStatus() : undefined;
+    const gitlabInfo = gitlab && account.status === "approved" && (adding || vault?.status !== "ready") ? await gitlabStatus() : undefined;
     const s: HostedSetupStatus = {
       kind: "hosted",
       account: { login: account.login, status: account.status === "deleted" ? "denied" : account.status, requested: account.note !== undefined, admin: settings.admins.has(account.id) },
@@ -136,7 +147,9 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       providers: gitlab ? ["github", "gitlab"] : ["github"],
       ...(gitlabInfo ? { gitlab: gitlabInfo } : {}),
       ...(installation ? { installation } : {}),
-      ...(vault ? { vault: vaultInfo(vault, settings) } : {}),
+      ...(vault ? { vault: hostedVault(vault, settings) } : {}),
+      vaults: vaults.map((v) => hostedVault(v, settings)),
+      vaultLimit: MAX_VAULTS_PER_USER,
       ...(keys ? { keys: keys.map(keyInfo) } : {}),
       ...(curatorActions === undefined ? {} : { curatorActions }),
       publicUrl,
@@ -150,8 +163,6 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
 
   async function init(body: unknown): Promise<HostedInitResult> {
     const req = initRequest(body, account.login);
-    const existing = await registry.vaultOf(account.id);
-    if (existing?.status === "ready") throw new HttpError(409, `You already have a vault: ${existing.fullName}.`, "HAS_VAULT");
     const settingsOf = { campaign: req.campaign, humans: req.humans, timezone: req.timezone, domains: req.domains, recipient: req.recipient };
     if (req.provider === "gitlab") {
       const g = needGitLab();
@@ -165,24 +176,26 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
         gitlab: g,
         registry,
         accountId: account.id,
+        owner: account.user,
         repo: { id: project.id, fullName: project.fullName, branch: project.defaultBranch },
         settings: { ...settingsOf, humans },
         seed: req.seed,
         presets: req.presets,
         now: now(),
       });
-      await changed(result.replaced);
       await changed(result.vault.id);
-      return { vault: vaultInfo(result.vault, settings), mode: result.mode };
+      return { vault: hostedVault(result.vault, settings), mode: result.mode };
     }
     // A retry on the same repo can go on with the vault's own installation once the pending one has expired.
-    const installationId = (await pendingInstallation(kv, account.id))?.installationId ?? (existing?.repoId === req.repoId && existing.provider === "github" ? existing.installationId : undefined);
+    const existing = vaults.find((v) => v.repoId === req.repoId && v.provider === "github");
+    const installationId = (await pendingInstallation(kv, account.id))?.installationId ?? existing?.installationId;
     if (installationId === undefined) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
     const repo = await findRepo(installationId, req.repoId);
     const result = await bootstrapVault({
       app,
       registry,
       accountId: account.id,
+      owner: account.user,
       installationId,
       repo: { id: repo.id, fullName: repo.fullName, branch: repo.defaultBranch },
       settings: settingsOf,
@@ -191,15 +204,28 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       now: now(),
     });
     await clearPendingInstallation(kv, account.id);
-    await changed(result.replaced);
     await changed(result.vault.id);
-    return { vault: vaultInfo(result.vault, settings), mode: result.mode };
+    return { vault: hostedVault(result.vault, settings), mode: result.mode };
   }
 
-  async function ownVault(): Promise<VaultRecord> {
-    const vault = await registry.vaultOf(account.id);
+  /** The vault the request picked. Every vault in `vaults` is the caller's own. */
+  function ownVault(): VaultRecord {
     if (!vault) throw new HttpError(409, "No vault yet: set one up first.", "NO_VAULT");
     return vault;
+  }
+
+  /** Forget one of the person's vaults: its keys, connector grants and cache. The repo stays as it is. */
+  async function removeVault(body: unknown): Promise<{ ok: true }> {
+    const b = (body ?? {}) as { id?: unknown; confirm?: unknown };
+    const target = vaults.find((v) => v.id === b.id);
+    if (!target) throw new HttpError(404, "That vault isn't one of yours, or it was removed already.", "NOT_FOUND");
+    const typed = typeof b.confirm === "string" ? b.confirm.trim().toLowerCase() : "";
+    if (typed !== target.fullName.toLowerCase()) throw new HttpError(400, `confirm: type ${target.fullName} to remove it`, "CONFIRM");
+    await registry.revokeAllKeys(target.id);
+    await deps.revokeVaultGrants?.(account.id, target.id);
+    await deps.destroyVault?.(target.id);
+    await registry.removeVault(target.id);
+    return { ok: true };
   }
 
   return {
@@ -219,8 +245,8 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
         return { gitlab: { login: found.login }, repos: found.projects.map(gitlabRepo) };
       }
       if (path === "gitlab/disconnect" && method === "POST") {
-        const vault = await registry.vaultOf(account.id);
-        if (vault?.provider === "gitlab" && vault.status === "ready") throw new HttpError(409, "Your vault is on GitLab: disconnecting would cut it off. Delete your account instead.", "HAS_VAULT");
+        const onGitLab = vaults.find((v) => v.provider === "gitlab" && v.status === "ready");
+        if (onGitLab) throw new HttpError(409, `${onGitLab.fullName} is on GitLab: disconnecting would cut it off. Remove that vault first.`, "HAS_VAULT");
         await needGitLab().disconnect(account.id);
         return { ok: true };
       }
@@ -230,26 +256,27 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
         return { installation: { id: pending.installationId }, repos: await listRepos(pending.installationId, true) };
       }
       if (path === "init" && method === "POST") return init(body);
-      if (path === "keys" && method === "GET") return { keys: (await registry.keys((await ownVault()).id)).map(keyInfo) };
+      if (path === "vaults/remove" && method === "POST") return removeVault(body);
+      if (path === "keys" && method === "GET") return { keys: (await registry.keys(ownVault().id)).map(keyInfo) };
       if (path === "keys" && method === "POST") {
-        const vault = await ownVault();
-        if (vault.status !== "ready") throw new HttpError(409, "Your vault isn't ready, so it can't take new keys.", "NOT_READY");
+        const vault = ownVault();
+        if (vault.status !== "ready") throw new HttpError(409, "This vault isn't ready, so it can't take new keys.", "NOT_READY");
         const { token, key } = await registry.mintKey(vault.id, keyRequest(body));
-        const minted: HostedMintedKey = { ...keyInfo(key), token, snippets: keySnippets(publicUrl, token, key.kind) };
+        const minted: HostedMintedKey = { ...keyInfo(key), token, snippets: keySnippets(publicUrl, token, key.kind, vault) };
         return minted;
       }
       if (path === "curator-actions" && method === "POST") {
         const enable = (body as { enable?: unknown } | undefined)?.enable;
         if (typeof enable !== "boolean") throw new HttpError(400, "enable: true or false", "INVALID");
-        const vault = await ownVault();
-        if (vault.status !== "ready") throw new HttpError(409, "Your vault isn't ready.", "NOT_READY");
+        const vault = ownVault();
+        if (vault.status !== "ready") throw new HttpError(409, "This vault isn't ready.", "NOT_READY");
         if (vault.provider !== "github") throw new HttpError(409, "Nightly sleep on a schedule runs on GitHub Actions; for a GitLab vault, run sleep with your own curator agent.", "GITHUB_ONLY");
         return setCuratorActions(app, vault, enable);
       }
       if (path === "keys/revoke" && method === "POST") {
         const id = (body as { id?: unknown } | undefined)?.id;
         if (typeof id !== "string" || !TOKEN_ID.test(id)) throw new HttpError(400, "id: expected a key id (64 hex characters)", "INVALID");
-        const vault = await ownVault();
+        const vault = ownVault();
         await registry.revokeKey(vault.id, id);
         await changed(vault.id);
         return { ok: true };
@@ -324,7 +351,8 @@ export function initRequest(body: unknown, login?: string): VaultSettings & { re
   };
 }
 
-const vaultInfo = (v: VaultRecord, s: HostedSettings): HostedVault => ({
+/** A vault as its owner sees it. */
+export const hostedVault = (v: VaultRecord, s: HostedSettings): HostedVault => ({
   id: v.id,
   fullName: v.fullName,
   branch: v.branch,
@@ -332,6 +360,7 @@ const vaultInfo = (v: VaultRecord, s: HostedSettings): HostedVault => ({
   provider: v.provider,
   url: `${v.provider === "gitlab" ? s.gitlab?.url : oauthUrlOf(s)}/${v.fullName}`,
   ...(v.reason ? { reason: v.reason } : {}),
+  role: "owner",
 });
 
 const keyInfo = (k: KeyRecord): HostedKeyInfo => ({
@@ -387,11 +416,21 @@ function items(s: HostedSetupStatus): SetupItem[] {
   return out;
 }
 
+/** The vault's own MCP address: a key used at another vault's address is refused, so a mixed-up config fails loudly. */
+export const vaultMcpUrl = (publicUrl: string, vaultId: string) => `${publicUrl}/mcp/${vaultId}`;
+
+/** The MCP server's name in a client's config: the vault's repo name, so each vault gets its own (`hippo-lisbon-vault`). */
+export function mcpServerName(vault: Pick<VaultRecord, "fullName">, kind?: KeyKind): string {
+  const repo = vault.fullName.split("/").pop() ?? "";
+  const slug = repo.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "vault";
+  return `hippo-${slug}${kind === "curator" ? "-curator" : ""}`;
+}
+
 /** How to connect with a new key. Every snippet carries the key, so they're shown once, with it. */
-export function keySnippets(publicUrl: string, token: string, kind: KeyKind): Snippet[] {
-  const mcp = `${publicUrl}/mcp`;
+export function keySnippets(publicUrl: string, token: string, kind: KeyKind, vault: Pick<VaultRecord, "id" | "fullName">): Snippet[] {
+  const mcp = vaultMcpUrl(publicUrl, vault.id);
   const auth = `Bearer ${token}`;
-  const name = kind === "curator" ? "hippocampus-curator" : "hippocampus";
+  const name = mcpServerName(vault, kind);
   const snippets: Snippet[] = [
     { label: "Claude Code", lang: "bash", code: `claude mcp add --transport http ${name} ${mcp} --header "Authorization: ${auth}"` },
     { label: "Any MCP client over HTTP (.mcp.json)", lang: "json", code: JSON.stringify({ mcpServers: { [name]: { type: "http", url: mcp, headers: { Authorization: auth } } } }, null, 2) },
