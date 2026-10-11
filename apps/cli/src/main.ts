@@ -145,6 +145,29 @@ preset
     err(`✓ added the ${name} preset (${r.changes.length} files)`);
   });
 
+const domain = program.command("domain").description("Domains: the lanes humans and agents can hold authority over (`domains:` in the config).");
+
+domain
+  .command("list")
+  .description("List the vault's domains.")
+  .action(async () => {
+    for (const d of parseConfig(await openStore().read(CONFIG_PATH)).domains) console.log(d);
+  });
+
+domain
+  .command("add")
+  .argument("<id...>", "domain ids (lowercase letters, digits and dashes), space- or comma-separated")
+  .description("Add domains to the vault's config and Handbook, and commit only those files.")
+  .action(async (ids: string[]) => {
+    const r = await new HippoService(openStore()).addDomains(ids.flatMap((i) => commaList(i) ?? []));
+    if (!r.added.length) {
+      err("✓ the vault already has those domains");
+      return;
+    }
+    await commitLocal([CONFIG_PATH, HANDBOOK_PATH], r.message!, { asUser: true });
+    err(`✓ added ${r.added.join(", ")}`);
+  });
+
 program
   .command("serve")
   .description("Run the MCP server over stdio (default) or local HTTP.")

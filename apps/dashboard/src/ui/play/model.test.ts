@@ -6,6 +6,7 @@ import {
   changeLabel,
   confidenceLabel,
   countBy,
+  domainDraft,
   editGoal,
   filterEpisodes,
   goalStateWord,
@@ -188,6 +189,15 @@ describe("validation", () => {
     expect(progressProblem(1001)).toMatch(/1 to 1000/);
     expect(progressProblem(2.5)).toMatch(/whole/);
     expect(progressProblem(Number.NaN)).toBeDefined();
+  });
+
+  it("reads typed domains: new ones only, each once, ids only", () => {
+    expect(domainDraft(" Health, side-project,health ", ["housing"])).toEqual({ ids: ["health", "side-project"] });
+    expect(domainDraft("health, Housing", ["housing"])).toEqual({ ids: ["health"] });
+    expect(domainDraft("housing", ["Housing"]).problem).toBe('"housing" is already an area.');
+    expect(domainDraft("housing", ["housing"], "codex").problem).toBe('"housing" is already a domain.');
+    expect(domainDraft("health care", []).problem).toMatch(/^"health care": use lowercase letters/);
+    expect(domainDraft(" , ", []).problem).toBe("Enter an area first.");
   });
 
   it("says it in the reader's words", () => {

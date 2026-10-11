@@ -47,6 +47,8 @@ Domains are the tags that define lanes. They're listed in `_hippo/config.yaml`:
 domains: [residency, insurance, university, language, housing, career, finance, health, story]
 ```
 
+Add more whenever life grows a new area: on the Agents page under Areas (Domains), or with `hippo domain add <id…>`. Either one updates the config and the Handbook in one commit.
+
 The rule is simple. **An agent has authority over a note when one of its `authority` domains matches one of the note's tags, or the note's type.** Matching ignores case. Authority is computed fresh for every decision. Retag a note or edit an agent's sheet, and the next report is judged by the new rules.
 
 In the example vault:
@@ -119,7 +121,7 @@ An agent's id comes from the episode's `agent:` property, or else from its folde
 
 ## Adding an agent
 
-**From the dashboard.** The Agents page, and the Agents step of Setup, add a member with an id, a name, a lane, authority domains from your list, and a host. The dashboard checks the id, refuses unknown domains, refuses a human's id or one that's already taken, then writes `party/<id>.md` and regenerates `HANDBOOK.md` together.
+**From the dashboard.** The Agents page, and the Agents step of Setup, add a member with an id, a name, a lane, authority domains from your list, and a host. The dashboard checks the id, refuses unknown domains (add new ones under Areas (Domains) on the same page first), refuses a human's id or one that's already taken, then writes `party/<id>.md` and regenerates `HANDBOOK.md` together.
 
 **By hand.** Copy `_hippo/templates/party.md` (Obsidian's template picker offers it) to `party/<id>.md` and fill in `lane`, `authority` and `host`. The next sleep, or `hippo handbook`, puts it in the handbook.
 

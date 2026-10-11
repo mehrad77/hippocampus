@@ -232,6 +232,19 @@ export function agentIdProblem(id: string, taken: string[], humans?: string | re
   return undefined;
 }
 
+/** The domains typed into `draft` (comma-separated) that `existing` lacks, or why none can be added. Mirrors core's `domainIds`. */
+export function domainDraft(draft: string, existing: readonly string[], look: Look = "plain"): { ids: string[]; problem?: string } {
+  const codex = look === "codex";
+  const typed = [...new Set(draft.split(",").map((d) => d.trim().toLowerCase()).filter(Boolean))];
+  if (!typed.length) return { ids: [], problem: codex ? "Name the domain first." : "Enter an area first." };
+  const bad = typed.find((d) => !AGENT_ID.test(d));
+  if (bad) return { ids: [], problem: `"${bad}": use lowercase letters, digits and dashes, like health or side-project.` };
+  const known = new Set(existing.map((d) => d.toLowerCase()));
+  const ids = typed.filter((d) => !known.has(d));
+  if (!ids.length) return { ids, problem: typed.length > 1 ? `The vault already has those ${codex ? "domains" : "areas"}.` : `"${typed[0]}" is already ${codex ? "a domain" : "an area"}.` };
+  return { ids };
+}
+
 /** `[[slug|alias]]` or `[[slug#heading]]` → `slug`. */
 export function unwrapRef(ref: string): string {
   const m = /^\[\[([^\]|#]*)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]$/.exec(ref.trim());
