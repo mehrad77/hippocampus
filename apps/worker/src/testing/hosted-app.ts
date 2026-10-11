@@ -20,7 +20,7 @@ export type Visit = ReturnType<typeof browser>;
 
 export interface StubCall {
   vault: string;
-  method: "configure" | "mcp" | "dashboard" | "party" | "addParty" | "disconnect" | "destroy";
+  method: "configure" | "mcp" | "dashboard" | "party" | "addParty" | "linkHuman" | "disconnect" | "destroy";
   meta?: VaultMeta;
   grant?: VaultGrant;
   user?: DashboardUser;
@@ -31,6 +31,9 @@ export interface StubCall {
   input?: { id: string; title: string };
   via?: string;
   reason?: string;
+  human?: string;
+  logins?: { github?: string | null; gitlab?: string | null };
+  create?: { domains?: string[] };
 }
 
 /** Each vault's Durable Object, as a recorder: every call, and a party per vault. */
@@ -61,6 +64,10 @@ export class FakeVaults implements VaultHosts {
         if (input.id === "player") throw new Error(`"player" is the vault's human, not an agent`);
         this.parties.set(vault, [...(this.parties.get(vault) ?? []), { id: input.id, title: input.title }]);
         return { slug: input.id };
+      },
+      linkHuman: async (human, logins, via, create) => {
+        seen({ method: "linkHuman", human, logins, via, ...(create ? { create } : {}) });
+        return { changed: true };
       },
       disconnect: async (reason) => seen({ method: "disconnect", reason }),
       destroy: async () => seen({ method: "destroy" }),

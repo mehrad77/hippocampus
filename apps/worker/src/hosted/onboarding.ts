@@ -7,7 +7,7 @@ import { bootstrapVault } from "./bootstrap.ts";
 import { curatorActionsEnabled, setCuratorActions } from "./curator-actions.ts";
 import type { GitHubApp, InstallationRepo } from "./github-app.ts";
 import { GitLabAuthError, type GitLabAccess, type GitLabProject } from "./gitlab.ts";
-import { MAX_VAULTS_PER_USER, keyRequest, type DisconnectReason, type Provider, type KeyKind, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
+import { MAX_VAULTS_PER_USER, keyRequest, type DisconnectReason, type MemberVault, type Provider, type KeyKind, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
 import { clearPendingInstallation, pendingInstallation, type SessionKV } from "./session.ts";
 import { GITLAB_CONNECT_PATH } from "./gitlab.ts";
 import type { Caller } from "./routes.ts";
@@ -133,10 +133,11 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
             (err: unknown) => ({ id: pending.installationId, repos: [], error: (err as Error).message }),
           )
         : undefined,
-      vault ? registry.keys(vault.id) : undefined,
+      // A viewer manages no keys; a member sees the ones they made.
+      vault && vault.role !== "viewer" ? registry.keys(vault.id, vault.role === "owner" ? undefined : account.user) : undefined,
       // Read from the repo itself, so a workflow removed on GitHub reads as off.
       // GitHub Actions only: a GitLab vault has no workflow to read.
-      vault?.status === "ready" && vault.provider === "github" && account.status === "approved" ? curatorActionsEnabled(app, vault).catch(() => undefined) : undefined,
+      vault?.status === "ready" && vault.role === "owner" && vault.provider === "github" && account.status === "approved" ? curatorActionsEnabled(app, vault).catch(() => undefined) : undefined,
     ]);
     const gitlabInfo = gitlab && account.status === "approved" && (adding || vault?.status !== "ready") ? await gitlabStatus() : undefined;
     const s: HostedSetupStatus = {
@@ -208,16 +209,19 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
     return { vault: hostedVault(result.vault, settings), mode: result.mode };
   }
 
-  /** The vault the request picked. Every vault in `vaults` is the caller's own. */
-  function ownVault(): VaultRecord {
+  /** The vault the request picked, if the caller's role there allows `what` (viewers manage nothing). */
+  function pickedVault(roles: readonly MemberVault["role"][] = ["owner"], what = "do that"): MemberVault {
     if (!vault) throw new HttpError(409, "No vault yet: set one up first.", "NO_VAULT");
+    if (!roles.includes(vault.role)) throw new HttpError(403, vault.role === "viewer" ? "You can only read this vault." : `Only the vault's owner can ${what}.`, vault.role === "viewer" ? "READ_ONLY" : "OWNER_ONLY");
     return vault;
   }
+  /** Members manage only the keys they made; the owner, all of them. */
+  const keyOwner = (v: MemberVault) => (v.role === "owner" ? undefined : account.user);
 
   /** Forget one of the person's vaults: its keys, connector grants and cache. The repo stays as it is. */
   async function removeVault(body: unknown): Promise<{ ok: true }> {
     const b = (body ?? {}) as { id?: unknown; confirm?: unknown };
-    const target = vaults.find((v) => v.id === b.id);
+    const target = vaults.find((v) => v.id === b.id && v.role === "owner");
     if (!target) throw new HttpError(404, "That vault isn't one of yours, or it was removed already.", "NOT_FOUND");
     const typed = typeof b.confirm === "string" ? b.confirm.trim().toLowerCase() : "";
     if (typed !== target.fullName.toLowerCase()) throw new HttpError(400, `confirm: type ${target.fullName} to remove it`, "CONFIRM");
@@ -257,18 +261,24 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       }
       if (path === "init" && method === "POST") return init(body);
       if (path === "vaults/remove" && method === "POST") return removeVault(body);
-      if (path === "keys" && method === "GET") return { keys: (await registry.keys(ownVault().id)).map(keyInfo) };
+      if (path === "keys" && method === "GET") {
+        const v = pickedVault(["owner", "member"]);
+        return { keys: (await registry.keys(v.id, keyOwner(v))).map(keyInfo) };
+      }
       if (path === "keys" && method === "POST") {
-        const vault = ownVault();
+        const vault = pickedVault(["owner", "member"]);
         if (vault.status !== "ready") throw new HttpError(409, "This vault isn't ready, so it can't take new keys.", "NOT_READY");
-        const { token, key } = await registry.mintKey(vault.id, keyRequest(body));
+        const req = keyRequest(body);
+        // The curator sees every secret: only the owner hands that out.
+        if (req.kind === "curator" && vault.role !== "owner") throw new HttpError(403, "Only the vault's owner can make a curator key.", "OWNER_ONLY");
+        const { token, key } = await registry.mintKey(vault.id, req, account.user);
         const minted: HostedMintedKey = { ...keyInfo(key), token, snippets: keySnippets(publicUrl, token, key.kind, vault) };
         return minted;
       }
       if (path === "curator-actions" && method === "POST") {
         const enable = (body as { enable?: unknown } | undefined)?.enable;
         if (typeof enable !== "boolean") throw new HttpError(400, "enable: true or false", "INVALID");
-        const vault = ownVault();
+        const vault = pickedVault(["owner"], "set up its curator");
         if (vault.status !== "ready") throw new HttpError(409, "This vault isn't ready.", "NOT_READY");
         if (vault.provider !== "github") throw new HttpError(409, "Nightly sleep on a schedule runs on GitHub Actions; for a GitLab vault, run sleep with your own curator agent.", "GITHUB_ONLY");
         return setCuratorActions(app, vault, enable);
@@ -276,8 +286,8 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       if (path === "keys/revoke" && method === "POST") {
         const id = (body as { id?: unknown } | undefined)?.id;
         if (typeof id !== "string" || !TOKEN_ID.test(id)) throw new HttpError(400, "id: expected a key id (64 hex characters)", "INVALID");
-        const vault = ownVault();
-        await registry.revokeKey(vault.id, id);
+        const vault = pickedVault(["owner", "member"]);
+        await registry.revokeKey(vault.id, id, keyOwner(vault));
         await changed(vault.id);
         return { ok: true };
       }
@@ -351,8 +361,8 @@ export function initRequest(body: unknown, login?: string): VaultSettings & { re
   };
 }
 
-/** A vault as its owner sees it. */
-export const hostedVault = (v: VaultRecord, s: HostedSettings): HostedVault => ({
+/** A vault as one person sees it: with their role, and for a shared vault their human. */
+export const hostedVault = (v: VaultRecord & { role?: MemberVault["role"]; human?: string }, s: HostedSettings): HostedVault => ({
   id: v.id,
   fullName: v.fullName,
   branch: v.branch,
@@ -360,7 +370,8 @@ export const hostedVault = (v: VaultRecord, s: HostedSettings): HostedVault => (
   provider: v.provider,
   url: `${v.provider === "gitlab" ? s.gitlab?.url : oauthUrlOf(s)}/${v.fullName}`,
   ...(v.reason ? { reason: v.reason } : {}),
-  role: "owner",
+  role: v.role ?? "owner",
+  ...(v.human ? { human: v.human } : {}),
 });
 
 const keyInfo = (k: KeyRecord): HostedKeyInfo => ({

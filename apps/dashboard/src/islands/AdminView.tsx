@@ -8,6 +8,7 @@ import type { AdminAccount, AdminVault, SessionInfo } from "../lib/types.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { PageGate } from "../ui/PageGate.tsx";
 import { Empty, Panel, RelTime, SkeletonPanel } from "../ui/Parts.tsx";
+import { Referrals } from "./admin/Referrals.tsx";
 import { ConfirmDialog, ErrorCallout, TabPanel, Tabs, ToneTag, useAction } from "./setup/common.tsx";
 import { VAULT_TONE } from "./setup/hosted.ts";
 import type { BadgeState } from "./setup/model.ts";
@@ -59,7 +60,7 @@ function Admin() {
         <div>
           <div className="page-head__kicker">Admin</div>
           <h1>Accounts and vaults</h1>
-          <p className="page-head__lede">Approve who gets in, and see which vaults exist. Admins see names and states here, never what's in anyone's vault.</p>
+          <p className="page-head__lede">Approve who gets in, see which vaults exist, and who invited whom. Admins see names and states here, never what's in anyone's vault.</p>
         </div>
       </header>
       <Panel title="Accounts" icon="party" id="accounts">
@@ -69,6 +70,7 @@ function Admin() {
         </TabPanel>
       </Panel>
       <Vaults />
+      <Referrals />
     </div>
   );
 }

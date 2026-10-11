@@ -4,7 +4,7 @@ import type { SqlDriver } from "@hippocampus/index";
 import type { KVLike } from "./auth.ts";
 import { DASHBOARD_API, DASHBOARD_BASE, WELCOME, isDashboardApi, isDashboardPath, serveAsset, type Assets } from "./dashboard.ts";
 import { logEvent, rateLimit, type RateLimiter } from "./hosted/limits.ts";
-import { isLive, type AccountStatus, type VaultRecord } from "./hosted/registry.ts";
+import { isLive, type AccountStatus, type Role, type VaultRecord } from "./hosted/registry.ts";
 import { createHostedRoutes, type Caller, type HostedRoutes } from "./hosted/routes.ts";
 import { hostedMissing, hostedSettings, type HostedSettings, type HostedVars } from "./hosted/settings.ts";
 import { vaultMeta, type DashboardUser, type VaultHosts, type VaultMeta, type VaultStub } from "./hosted/vault-port.ts";
@@ -54,6 +54,12 @@ interface VaultState {
   accountStatus?: AccountStatus;
 }
 
+/** May an OAuth grant's holder still use the vault: their role there now, and their own standing. */
+interface GrantHolder {
+  role?: Role;
+  approved: boolean;
+}
+
 export function createHostedApp(deps: HostedAppDeps): HostedApp {
   const { settings } = deps;
   const publicUrl = settings.publicUrl;
@@ -65,10 +71,25 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
   // once per change rather than on every request.
   const configured = new Map<string, string>();
   const states = new Map<string, { until: number; state: VaultState }>();
+  const holders = new Map<string, { until: number; holder: GrantHolder }>();
   const forget = (id: string) => {
     configured.delete(id);
     states.delete(id);
+    for (const key of holders.keys()) if (key.endsWith(`:${id}`)) holders.delete(key);
   };
+
+  /** The grant holder's role in the vault, cached like the vault's state. */
+  async function grantHolder(accountId: number, vaultId: string): Promise<GrantHolder> {
+    const key = `${accountId}:${vaultId}`;
+    const hit = holders.get(key);
+    if (hit && hit.until > Date.now()) return hit.holder;
+    const account = await routes.registry.account(accountId);
+    const role = account ? (await routes.registry.vaultsOf(account)).find((v) => v.id === vaultId)?.role : undefined;
+    const holder: GrantHolder = { ...(role ? { role } : {}), approved: account?.status === "approved" };
+    if (holders.size >= MAX_CACHED) holders.clear();
+    holders.set(key, { until: Date.now() + VAULT_TTL_MS, holder });
+    return holder;
+  }
 
   async function stubFor(meta: VaultMeta): Promise<VaultStub> {
     const stub = deps.vaults.get(meta.vaultId);
@@ -135,6 +156,10 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
       onVaultChanged,
       revokeOAuthGrants: (accountId) => apps.revokeAll(accountId),
       revokeVaultGrants: (accountId, vaultId) => apps.revokeVault(accountId, vaultId),
+      linkHuman: async (vault, human, login, via, create) => {
+        const stub = await stubFor(vaultMeta(vault));
+        await stub.linkHuman(human, { github: login }, via, create);
+      },
       destroyVault: async (id) => {
         forget(id);
         await deps.vaults.get(id).destroy();
@@ -175,8 +200,10 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
       ctx.waitUntil(routes.registry.touchKey({ id: props.keyId, lastUsed: props.lastUsed }).catch(() => undefined));
     } else {
       const { vault, accountStatus } = await vaultState(props.vaultId);
-      if (!vault || vault.accountId !== props.accountId || accountStatus !== "approved")
-        return done(invalidToken(publicUrl, "This connection's vault is gone. Connect it again."), "REAUTHORIZE");
+      // The person who approved it must still be in the vault, as more than a viewer, and the owner still approved.
+      const holder = vault ? await grantHolder(props.accountId, vault.id) : undefined;
+      if (!vault || !holder?.approved || !holder.role || holder.role === "viewer" || accountStatus !== "approved")
+        return done(invalidToken(publicUrl, "This connection's vault is gone, or isn't shared with you anymore. Connect it again."), "REAUTHORIZE");
       if (vault.status !== "ready")
         return done(json(403, { error: "vault_unavailable", error_description: `This vault is ${vault.status}. Its owner can reconnect it at ${publicUrl}${DASHBOARD_BASE}/setup/` }), "NOT_READY");
       meta = vaultMeta(vault);
@@ -227,6 +254,7 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
         // Lax cookies ride along on cross-site navigations, so writes also need our own Origin.
         const site = request.headers.get("sec-fetch-site");
         if (request.headers.get("origin") !== publicUrl || (site && site !== "same-origin")) throw new HttpError(403, "Cross-origin request refused", "ORIGIN");
+        if (caller.vault.role === "viewer") throw new HttpError(403, "You can only read this vault.", "READ_ONLY");
         if (!(await rateLimit(deps.limits?.api, `account:${caller.account.id}`))) throw new HttpError(429, "Too many requests; slow down a little.", "RATE_LIMITED");
       }
       const stub = await stubFor(vaultMeta(caller.vault));
@@ -243,7 +271,13 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
   async function dashboardUser({ account, vault }: Caller): Promise<DashboardUser> {
     // On a GitLab vault the human may be named by their GitLab username, from the connected GitLab account.
     const gitlab = vault?.provider === "gitlab" ? (await routes.registry.gitlabCredential(account.id))?.gitlabLogin : undefined;
-    return { login: account.login, ...(gitlab ? { gitlab } : {}), account: { status: account.status === "approved" ? "approved" : "waitlisted", admin: settings.admins.has(account.id) } };
+    return {
+      login: account.login,
+      ...(gitlab ? { gitlab } : {}),
+      account: { status: account.status === "approved" ? "approved" : "waitlisted", admin: settings.admins.has(account.id) },
+      ...(vault ? { role: vault.role } : {}),
+      ...(vault?.human ? { human: vault.human } : {}),
+    };
   }
 
   return {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hostedDemo } from "./demo-hosted.ts";
-import { VAULT_HEADER, type HostedSetupStatus, type HostedVaults } from "./setup.ts";
+import { VAULT_HEADER, type AdminReferrals, type HostedInvites, type HostedMembers, type HostedNewInvite, type HostedSetupStatus, type HostedVaults } from "./setup.ts";
 import type { DashboardSource } from "./source.ts";
 
 const ORIGIN = "http://127.0.0.1:4339";
@@ -16,6 +16,33 @@ function client() {
 }
 
 describe("hosted demo", () => {
+  it("shares: members and invites on the first vault, a vault waiting to be accepted, and referrals", async () => {
+    const { api } = client();
+    await api("__demo/stage?to=ready");
+    const members = (await api("vaults/members")).body as HostedMembers;
+    expect(members.members.map((m) => [m.login, m.role])).toEqual([
+      ["player", "owner"],
+      ["game-master", "member"],
+    ]);
+    const made = (await api("vaults/members/invite", { role: "viewer", human: "flatmate", login: "flatmate-gh" })).body as HostedNewInvite;
+    expect(made.link).toMatch(/\/dashboard\/invite\/#hinv_/);
+    expect(((await api("vaults/members")).body as HostedMembers).invites?.map((i) => i.human)).toEqual(["flatmate"]);
+    expect((await api("invites/peek", { token: made.link.split("#")[1] })).body).toMatchObject({ from: "player", vault: { fullName: "player/vault" } });
+
+    const invites = (await api("invites")).body as HostedInvites;
+    expect(invites.incoming.map((i) => i.vault?.fullName)).toEqual(["harbor-student/study-group"]);
+    const accepted = (await api("invites/accept", { id: invites.incoming[0]!.id })).body as { vault: { id: string; role: string } };
+    expect(accepted.vault.role).toBe("viewer");
+    const on = { [VAULT_HEADER]: accepted.vault.id };
+    expect((await api("session", undefined, on)).body).toMatchObject({ capabilities: { remember: false, curator: false } });
+    expect((await api("actions/remember", { text: "x" }, on)).body).toMatchObject({ code: "READ_ONLY" });
+    expect((await api("vaults/leave", {}, on)).body).toEqual({ ok: true });
+    expect(((await api("vaults")).body as HostedVaults).vaults).toHaveLength(2);
+
+    const graph = (await api("admin/referrals")).body as AdminReferrals;
+    expect(graph.edges.length).toBeGreaterThan(2);
+  });
+
   it("has two vaults when ready: switches between them, adds one, and removes one", async () => {
     const { api } = client();
     await api("__demo/stage?to=ready");

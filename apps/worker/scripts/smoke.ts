@@ -539,6 +539,26 @@ async function main(): Promise<void> {
     check(sneak.status === 404, `player asking for game-master's vault: ${sneak.status}`);
   });
 
+  await step("player shares the vault with game-master, who accepts and reads it as a member", async () => {
+    const made = await player.post<{ invite: { id: string }; link: string }>("vaults/members/invite", { role: "member", human: "game-master", login: "game-master" });
+    check(made.status === 200 && made.body.link.includes("/dashboard/invite/#hinv_"), `invite: ${made.status} ${JSON.stringify({ ...made.body, link: undefined })}`);
+    const waiting = await gm.api<{ incoming: { id: string; from: string }[] }>("invites");
+    check(waiting.body.incoming.some((i) => i.id === made.body.invite.id && i.from === "player"), JSON.stringify(waiting.body.incoming));
+    const accepted = await gm.post<{ vault?: { id: string; role: string } }>("invites/accept", { id: made.body.invite.id });
+    check(accepted.status === 200 && accepted.body.vault?.id === playerVault && accepted.body.vault.role === "member", `accept: ${accepted.status} ${JSON.stringify(accepted.body)}`);
+    const o = await gm.api<{ campaign: string }>("overview", { headers: { "x-hippo-vault": playerVault } });
+    check(o.status === 200 && o.body.campaign === "Lisbon relocation", `game-master on player's vault: ${o.status} ${o.body.campaign}`);
+    const s = await gm.api<{ actor: { id: string } }>("session", { headers: { "x-hippo-vault": playerVault } });
+    check(s.body.actor?.id === "game-master", `acts as ${JSON.stringify(s.body.actor)}`);
+    const members = await player.api<{ members: { login: string; role: string }[] }>("vaults/members");
+    check(members.body.members.map((m) => `${m.login}:${m.role}`).join(",") === "player:owner,game-master:member", JSON.stringify(members.body.members));
+  });
+  await step("the admin sees the invite in the referral graph", async () => {
+    const graph = await player.api<{ edges: { from: string; to: string }[]; people: { user: string; login: string }[] }>("admin/referrals");
+    const login = new Map(graph.body.people.map((p) => [p.user, p.login]));
+    check(graph.body.edges.some((e) => login.get(e.from) === "player" && login.get(e.to) === "game-master"), JSON.stringify(graph.body.edges));
+  });
+
   await agent.close();
   await curator.close();
   console.log(`\n${passed} checks passed in ${((Date.now() - started) / 1000).toFixed(1)}s`);

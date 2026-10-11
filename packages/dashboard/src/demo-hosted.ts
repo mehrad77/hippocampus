@@ -1,7 +1,7 @@
 import { demoPresets } from "./demo-setup.ts";
 import { HttpError, errorResponse, json, readJson, securityHeaders } from "./http.ts";
-import { VAULT_HEADER, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem, type Snippet } from "./setup.ts";
-import { capabilities, type CuratorStatus, type DashboardSource, type SessionInfo } from "./source.ts";
+import { VAULT_HEADER, type AdminReferrals, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem, type Snippet } from "./setup.ts";
+import { capabilities, readOnlySource, type CuratorStatus, type DashboardSource, type SessionInfo } from "./source.ts";
 
 // The hosted app for `astro dev` (HIPPO_DEMO_HOSTED=1): an in-memory stand-in for the Worker's
 // sign-in, onboarding, admin, account and curator routes, so every onboarding step can be walked
@@ -86,6 +86,16 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     keys: {} as Record<string, HostedKeyInfo[]>,
     curatorActions: {} as Record<string, boolean>,
     made: 0,
+    /** Who each vault is shared with (the owner included). */
+    members: {} as Record<string, HostedMember[]>,
+    /** Open invites, with the token each was made with. */
+    invites: [] as (HostedInvite & { token: string; from: string })[],
+    /** Invites waiting for player: one vault someone shares with them. */
+    incoming: [] as HostedIncomingInvite[],
+    /** Invites player sent to the app that were accepted. */
+    accepted: 0,
+    /** The demo's one inviter an admin stopped, if any. */
+    referralsOff: undefined as string | undefined,
     apps: [] as HostedConnectedApp[],
     run: undefined as CuratorStatus["run"],
     history: [] as CuratorStatus["history"],
@@ -120,14 +130,16 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
   /** The repo can become a vault: not one already, and the person has room for another. */
   const claimable = (fullName: string, provider: "github" | "gitlab") => {
     if (state.vaults.some((v) => v.fullName === fullName && (v.provider ?? "github") === provider)) throw new HttpError(409, `${fullName} is already one of your vaults.`, "ALREADY_VAULT");
-    if (state.vaults.length >= VAULT_LIMIT) throw new HttpError(409, `You can have ${VAULT_LIMIT} vaults; remove one first.`, "VAULT_LIMIT");
+    if (owned().length >= VAULT_LIMIT) throw new HttpError(409, `You can have ${VAULT_LIMIT} vaults; remove one first.`, "VAULT_LIMIT");
   };
-  const addVault = (vault: Omit<HostedVault, "id" | "role">): HostedVault => {
-    const made = { ...vault, id: vaultId(++state.made), role: "owner" as const };
+  const addVault = (vault: Omit<HostedVault, "id">): HostedVault => {
+    const made: HostedVault = { role: "owner", ...vault, id: vaultId(++state.made) };
     state.vaults.push(made);
     state.keys[made.id] = [];
+    state.members[made.id] = made.role === "owner" ? [{ user: "u-player", login: LOGIN, role: "owner", since: ago(HOUR) }] : [];
     return made;
   };
+  const owned = () => state.vaults.filter((v) => (v.role ?? "owner") === "owner");
 
   /** Curator runs for a vault that has been around a while: two finished, one that ran out of time, one going now. */
   const seedCurator = () => {
@@ -157,6 +169,11 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       const github = { fullName: `${LOGIN}/vault`, branch: "main", status: "ready" as const, provider: "github" as const };
       const lab = gitlabVault(`${LOGIN}/lisbon-vault`);
       for (const v of gitlab ? [lab, github] : [github, lab]) addVault(v);
+      // The first vault is shared with game-master, and someone has a vault to share with player.
+      const first = state.vaults[0]!;
+      state.members[first.id]!.push({ user: "u-gm", login: "game-master", role: "member", human: "game-master", since: ago(2 * DAY) });
+      state.incoming = [{ id: "inv-harbor", from: "harbor-student", vault: { id: vaultId(90), fullName: "harbor-student/study-group" }, role: "viewer", human: "player", expires: new Date(now().getTime() + 5 * DAY).toISOString() }];
+      state.accepted = 1;
       seedCurator();
     }
   };
@@ -228,7 +245,8 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     const v = pick(request);
     if (v?.status !== "ready") return { mode: "setup", user: { login: LOGIN }, account, capabilities: { ...capabilities(undefined, "hosted"), setup: "hosted" } };
     const info = await source.info();
-    return { ...info, mode: "worker", vault: { kind: v.provider === "gitlab" ? "gitlab" : "github", repo: v.fullName, branch: v.branch, ...(v.url ? { url: v.url } : {}) }, user: { login: LOGIN }, account, capabilities: { ...capabilities(source, "hosted"), curator: true } };
+    const shared = v.role === "viewer" ? readOnlySource(source) : source;
+    return { ...info, mode: "worker", vault: { kind: v.provider === "gitlab" ? "gitlab" : "github", repo: v.fullName, branch: v.branch, ...(v.url ? { url: v.url } : {}) }, user: { login: LOGIN }, account, capabilities: { ...capabilities(shared, "hosted"), curator: (v.role ?? "owner") === "owner" } };
   }
 
   async function mint(request: Request, body: unknown): Promise<HostedMintedKey> {
@@ -366,6 +384,31 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       ];
       return { vaults };
     }
+    if (sub === "referrals" && method === "GET") {
+      const found: AdminReferrals = {
+        people: [
+          { user: "u-player", login: LOGIN, status: "approved", canInvite: true },
+          { user: "u-gm", login: "game-master", status: "approved", invitedBy: "u-player", canInvite: true },
+          { user: "u-two", login: "player-two", status: "approved", invitedBy: "u-player", canInvite: state.referralsOff !== "u-two" },
+          { user: "u-harbor", login: "harbor-student", status: "approved", invitedBy: "u-gm", canInvite: true },
+          { user: "u-newcomer", login: "lisbon-newcomer", status: "waitlisted", invitedBy: "u-two", canInvite: true },
+          { user: "u-visitor", login: "campus-visitor", status: "denied", invitedBy: "u-harbor", canInvite: true },
+        ],
+        edges: [
+          { from: "u-player", to: "u-gm", at: ago(20 * DAY), vault: `${LOGIN}/vault` },
+          { from: "u-player", to: "u-two", at: ago(19 * DAY) },
+          { from: "u-gm", to: "u-harbor", at: ago(12 * DAY) },
+          { from: "u-two", to: "u-newcomer", at: ago(5 * HOUR) },
+          { from: "u-harbor", to: "u-visitor", at: ago(11 * DAY) },
+        ],
+      };
+      return found;
+    }
+    if (sub === "referrals/invites" && method === "POST") {
+      const b = (body ?? {}) as { user?: unknown; allow?: unknown };
+      state.referralsOff = b.allow === false && typeof b.user === "string" ? b.user : undefined;
+      return { ok: true };
+    }
     throw new HttpError(404, `No such admin route: ${method} ${sub}`, "NOT_FOUND");
   }
 
@@ -385,6 +428,107 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       return { ok: true };
     }
     throw new HttpError(404, `No such account route: ${method} ${sub}`, "NOT_FOUND");
+  }
+
+  const DEMO_ORIGIN = (request: Request) => origin(request);
+  const inviteLink = (request: Request, token: string) => `${DEMO_ORIGIN(request)}${base}/invite/#${token}`;
+  const newInvite = (request: Request, fields: Omit<HostedInvite, "id" | "created" | "expires">): HostedNewInvite => {
+    const token = `hinv_demo${hex(12)}`;
+    const invite: HostedInvite = { id: hex(32), ...fields, created: now().toISOString(), expires: new Date(now().getTime() + 7 * DAY).toISOString() };
+    state.invites.push({ ...invite, token, from: LOGIN });
+    return { invite, link: inviteLink(request, token) };
+  };
+  const plain = ({ token: _t, from: _f, ...i }: HostedInvite & { token: string; from: string }): HostedInvite => i;
+
+  function vaultsRoute(request: Request, method: string, sub: string, body: unknown): unknown {
+    const vault = pick(request);
+    if (!vault) throw new HttpError(409, "No vault yet: set one up first.", "NO_VAULT");
+    const owner = (vault.role ?? "owner") === "owner";
+    const members = (state.members[vault.id] ??= []);
+    const b = (body ?? {}) as Record<string, unknown>;
+    const ownerOnly = () => {
+      if (!owner) throw new HttpError(403, "Only the vault's owner can do that.", "OWNER_ONLY");
+    };
+    if (sub === "members" && method === "GET") {
+      const found: HostedMembers = { members, ...(owner ? { invites: state.invites.filter((i) => i.vault === vault.id).map(plain) } : {}), you: "u-player" };
+      return found;
+    }
+    if (sub === "members/invite" && method === "POST") {
+      ownerOnly();
+      const human = String(b.human ?? "");
+      if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(human)) throw new HttpError(400, "human: who they are in the vault, an id like game-master", "INVALID");
+      if (members.some((m) => m.human === human)) throw new HttpError(409, `Someone is ${human} in this vault already.`, "HUMAN_TAKEN");
+      const role = b.role === "viewer" ? "viewer" : "member";
+      const login = typeof b.login === "string" && b.login ? b.login : undefined;
+      return newInvite(request, { vault: vault.id, role, human, ...(login ? { login } : {}) });
+    }
+    if (sub === "members/role" && method === "POST") {
+      ownerOnly();
+      const m = members.find((x) => x.user === b.user && x.role !== "owner");
+      if (!m) throw new HttpError(404, "No such member.", "NOT_FOUND");
+      m.role = b.role === "viewer" ? "viewer" : "member";
+      return { ok: true };
+    }
+    if (sub === "members/remove" && method === "POST") {
+      ownerOnly();
+      state.members[vault.id] = members.filter((x) => x.user !== b.user || x.role === "owner");
+      return { ok: true };
+    }
+    if (sub === "invites/revoke" && method === "POST") {
+      ownerOnly();
+      state.invites = state.invites.filter((i) => i.id !== b.id);
+      return { ok: true };
+    }
+    if (sub === "leave" && method === "POST") {
+      if (owner) throw new HttpError(403, "Only the vault's owner can remove it; the owner removes the vault instead.", "OWNER_ONLY");
+      state.vaults = state.vaults.filter((v) => v.id !== vault.id);
+      if (state.last === vault.id) state.last = undefined;
+      return { ok: true };
+    }
+    throw new HttpError(404, `No such route: ${method} vaults/${sub}`, "NOT_FOUND");
+  }
+
+  function invitesRoute(request: Request, method: string, sub: string, body: unknown): unknown {
+    const b = (body ?? {}) as Record<string, unknown>;
+    if (sub === "" && method === "GET") {
+      const found: HostedInvites = { sent: state.invites.filter((i) => !i.vault).map(plain), accepted: state.accepted, canInvite: state.status === "approved", ...(state.admin ? {} : { limit: 10 }), incoming: state.incoming };
+      return found;
+    }
+    if (sub === "" && method === "POST") {
+      if (state.status !== "approved") throw new HttpError(403, "Your account is waiting for an admin's approval.", "NOT_APPROVED");
+      const login = typeof b.login === "string" && b.login ? b.login : undefined;
+      return newInvite(request, login ? { login } : {});
+    }
+    if (sub === "revoke" && method === "POST") {
+      state.invites = state.invites.filter((i) => i.id !== b.id || i.vault);
+      return { ok: true };
+    }
+    const byToken = typeof b.token === "string" ? state.invites.find((i) => i.token === b.token) : undefined;
+    const addressed = typeof b.id === "string" ? state.incoming.find((i) => i.id === b.id) : undefined;
+    if (sub === "peek" && method === "POST") {
+      if (byToken) return { id: byToken.id, from: byToken.from, ...(byToken.vault ? { vault: { id: byToken.vault, fullName: state.vaults.find((v) => v.id === byToken.vault)?.fullName ?? "?" } } : {}), ...(byToken.role ? { role: byToken.role } : {}), ...(byToken.human ? { human: byToken.human } : {}), expires: byToken.expires };
+      throw new HttpError(410, "This invite was used, revoked, or has expired. Ask for a new one.", "INVITE_GONE");
+    }
+    if (sub === "decline" && method === "POST") {
+      state.incoming = state.incoming.filter((i) => i !== addressed);
+      return { ok: true };
+    }
+    if (sub === "accept" && method === "POST") {
+      // The demo is one person: their own links can't be accepted, so only the waiting invite can.
+      if (byToken) throw new HttpError(400, "That's your own invite.", "OWN_INVITE");
+      if (!addressed) throw new HttpError(410, "This invite was used, revoked, or has expired. Ask for a new one.", "INVITE_GONE");
+      state.incoming = state.incoming.filter((i) => i !== addressed);
+      if (state.status !== "approved") approve();
+      if (!addressed.vault) return {};
+      const vault = addVault({ fullName: addressed.vault.fullName, branch: "main", status: "ready", provider: "github", role: addressed.role ?? "member", human: addressed.human ?? LOGIN });
+      state.members[vault.id] = [
+        { user: "u-harbor", login: addressed.from, role: "owner", since: ago(30 * DAY) },
+        { user: "u-player", login: LOGIN, role: addressed.role ?? "member", human: addressed.human ?? LOGIN, since: now().toISOString() },
+      ];
+      state.last = vault.id;
+      return { vault };
+    }
+    throw new HttpError(404, `No such route: ${method} invites/${sub}`, "NOT_FOUND");
   }
 
   function curatorStatus(): CuratorStatus {
@@ -450,12 +594,15 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       if (section === "setup") return json(200, await setupRoute(request, method, sub, body, url));
       if (section === "admin") return json(200, adminRoute(method, sub, body, url));
       if (section === "account") return json(200, accountRoute(method, sub, body));
+      if (section === "invites") return json(200, invitesRoute(request, method, sub, body));
+      if (section === "vaults" && sub) return json(200, vaultsRoute(request, method, sub, body));
       if (section === "vaults" && method === "GET") {
         const current = state.vaults.length ? pick(request) : undefined;
         const found: HostedVaults = { vaults: state.vaults, ...(current ? { current: current.id } : {}), limit: VAULT_LIMIT };
         return json(200, found);
       }
       if (!ready(request)) throw new HttpError(409, "No vault yet: finish setting one up first.", "NO_VAULT");
+      if (method === "POST" && pick(request)?.role === "viewer") throw new HttpError(403, "You can only read this vault.", "READ_ONLY");
       if (rest === "curator" && method === "GET") return json(200, curatorStatus());
       if (rest === "actions/curator" && method === "POST") {
         const run = (body as { abort?: unknown } | undefined)?.abort;

@@ -9,7 +9,8 @@ import { gitlabConnect } from "./gitlab-connect.ts";
 import { checkGitLabVaults } from "./gitlab-health.ts";
 import { logEvent, rateLimit, type RateLimiter } from "./limits.ts";
 import { hostedSetup, hostedVault } from "./onboarding.ts";
-import { MAX_VAULTS_PER_USER, Registry, type Account, type VaultRecord } from "./registry.ts";
+import { MAX_VAULTS_PER_USER, Registry, type Account, type MemberVault } from "./registry.ts";
+import { sharing } from "./sharing.ts";
 import { LOGIN_PATH, LOGOUT_PATH, createSessions, type SessionKV, type Sessions } from "./session.ts";
 import { apiUrlOf, type HostedSettings } from "./settings.ts";
 import { WEBHOOK_PATH, handleWebhook } from "./webhooks.ts";
@@ -22,6 +23,8 @@ export const HOSTED_API = "/dashboard/api";
 export interface HostedHooks extends AccountHooks {
   /** A vault's registry row changed (status, name, keys): tell its Durable Object. */
   onVaultChanged?: (vaultId: string) => void | Promise<void>;
+  /** Link (or unlink, `null`) a GitHub login to one of a vault's humans, in its config (someone joining or leaving). */
+  linkHuman?: (vault: MemberVault, human: string, login: string | null, via: string, create?: { domains?: string[] }) => Promise<void>;
 }
 
 export interface HostedDeps {
@@ -43,16 +46,16 @@ export interface HostedDeps {
 /** Who's calling: a live session's account, its vaults, and the one this request is about. */
 export interface Caller {
   account: Account;
-  /** Every vault the person has, oldest first. */
-  vaults: VaultRecord[];
+  /** Every vault the person has (owns or was let into), oldest first, with their role. */
+  vaults: MemberVault[];
   /** The vault VAULT_HEADER names, else the one used last, else the oldest. */
-  vault?: VaultRecord;
+  vault?: MemberVault;
   /** VAULT_HEADER named a vault that isn't theirs (or is gone). */
   unknownVault?: boolean;
 }
 
 /** Which of `vaults` a request means: the one it names, else the one used last, else the oldest. */
-export function pickVault(vaults: readonly VaultRecord[], asked: string | null, last?: string): { vault?: VaultRecord; unknownVault?: boolean } {
+export function pickVault<V extends { id: string }>(vaults: readonly V[], asked: string | null, last?: string): { vault?: V; unknownVault?: boolean } {
   if (asked) {
     const vault = vaults.find((v) => v.id === asked);
     return vault ? { vault } : { unknownVault: true };
@@ -76,7 +79,7 @@ export interface HostedRoutes {
 }
 
 /** Sections of `/dashboard/api/` answered here whatever the vault's state. */
-const OWN = new Set(["setup", "admin", "account", "vaults"]);
+const OWN = new Set(["setup", "admin", "account", "vaults", "invites"]);
 
 export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
   const { settings, kv } = deps;
@@ -178,11 +181,14 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
       const body = method === "POST" ? await readJson(request) : undefined;
       const sub = path.slice(section.length).replace(/^\//, "");
       if (section === "account") return done(await accountRoute(request, method, sub, body, caller));
+      const share = () => sharing({ caller, registry, settings, now, linkHuman: hooks.linkHuman, revokeVaultGrants: hooks.revokeVaultGrants });
       if (section === "vaults") {
-        if (sub !== "" || method !== "GET") throw new HttpError(404, `No such route: ${method} ${path}`, "NOT_FOUND");
+        if (sub !== "") return done(json(200, (await share().vaults(method, sub, body)) ?? { ok: true }));
+        if (method !== "GET") throw new HttpError(404, `No such route: ${method} ${path}`, "NOT_FOUND");
         const found: HostedVaults = { vaults: caller.vaults.map((v) => hostedVault(v, settings)), ...(caller.vault ? { current: caller.vault.id } : {}), limit: MAX_VAULTS_PER_USER };
         return done(json(200, found));
       }
+      if (section === "invites") return done(json(200, (await share().invites(method, sub, body)) ?? { ok: true }));
       let result: unknown;
       if (section === "admin") result = await admin(method, sub, body, url, caller.account);
       else {

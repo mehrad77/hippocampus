@@ -295,7 +295,8 @@ export function authorizePage(deps: AuthorizeDeps): (request: Request) => Promis
   };
 }
 
-const readyVaults = (caller: Caller) => caller.vaults.filter((v) => v.status === "ready");
+/** The vaults an app may connect to: ready ones the person can write to (not as a viewer). */
+const readyVaults = (caller: Caller) => caller.vaults.filter((v) => v.status === "ready" && v.role !== "viewer");
 
 /** Connecting needs an approved account with a ready vault. */
 function notReady(caller: Caller): Response | undefined {

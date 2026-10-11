@@ -159,10 +159,14 @@ export function forNewVault(s: HostedStatus): HostedStatus {
   return { ...rest, items: s.items.filter((i) => i.id === "access") };
 }
 
+/** How many of these vaults the person owns (a vault without a role is theirs: an older server). */
+export const ownedCount = (vaults: readonly { role?: string }[]) => vaults.filter((v) => (v.role ?? "owner") === "owner").length;
+
 /** Whether the person may add another vault, and why not. */
 export function canAddVault(s: Pick<HostedStatus, "account" | "vaults" | "vaultLimit">): { ok: boolean; why?: string } {
   if (s.account.status !== "approved") return { ok: false, why: "An admin approves your account first." };
-  const n = s.vaults?.length ?? 0;
+  // Only vaults of their own count; ones shared with them don't.
+  const n = ownedCount(s.vaults ?? []);
   if (s.vaultLimit !== undefined && n >= s.vaultLimit) return { ok: false, why: `You have ${n} vaults, the most one person can have here. Remove one to add another.` };
   return { ok: true };
 }
@@ -437,3 +441,40 @@ export const KEY_KIND: Record<HostedKeyInfo["kind"], { word: Wording; help: Word
   curator: { word: ["Curator key", "Curator's key"], help: ["Runs the nightly update (sleep). It sees secret memories while curating.", "Runs the sleep. It sees sealed memories while curating."] },
   bound: { word: ["Single-agent key", "Bound key"], help: ["Only one agent, with the scopes you choose.", "One party member only, with the scopes you choose."] },
 };
+
+// ── Sharing ────────────────────────────────────────────────────────────────
+
+/** What each role may do, in both voices, for pickers and the members list. */
+export const ROLE_WORDS: Record<"owner" | "member" | "viewer", { word: Wording; help: Wording }> = {
+  owner: { word: ["Owner", "Keeper"], help: ["Everything: invites people, removes them, the repository, keys and curation.", "Holds the campaign: seats players, the repository, keys and curation."] },
+  member: { word: ["Member", "Player"], help: ["Adds memories and settles disputes as themselves, and connects their own agents.", "Plays as their own character: adds to the record, rules on disputes, brings their own agents."] },
+  viewer: { word: ["Viewer", "Spectator"], help: ["Reads everything here, changes nothing.", "Watches the table, changes nothing."] },
+};
+
+/**
+ * The vault's humans someone new can be: not the person inviting (they act as `me`), and not one a
+ * member already is.
+ */
+export function freeHumans(humans: readonly string[], members: readonly { human?: string }[], me?: string): string[] {
+  const taken = new Set(members.flatMap((m) => (m.human ? [m.human] : [])));
+  return humans.filter((h) => h !== me && !taken.has(h));
+}
+
+/** A human id from a GitHub login: lowercase letters, digits and dashes. */
+export function humanIdFor(login: string): string {
+  return login
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+/** GitHub's login rule (the server checks it again). */
+export const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+
+/** Why an invite form can't be sent yet; undefined when it can. */
+export function inviteProblem(f: { login: string; human: string }): string | undefined {
+  const login = f.login.trim().replace(/^@/, "");
+  if (login && !GITHUB_LOGIN.test(login)) return "That isn't a GitHub username.";
+  return agentIdProblem(f.human) ? "Who they are in the vault: lowercase letters, digits and dashes, like game-master." : undefined;
+}

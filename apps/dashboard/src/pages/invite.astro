@@ -1,0 +1,9 @@
+---
+import Shell from "../layouts/Shell.astro";
+import InviteView from "../islands/InviteView.tsx";
+import "../styles/setup.css";
+import "../styles/hosted.css";
+---
+<Shell title="Invite" page="setup" description="Accept an invite to a shared vault, or to this Hippocampus.">
+  <InviteView client:only="react" />
+</Shell>
