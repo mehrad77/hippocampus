@@ -602,7 +602,8 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       const sub = rest.slice(section.length).replace(/^\//, "");
       if (rest === "session") return json(200, await session(request));
       if (method !== "GET" && method !== "POST") throw new HttpError(405, "Method not allowed", "METHOD");
-      const body = method === "POST" ? await readJson(request) : undefined;
+      // A clone: a request that isn't one of these routes goes on to the demo campaign's API, which reads the body itself.
+      const body = method === "POST" ? await readJson(request.clone()) : undefined;
       if (section === "setup") return json(200, await setupRoute(request, method, sub, body, url));
       if (section === "admin") return json(200, adminRoute(method, sub, body, url));
       if (section === "account") return json(200, accountRoute(method, sub, body));

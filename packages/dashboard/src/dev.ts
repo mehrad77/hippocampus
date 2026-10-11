@@ -37,7 +37,10 @@ export function devMiddleware(opts: { basePath: string; vaultDir?: string; hoste
     if (opts.vaultDir) {
       source = serviceSource(new HippoService(new FsStore(opts.vaultDir)), { mode: "local", vault: { kind: "dir", dir: opts.vaultDir } });
     } else {
-      const service = new HippoService(await buildDemoStore(new FsStore(SEED), { template: new FsStore(TEMPLATE) }));
+      const store = await buildDemoStore(new FsStore(SEED), { template: new FsStore(TEMPLATE) });
+      // The pretend hosted app is a vault whose owner skipped the secrets key at setup, so its Setup page can show how to add one.
+      if (hosted) await store.write("_hippo/config.yaml", (await store.read("_hippo/config.yaml"))!.replace(/(recipient:\s*)age1\S+/, "$1null"));
+      const service = new HippoService(store);
       source = serviceSource(service, { mode: "demo", vault: { kind: "memory" } });
       const o = await service.overview();
       if (!hosted) setup = demoSetup({ agents: o.party.map((p) => ({ id: p.slug, title: p.title, lastSeen: p.lastSeen })), unknownAgents: o.attention.unknownAgents });
