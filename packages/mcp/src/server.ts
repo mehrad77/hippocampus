@@ -104,7 +104,10 @@ function param(v: string | string[] | undefined, form = false): string {
   }
 }
 
-export function createHippoServer({ service, agent, scopes, version = "0.1.0", jsonSchemaValidator, relay, vault }: HippoServerOptions): McpServer {
+/** The server's version, as it introduces itself (and as its server card says). */
+export const SERVER_VERSION = "0.1.0";
+
+export function createHippoServer({ service, agent, scopes, version = SERVER_VERSION, jsonSchemaValidator, relay, vault }: HippoServerOptions): McpServer {
   const granted = scopes ? normalizeScopes(scopes) : undefined;
   const curates = !!relay && (!granted || granted.includes("curate"));
   const instructions = (curates ? INSTRUCTIONS + CURATE_INSTRUCTIONS : INSTRUCTIONS) + (vault ? vaultInstructions(vault) : "");

@@ -18,6 +18,7 @@ const ALLOWED: { file: string; line: string; why: string }[] = [
   { file: "packages/mcp/src/server.ts", line: "export const LEGACY_GOAL_SCOPE", why: "the goal scope's old name" },
   { file: "apps/worker/src/hosted/registry.ts", line: "KEY_SCOPES", why: "key scope names" },
   { file: "packages/dashboard/src/mcp-source.ts", line: 'can("quest")', why: "key scope name" },
+  { file: "packages/dashboard/src/connect.ts", line: 'const OLD_GOAL_SCOPE = "quest"', why: "the goal scope's old name, in older keys" },
   // Config keys and values of the v1 format (renamed in v2), not entity types.
   { file: "packages/core/src/schema.ts", line: 'name: z.coerce.string().default("campaign")', why: "the vault name's v1 default" },
   { file: "packages/core/src/bootstrap.ts", line: '!doc.has("campaign") ? "name" : "campaign"', why: "v1 config key `campaign` (the vault's name)" },

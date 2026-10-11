@@ -14,6 +14,7 @@ import {
   type Violation,
 } from "@hippocampus/core";
 import type { ScribeClient } from "../scribe.ts";
+import type { AgentClaims } from "./agent-claims.ts";
 import { checkInbox, type Quotas } from "./quotas.ts";
 
 // Every write a hosted vault makes, checked before it reaches GitHub. A commit names its actor in a
@@ -21,7 +22,7 @@ import { checkInbox, type Quotas } from "./quotas.ts";
 // principal can't make is refused, and the change set is audited as the claimed actor.
 
 /** Who is really behind a store: the signed-in human, the relay's curator, an MCP key, or the runtime's own format migration. */
-export type Principal = { kind: "human" } | { kind: "curator" } | { kind: "migration" } | { kind: "agent"; agent?: string; scopes: readonly string[] };
+export type Principal = { kind: "human" } | { kind: "curator" } | { kind: "migration" } | { kind: "agent"; agent?: string; scopes: readonly string[]; credential?: string };
 
 /** Reads pinned to one commit, which is the base its writes are computed from. */
 export interface PinnedStore extends VaultStore {
@@ -65,6 +66,8 @@ export interface AuditedStoreOptions {
   writer: ScribeClient;
   principal: Principal;
   quotas: Pick<Quotas, "pendingEpisodes" | "pendingIntroductions">;
+  /** Which connection holds each agent name; a shared key can't write as a name another one holds. */
+  claims?: AgentClaims;
 }
 
 /** Reads from a pinned store; each batch is audited and quota-checked, then committed through the single writer. */
@@ -101,6 +104,10 @@ export class AuditedStore implements PinnedStore {
     const base = await reads.head();
     const actor = actorFor(meta.message, principal);
     if (isViolation(actor)) throw new AuditError([actor]);
+    if (actor.kind === "agent" && principal.kind === "agent" && principal.credential && this.o.claims) {
+      const refused = this.o.claims.claim(actor.id, principal.credential, principal.agent !== undefined);
+      if (refused) throw new AuditError([{ path: COMMIT, rule: refused }]);
+    }
     const violations = await auditChanges({ before: reads, changes, actor });
     if (violations.length) throw new AuditError(violations);
     const { inbox } = parseConfig(await reads.read(CONFIG_PATH)).folders;

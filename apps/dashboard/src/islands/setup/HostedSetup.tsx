@@ -1,26 +1,25 @@
 import { useEffect, useState } from "react";
-import { ApiError, postJson } from "../../lib/api.ts";
-import { clearCache, useResource } from "../../lib/cache.ts";
-import { toast } from "../../lib/events.ts";
+import { postJson } from "../../lib/api.ts";
+import { clearCache } from "../../lib/cache.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
 import { repoLinks } from "../../lib/vaultLinks.ts";
 import { addingVaultNow, stopAddingVault } from "../../lib/vault.ts";
 import { signOut } from "../../lib/session.ts";
-import type { AccountApp, HostedStatus, SessionInfo } from "../../lib/types.ts";
+import type { HostedStatus, SessionInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
-import { Empty, Panel, RelTime, SkeletonPanel } from "../../ui/Parts.tsx";
+import { Panel } from "../../ui/Parts.tsx";
 import { Personalization } from "../../ui/Personalization.tsx";
 import { ConfirmDialog, CopyLine, ErrorCallout, Facts, Field, ToneTag, useAction, useHash, useScrollToHash } from "./common.tsx";
-import { CuratorPanel } from "./Curator.tsx";
+import { CuratorRuns } from "./Curator.tsx";
 import { HealthChecklist } from "./Health.tsx";
 import { forNewVault, parseHostedStep, VAULT_TONE } from "./hosted.ts";
-import { HostedKeysPanel } from "./HostedKeys.tsx";
+import { ConnectionsPanel, CurationSetup } from "./Connections.tsx";
 import { HostedOnboarding } from "./HostedOnboarding.tsx";
 import { AppInvitesPanel, IncomingInvites, MembersPanel } from "./HostedSharing.tsx";
 import { HostedVaultsPanel } from "./HostedVaults.tsx";
 
-const SECTION: Record<string, string> = { access: "#account", install: "#sz-repo", vault: "#sz-repo", keys: "#sz-keys" };
+const SECTION: Record<string, string> = { access: "#account", install: "#sz-repo", vault: "#sz-repo", keys: "#connections", curator: "#curation" };
 
 /**
  * Setup on the hosted app. Until the vault is ready it's the onboarding wizard; after that it's the
@@ -93,10 +92,16 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
         </Panel>
         <Panel title="Connect" icon="link" id="sz-connect">
           <div className="stack sz-tight">
-            <p className="small">Your vault's MCP address. Agents use it with a key; Claude.ai and ChatGPT add it as a custom connector and sign in with GitHub.</p>
+            <p className="small">This vault's own address. Apps use it with a key, which names this vault and no other; Claude.ai and ChatGPT can sign in with it instead (beta).</p>
             <CopyLine value={status.mcpUrl} label="MCP URL" />
             <p className="small">
-              <a href="#agents">{v("Connect agents, step by step", "Gather the party, step by step")}</a> · <a href="#curator">{v("Set up curation", "Appoint a curator")}</a>
+              {vault.role !== "viewer" && <a href="#connections">Connect an app</a>}
+              {vault.role === "owner" && (
+                <>
+                  {" · "}
+                  <a href="#curation">{v("Set up nightly curation", "Appoint a curator")}</a>
+                </>
+              )}
             </p>
           </div>
         </Panel>
@@ -104,107 +109,12 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
 
       <HostedVaultsPanel status={status} />
       <MembersPanel session={session} status={status} />
-      {vault.role !== "viewer" && <HostedKeysPanel status={status} />}
-      {vault.role === "owner" && session.capabilities.curator && <CuratorPanel commits={links ? { url: links.commits, host: links.host } : undefined} />}
-      <AppsPanel />
+      {vault.role !== "viewer" && <ConnectionsPanel status={status} />}
+      {vault.role === "owner" && <CurationSetup status={status} runs={session.capabilities.curator ? <CuratorRuns commits={links ? { url: links.commits, host: links.host } : undefined} /> : undefined} />}
       <AppInvitesPanel />
       <AccountPanel session={session} status={status} />
       <Personalization />
     </div>
-  );
-}
-
-/** Connectors (Claude.ai, ChatGPT, …) that signed in with OAuth. */
-function AppsPanel() {
-  const { v } = useTerms();
-  const apps = useResource<{ apps: AccountApp[] }>("/account/apps");
-  const [revoking, setRevoking] = useState<AccountApp>();
-  const revoke = useAction();
-  const missing = apps.error instanceof ApiError && (apps.error.status === 404 || apps.error.status === 501);
-  return (
-    <Panel title="Connected apps" icon="cloud" id="sz-apps">
-      <p className="small">Apps you connected with a GitHub sign-in instead of a key. Each acts as the agent you chose when you approved it.</p>
-      {missing ? (
-        <p className="small muted">This Hippocampus doesn't list connected apps yet.</p>
-      ) : apps.error && !apps.data ? (
-        <ErrorCallout error={apps.error} onRetry={() => void apps.reload()} />
-      ) : !apps.data ? (
-        <SkeletonPanel lines={2} />
-      ) : apps.data.apps.length ? (
-        <div className="table-wrap">
-          <table className="table hz-rtable">
-            <thead>
-              <tr>
-                <th scope="col">App</th>
-                <th scope="col">{v("Acts as", "Plays")}</th>
-                <th scope="col">Scopes</th>
-                <th scope="col">Connected</th>
-                <th scope="col">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {apps.data.apps.map((a) => (
-                <tr key={a.id}>
-                  <td data-label="App">
-                    <strong className="sz-break">{a.client}</strong>
-                  </td>
-                  <td data-label={v("Acts as", "Plays")}>{a.agent ? <span className="mono">{a.agent}</span> : <span className="muted">not chosen</span>}</td>
-                  <td data-label="Scopes">
-                    <span className="row sz-tight-row">
-                      {a.scopes.map((s) => (
-                        <span key={s} className="chip">
-                          {s}
-                        </span>
-                      ))}
-                    </span>
-                  </td>
-                  <td data-label="Connected">
-                    <RelTime at={a.created} />
-                  </td>
-                  <td className="sz-tokens__act">
-                    <button type="button" className="btn btn--sm btn--danger" onClick={() => setRevoking(a)} aria-label={`Disconnect ${a.client}`}>
-                      Disconnect
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <Empty icon="cloud" title="No connected apps">
-          Add your MCP address as a custom connector in Claude.ai or ChatGPT; it shows up here once you approve it.
-        </Empty>
-      )}
-      <ConfirmDialog
-        open={!!revoking}
-        onClose={() => {
-          setRevoking(undefined);
-          revoke.clear();
-        }}
-        title="Disconnect this app?"
-        confirmLabel="Disconnect"
-        danger
-        busy={revoke.busy}
-        onConfirm={async () => {
-          if (!revoking) return;
-          const res = await revoke.run(() => postJson<{ ok: boolean }>("/account/apps/revoke", { id: revoking.id }));
-          if (!res) return;
-          toast(`Disconnected ${revoking.client}.`, "ok");
-          setRevoking(undefined);
-          void apps.reload();
-        }}
-      >
-        {revoking && (
-          <p>
-            <strong>{revoking.client}</strong> loses access to your vault immediately. Connect it again from the app if you change your mind.
-          </p>
-        )}
-        {revoke.error !== undefined && <ErrorCallout error={revoke.error} />}
-      </ConfirmDialog>
-    </Panel>
   );
 }
 

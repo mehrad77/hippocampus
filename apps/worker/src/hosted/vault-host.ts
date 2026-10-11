@@ -73,6 +73,11 @@ export class VaultHost extends DurableObject<HostedEnv> {
     return this.host.linkHuman(id, logins, via, create);
   }
 
+  /** Connections were revoked: free the agent names they held. */
+  releaseClaims(credentials: string[]): Promise<number> {
+    return this.host.releaseClaims(credentials);
+  }
+
   /** Stop serving; storage stays until `destroy`. */
   disconnect(reason: string): Promise<void> {
     return this.host.disconnect(reason);

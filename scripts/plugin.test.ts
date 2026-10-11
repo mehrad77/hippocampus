@@ -47,7 +47,7 @@ describe("the Claude Code plugin", () => {
 
   it("gives every skill a name matching its folder and a description", () => {
     const skills = readdirSync(join(ROOT, pluginDir, "skills"), { withFileTypes: true }).filter((d) => d.isDirectory());
-    expect(skills.map((s) => s.name).sort()).toEqual(["memory", "sleep"]);
+    expect(skills.map((s) => s.name).sort()).toEqual(["connect", "memory", "sleep", "sleep-setup"]);
     for (const skill of skills) {
       const fm = frontmatter(read(`${pluginDir}/skills/${skill.name}/SKILL.md`));
       expect(fm, `${skill.name}/SKILL.md frontmatter`).toBeDefined();
@@ -63,6 +63,17 @@ describe("the Claude Code plugin", () => {
     expect(server.type).toBe("http");
     expect(server.url).toBe("${HIPPO_MCP_URL}");
     expect(server.headers).toEqual({ Authorization: "Bearer ${HIPPO_KEY}" });
+  });
+
+  it("sets sleep up in the same three places as the dashboard, without ever asking for a key", () => {
+    const skill = read(`${pluginDir}/skills/sleep-setup/SKILL.md`);
+    // The dashboard's choices (packages/dashboard/src/connect.ts), by their titles.
+    const places = [...read("packages/dashboard/src/connect.ts").matchAll(/id: "(actions|schedule|elsewhere)",\s+title: "([^"]+)"/g)].map((m) => m[2]!);
+    expect(places).toEqual(["One of your agents", "A script or cron line", "GitHub Actions"]);
+    for (const p of places) expect(skill, `sleep-setup offers ${p}`).toContain(`**${p}`);
+    expect(skill).toMatch(/Never ask for a key in the chat/);
+    expect(skill).not.toMatch(/hippo_[A-Za-z0-9_-]{20,}/);
+    expect(read(`${pluginDir}/skills/sleep/SKILL.md`)).toContain("/hippocampus:sleep-setup");
   });
 
   it("names every sleep tool the MCP server has in the sleep skill", () => {

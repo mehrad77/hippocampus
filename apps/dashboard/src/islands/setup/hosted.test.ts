@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HostedStatus } from "../../lib/types.ts";
-import { canAddVault, freeHumans, humanIdFor, inviteProblem, draftProblems, draftReady, forNewVault, hostedDefaultStep, hostedLock, hostedProvider, hostedRepos, hostedStepDef, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, repoVerdict, type HostedContext } from "./hosted.ts";
+import { canAddVault, connectionRows, freeHumans, humanIdFor, inviteProblem, draftProblems, draftReady, forNewVault, hostedDefaultStep, hostedLock, hostedProvider, hostedRepos, hostedStepDef, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, repoVerdict, type HostedContext } from "./hosted.ts";
 
 const base: HostedStatus = {
   kind: "hosted",
@@ -207,5 +207,28 @@ describe("sharing", () => {
     expect(inviteProblem({ login: "", human: "game-master" })).toBeUndefined();
     expect(inviteProblem({ login: "not a login", human: "game-master" })).toMatch(/GitHub username/);
     expect(inviteProblem({ login: "", human: "Game Master" })).toMatch(/lowercase/);
+  });
+});
+
+describe("connections", () => {
+  it("lists keys and this vault's sign-in apps together, in plain words", () => {
+    const rows = connectionRows(
+      [
+        { id: "k1", kind: "bound", agent: "claude-code", scopes: ["read", "remember", "goal"], label: "Claude Code", created: "2026-10-01T00:00:00Z", lastUsed: "2026-10-02T00:00:00Z" },
+        { id: "k2", kind: "agent", scopes: ["read", "remember", "goal"], label: "Any agent", created: "2026-10-03T00:00:00Z" },
+        { id: "k3", kind: "curator", scopes: ["read", "curate"], label: "Curator", created: "2026-09-30T00:00:00Z" },
+      ],
+      [
+        { id: "g1", client: "Claude", scopes: ["read"], agent: "claude-web", vault: "v1", created: "2026-10-04T00:00:00Z" },
+        { id: "g2", client: "ChatGPT", scopes: ["read"], agent: "chatgpt", vault: "v2", created: "2026-10-05T00:00:00Z" },
+      ],
+      "v1",
+    );
+    expect(rows.map((r) => [r.name, r.kind, r.can, r.actsAs])).toEqual([
+      ["Claude", "sign-in app", "Only look things up", { agent: "claude-web" }],
+      ["Any agent", "shared key", "Remember and recall", { shared: true }],
+      ["Claude Code", "single-agent key", "Remember and recall", { agent: "claude-code" }],
+      ["Curator", "curator key", "Curate nightly", { curator: true }],
+    ]);
   });
 });

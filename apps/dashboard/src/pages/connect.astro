@@ -1,0 +1,9 @@
+---
+import Shell from "../layouts/Shell.astro";
+import ConnectApprove from "../islands/ConnectApprove.tsx";
+import "../styles/setup.css";
+import "../styles/hosted.css";
+---
+<Shell title="Connect an app" page="setup" description="Approve an app or agent that asked to connect to one of your vaults.">
+  <ConnectApprove client:only="react" />
+</Shell>

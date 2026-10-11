@@ -9,7 +9,9 @@ Hippocampus is shared memory for one person's agents. You add memories to an inb
 
 ## 1. Start with `onboard`
 
-Call `onboard` with your agent id: lowercase letters, digits and dashes, describing your job (for example `home-finder` or `job-scout`). Use the same id every time. Never use the person's own name or `human`.
+Call `onboard` first. Most connections are made for one agent (the person named it when connecting this app): then your id is fixed and the `agent` argument is ignored. Otherwise, pass your agent id: lowercase letters, digits and dashes, describing your job (for example `home-finder` or `job-scout`). Use the same id every time. Never use the person's own name or `human`, and don't take an id another app uses: the vault refuses it.
+
+Each connection serves **one vault**, named in the server's instructions. If the person has several, each has its own server; remember into the one the task belongs to.
 
 - If you're a known party member, it tells you your lane (what you're responsible for) and the goals you own. It also lists this vault's kinds of memory: the person may have added some (with presets) beyond the usual ones.
 - If you're unknown, call `introduce` with a `title`, your `lane` (one sentence), the `host` you run in, your `model` and a short `about`. Then carry on: until the person approves you on the dashboard, your memories count as rumors.

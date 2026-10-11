@@ -196,7 +196,7 @@ Each question is one step of the pipeline above, with instructions, input and a 
 
 The curator sees every new memory in full, secret ones in plain text, so its model's provider does too. Pick an agent and provider you'd trust with that.
 
-**The Claude Code plugin.** This repo is also a Claude Code plugin marketplace. The plugin connects Claude Code to a vault over HTTP (it reads `HIPPO_MCP_URL` and `HIPPO_KEY`) and adds two skills: `/hippocampus:memory` for everyday agents, and `/hippocampus:sleep` for the curator.
+**The Claude Code plugin.** This repo is also a Claude Code plugin marketplace. The plugin connects Claude Code to a vault over HTTP (it reads `HIPPO_MCP_URL` and `HIPPO_KEY`) and adds three skills: `/hippocampus:memory` for everyday agents, `/hippocampus:sleep` for the curator, and `/hippocampus:sleep-setup` to set up nightly sleep.
 
 ```bash
 claude plugin marketplace add mehrad77/hippocampus
@@ -224,7 +224,8 @@ Scheduled tasks in Claude Code, Claude Desktop or Cursor work too. Schedule this
 
 | Name | Kind | Value |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | Secret | An Anthropic API key; runs are billed to it |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Secret | A token from your Claude subscription (Pro or Max): run `claude setup-token`. Runs count against the subscription's usage, with no API bill |
+| `ANTHROPIC_API_KEY` | Secret | Or an Anthropic API key; runs are billed to it. Set one of the two |
 | `HIPPO_CURATOR_KEY` | Secret | A curator key |
 | `HIPPO_MCP_URL` | Variable | The vault's MCP URL, from the setup page |
 | `HIPPO_CURATOR_MODEL` | Variable | Optional: `sonnet` (default) or `opus`, say |
@@ -283,21 +284,25 @@ The tool refuses to write to a vault whose format version differs from its own. 
 
 **Inviting people to the app.** Anyone approved can invite someone to the hosted app itself (**Setup → Invite someone to Hippocampus**): it lets them in without the waitlist and shares nothing. Ten open invites at a time; admins have no cap, and can turn a person's invites off.
 
-**Keys.** The setup page mints keys for the vault it shows, shows each one once, and stores only its hash. Revoking one stops it at once. A key opens only its own vault: used at another vault's address, it's refused (`403 wrong_vault`), so a mixed-up config fails loudly instead of writing to the wrong vault.
+**Connecting apps.** **Setup → Connected apps → Connect an app** asks which app, what it may do (**Remember and recall**: `read`, `remember`, `goal`; or **Only look things up**: `read`), and what it's called in the memory (its agent id, which it can be seated as right away). It shows the snippet for that app with the key in it, once (only a hash is stored), then waits for the app's first call. A key opens only its own vault: used at another vault's address, it's refused (`403 wrong_vault`), so a mixed-up config fails loudly instead of writing to the wrong vault. The list shows every connection, keys and sign-in apps alike, and disconnects any of them at once.
 
 | Kind | Scopes | For |
 | --- | --- | --- |
-| Agent key | `read`, `remember`, `goal` | Any of your agents. Each names itself (`agent`) on every call |
-| Single-agent key | `read` plus your choice of `remember` and `goal` | One agent, bound to its id; it sees confidential values it has authority over |
-| Curator key | `read`, `curate` | The agent that runs sleep. It sees secret and confidential memories in plain text while curating |
+| Single-agent key (the default) | `read`, plus `remember` and `goal` as chosen | One app, as one agent; it sees confidential values it has authority over |
+| Shared key (Advanced) | `read`, `remember`, `goal` | Several agents, each naming itself (`agent`) on every call. A name another connection already holds is refused |
+| Curator key (Nightly curation) | `read`, `curate` | The agent that runs sleep. It sees secret and confidential memories in plain text while curating |
 
 ```bash
 claude mcp add --transport http hippo-vault https://<your-instance>/mcp/<vault id> --header "Authorization: Bearer hippo_…"
 ```
 
-The setup page also gives snippets for `.mcp.json`, Cursor and VS Code, and the Claude Code plugin (§5). Each names the server after the vault's repo (`hippo-vault`, `hippo-lisbon-vault`), so one app can hold several vaults side by side. The plain `https://<your-instance>/mcp` still works: the key alone decides the vault.
+The setup page has snippets for Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, any MCP app over HTTP and scripts. Each names the server after the vault's repo (`hippo-vault`, `hippo-lisbon-vault`), so one app can hold several vaults side by side. The plain `https://<your-instance>/mcp` still works: the key alone decides the vault.
 
-**Connectors (Claude.ai, ChatGPT).** Add a custom connector with the URL `https://<your-instance>/mcp`. The app signs you in with GitHub and shows a consent page: pick the vault it connects to (one per connection), the agent id the app acts as (a party member, or a new one you can seat right away) and what it may do. Allowing curating makes the app a curator, with a curator key's view of secrets. Your account menu lists connected apps and disconnects them.
+**Agents connecting themselves.** An agent that can run commands can ask to connect: it calls `POST https://<your-instance>/connect/device`, shows you a code, and you approve it at `/dashboard/connect/` (the vault, the agent's name, what it may do). It then collects a key for that vault. `/llms.txt` on the instance tells agents how, and the plugin's `/hippocampus:connect` skill does it in Claude Code. See [AGENT-STANDARDS.md](AGENT-STANDARDS.md) for the conventions behind it.
+
+**Nightly curation.** **Setup → Nightly curation** asks where the curator runs (one of your own agents, such as Claude Code or a Grok bot, at no new charge; a cron line; or GitHub Actions, which needs Claude paid for), makes its key and shows what to run there. Give curation a bot of its own that only curates. In Claude Code, `/hippocampus:sleep-setup` does the same, step by step.
+
+**Sign-in apps (Claude.ai, ChatGPT; beta).** Add a custom connector with the URL `https://<your-instance>/mcp`. The app signs you in with GitHub and shows a consent page: pick the vault it connects to (one per connection), the agent id the app acts as (a party member, or a new one you can seat right away) and what it may do. Allowing curating makes the app a curator, with a curator key's view of secrets. Your account menu lists connected apps and disconnects them.
 
 **Reconnecting.** If the app is uninstalled or suspended, the repo is removed from the installation or deleted, or the repo is made public, the vault is disconnected and stops answering. The setup page says why. Undo it on GitHub (install again, make the repo private) and it reconnects. On GitLab, make the project private again, or connect GitLab again if you revoked the app.
 

@@ -58,6 +58,24 @@ Curating means reading every new memory in full, **secret ones in plain text**. 
 
 </Aside>
 
+### Setting it up
+
+On the hosted app, **Setup & health → Nightly curation** asks where the curator runs, makes its key, and shows what to run there:
+
+| Where | What it takes |
+| --- | --- |
+| One of your agents (recommended) | An agent you already use, such as Claude Code or a Grok bot: its curator connection (one command or tool entry), then a daily task with the sleep prompt. No new charge |
+| A script or cron line | Your own machine runs Claude Code (or another agent) every night |
+| GitHub Actions | Nothing of yours stays on, but it needs Claude paid for: a subscription token or an API key. Two `gh` commands store the key and the vault's address in the repo; then **Turn it on**. GitHub vaults only |
+
+<Aside kind="tip" title="Give sleep a bot of its own">
+
+Make curation a separate agent that only curates (its own Claude Code project or scheduled task, its own Grok bot) with its own curator key, rather than the agent you chat with every day. The curator sees your secrets; keeping it apart keeps them out of everyday conversations, and you can revoke it alone.
+
+</Aside>
+
+In Claude Code, `/hippocampus:sleep-setup` walks you through the same choices and creates the scheduled task. It never asks for the key in the chat: you paste it where it belongs.
+
 ### Run it from Claude Code
 
 Mint a curator key under **Setup → Set up curation**. Then install the plugin and connect it with that key:
@@ -89,7 +107,8 @@ No machine of your own to schedule on? **Setup → Set up curation** can add a w
 
 | Name | Kind | Value |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | Secret | An Anthropic API key; runs are billed to it |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Secret | A token from your Claude subscription (Pro or Max): run `claude setup-token`. Runs count against the subscription's usage, with no API bill |
+| `ANTHROPIC_API_KEY` | Secret | Or an Anthropic API key; runs are billed to it. Set one of the two |
 | `HIPPO_CURATOR_KEY` | Secret | A curator key |
 | `HIPPO_MCP_URL` | Variable | The vault's MCP address, from the Setup page |
 | `HIPPO_CURATOR_MODEL` | Variable | Optional: `sonnet` (the default) or `opus`, say |

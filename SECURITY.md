@@ -43,8 +43,8 @@ Keys are shown once when minted. Only their SHA-256 hash is stored, and revoking
 
 | Kind | Scopes | Notes |
 | --- | --- | --- |
-| Agent key | `read`, `remember`, `goal` | Any agent; each names itself per call. An agent can only file under its own id's inbox folder, so it can't rewrite another agent's memories, but it can claim any unused id |
-| Single-agent key | `read` plus `remember` and/or `goal` | Bound to one agent id; commits under another id are refused |
+| Shared key ("any agent") | `read`, `remember`, `goal` | Several agents; each names itself per call. An agent can only file under its own id's inbox folder, so it can't rewrite another agent's memories. The first connection to write as an id holds it (a single-agent key always holds its own), so a shared key can't write as an agent another app or key uses; revoking a connection frees its ids |
+| Single-agent key (the default when connecting an app) | `read` plus `remember` and/or `goal` | Bound to one agent id; commits under another id are refused |
 | Curator key | `read`, `curate` | Runs sleep. **It sees every new memory in full, including secret values in plain text**, so whoever holds it, and its model's provider, do too |
 
 OAuth connectors (Claude.ai, ChatGPT) get a grant for one vault, one agent id and the scopes you approve on the consent page. Approving `curate` gives the app what a curator key gives. They're listed under your account and can be disconnected there.

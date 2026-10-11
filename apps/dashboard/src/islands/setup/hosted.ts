@@ -1,7 +1,8 @@
 // Session Zero on the hosted app, its pure parts: the onboarding steps and when each unlocks, the
 // repo picker's verdicts, the campaign draft, and the curator recipes. No DOM here, so it is
 // unit-tested in hosted.test.ts.
-import type { HostedInitRequest, HostedKeyInfo, Snippet } from "@hippocampus/dashboard";
+import type { HostedConnectedApp, HostedInitRequest, HostedKeyInfo, Snippet } from "@hippocampus/dashboard";
+import { accessOf } from "@hippocampus/dashboard/connect";
 import type { IconName } from "../../lib/icons.ts";
 import type { HostedRepoView, HostedStatus } from "../../lib/types.ts";
 import { agentIdProblem, isTimeZone, type BadgeState, type Wording } from "./model.ts";
@@ -351,67 +352,14 @@ export const identityFileText = (identity: string) => `${identity.trim()}\n`;
 
 // ── Agents and the curator ─────────────────────────────────────────────────
 
-const PLUGIN_INSTALL = ["claude plugin marketplace add mehrad77/hippocampus", "claude plugin install hippocampus@hippocampus"];
-const PLUGIN_NOTE = "Inside a Claude Code session: /plugin marketplace add mehrad77/hippocampus, then /plugin install hippocampus@hippocampus.";
-
-/** The Claude Code plugin for everyday agents: the server (from two env vars) plus the memory skill. */
-export function agentPluginSnippets(mcpUrl: string): Snippet[] {
-  return [
-    {
-      label: "Claude Code plugin (optional)",
-      lang: "bash",
-      code: [...PLUGIN_INSTALL, `export HIPPO_MCP_URL=${mcpUrl}`, "export HIPPO_KEY=<your agent key>"].join("\n"),
-      note: `The plugin brings the hippocampus server (it reads HIPPO_MCP_URL and HIPPO_KEY) and the /hippocampus:memory skill. ${PLUGIN_NOTE}`,
-    },
-  ];
-}
-
-/** The words a scheduled agent gets when it can't use the plugin's skill or the server's prompt. */
-export const SLEEP_PROMPT = "Run the Hippocampus sleep procedure as the vault's curator: call sleep_start with your model name, then answer its questions until the run is done.";
-
-/** How to run the curator by hand and on a schedule. The key stays a placeholder: it's shown only once, when minted. */
-export function curatorRecipes(mcpUrl: string): { now: Snippet[]; schedule: Snippet[] } {
-  return {
-    now: [
-      { label: "Install the Claude Code plugin", lang: "bash", code: PLUGIN_INSTALL.join("\n"), note: PLUGIN_NOTE },
-      {
-        label: "Connect it with the curator key",
-        lang: "bash",
-        code: [`export HIPPO_MCP_URL=${mcpUrl}`, "export HIPPO_KEY=<your curator key>"].join("\n"),
-        note: "In the shell (or profile) Claude Code starts from. On the machine that curates, use the curator key here, not an agent key.",
-      },
-      {
-        label: "Run it, in Claude Code",
-        lang: "text",
-        code: "/hippocampus:sleep",
-        note: "Without the plugin, the server's own prompt does the same: /mcp__hippocampus__sleep (or /mcp__hippocampus-curator__sleep if you added the server as hippocampus-curator).",
-      },
-    ],
-    schedule: [
-      {
-        label: "Every night with cron (03:30)",
-        lang: "bash",
-        code: `30 3 * * * HIPPO_MCP_URL=${mcpUrl} HIPPO_KEY=<your curator key> claude -p "/hippocampus:sleep" --allowedTools "mcp__hippocampus__*"`,
-        note: "Add it with crontab -e on a machine that's on at that hour, with Claude Code signed in and the plugin installed. Keep the key out of shared files.",
-      },
-      {
-        label: "Claude Code routines, Claude Desktop or Cowork scheduled tasks, Cursor Automations",
-        lang: "text",
-        code: SLEEP_PROMPT,
-        note: "Schedule this prompt daily (or hourly if your agents write a lot), wherever the hippocampus server is connected with the curator key. With the plugin, /hippocampus:sleep works as the prompt too.",
-      },
-    ],
-  };
-}
-
 /** What the Actions curator needs in the vault repo, set with the GitHub CLI. */
 export function actionsSnippets(repo: string, mcpUrl: string): Snippet[] {
   return [
     {
       label: "Repository secrets",
       lang: "bash",
-      code: [`gh secret set HIPPO_CURATOR_KEY --repo ${repo}`, `gh secret set ANTHROPIC_API_KEY --repo ${repo}`].join("\n"),
-      note: "Each command asks for the value: the curator key, then an Anthropic API key. Or set them on GitHub: the repo → Settings → Secrets and variables → Actions.",
+      code: [`gh secret set HIPPO_CURATOR_KEY --repo ${repo}`, `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${repo}   # or ANTHROPIC_API_KEY`].join("\n"),
+      note: "Each command asks for the value: the curator key, then a token from your Claude subscription (make one with claude setup-token; no API bill) or, as ANTHROPIC_API_KEY instead, an Anthropic API key. Or set them on GitHub: the repo → Settings → Secrets and variables → Actions.",
     },
     {
       label: "Repository variables",
@@ -434,12 +382,6 @@ export const OUTCOME_TONE: Record<"done" | "expired" | "aborted", { tone: BadgeS
   done: { tone: "done", word: "Finished", help: "The run went through the inbox." },
   expired: { tone: "warn", word: "Expired", help: "The curator stopped answering and its lease ran out. What it committed stays; the rest waits in the inbox." },
   aborted: { tone: "error", word: "Aborted", help: "Stopped before the end. What it committed stays; the rest waits in the inbox." },
-};
-
-export const KEY_KIND: Record<HostedKeyInfo["kind"], { word: Wording; help: Wording }> = {
-  agent: { word: ["Agent key", "Party key"], help: ["Any agent can use it; each names itself when it connects.", "Any party member can carry it; each names itself at the door."] },
-  curator: { word: ["Curator key", "Curator's key"], help: ["Runs the nightly update (sleep). It sees secret memories while curating.", "Runs the sleep. It sees sealed memories while curating."] },
-  bound: { word: ["Single-agent key", "Bound key"], help: ["Only one agent, with the scopes you choose.", "One party member only, with the scopes you choose."] },
 };
 
 // ── Sharing ────────────────────────────────────────────────────────────────
@@ -477,4 +419,51 @@ export function inviteProblem(f: { login: string; human: string }): string | und
   const login = f.login.trim().replace(/^@/, "");
   if (login && !GITHUB_LOGIN.test(login)) return "That isn't a GitHub username.";
   return agentIdProblem(f.human) ? "Who they are in the vault: lowercase letters, digits and dashes, like game-master." : undefined;
+}
+
+// ── Connections ────────────────────────────────────────────────────────────
+
+/** One thing connected to the vault, a key or a sign-in app, in plain words with the exact details beside them. */
+export interface ConnectionRow {
+  id: string;
+  source: "key" | "app";
+  /** What the person called it (a key's label, an app's name). */
+  name: string;
+  /** Who it writes as: one agent, any agent that names itself, or the curator. */
+  actsAs: { agent: string } | { shared: true } | { curator: true };
+  /** What it may do, in words. */
+  can: string;
+  created: string;
+  lastUsed?: string;
+  /** The exact kind and scopes, for the details. */
+  kind: "single-agent key" | "shared key" | "curator key" | "sign-in app";
+  scopes: string[];
+}
+
+/** The vault's keys and the sign-in apps connected to it (apps for other vaults are left out), newest first. */
+export function connectionRows(keys: readonly HostedKeyInfo[], apps: readonly HostedConnectedApp[], vaultId: string | undefined): ConnectionRow[] {
+  const fromKeys = keys.map((k): ConnectionRow => ({
+    id: k.id,
+    source: "key",
+    name: k.label,
+    actsAs: k.kind === "curator" ? { curator: true } : k.kind === "agent" || !k.agent ? { shared: true } : { agent: k.agent },
+    can: accessOf(k.scopes).title,
+    created: k.created,
+    ...(k.lastUsed ? { lastUsed: k.lastUsed } : {}),
+    kind: k.kind === "curator" ? "curator key" : k.kind === "agent" ? "shared key" : "single-agent key",
+    scopes: k.scopes,
+  }));
+  const fromApps = apps
+    .filter((a) => !a.vault || a.vault === vaultId)
+    .map((a): ConnectionRow => ({
+      id: a.id,
+      source: "app",
+      name: a.client,
+      actsAs: a.scopes.includes("curate") && !a.agent ? { curator: true } : a.agent ? { agent: a.agent } : { shared: true },
+      can: accessOf(a.scopes).title,
+      created: a.created,
+      kind: "sign-in app",
+      scopes: a.scopes,
+    }));
+  return [...fromKeys, ...fromApps].sort((a, b) => b.created.localeCompare(a.created));
 }

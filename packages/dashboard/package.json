@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./mcp": "./src/mcp-source.ts",
+    "./connect": "./src/connect.ts",
     "./node": "./src/node.ts",
     "./demo": "./src/demo.ts",
     "./dev": "./src/dev.ts"

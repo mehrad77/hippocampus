@@ -4,6 +4,7 @@ import { hostedVault } from "./onboarding.ts";
 import { MAX_PENDING_APP_INVITES, type Invite, type MemberVault, type Registry, type Role } from "./registry.ts";
 import type { Caller } from "./routes.ts";
 import type { HostedSettings } from "./settings.ts";
+import { keyCredential } from "../oauth.ts";
 
 // Sharing on the hosted app: a vault's members and invites, invites to the app itself, and accepting
 // them. Routes and their shapes are in packages/dashboard/src/setup.ts. Who may do what:
@@ -24,6 +25,8 @@ export interface SharingDeps {
   linkHuman?: (vault: MemberVault, human: string, login: string | null, via: string, create?: { domains?: string[] }) => Promise<void>;
   /** Revoke an account's connector grants for one vault (someone leaving it). */
   revokeVaultGrants?: (accountId: number, vaultId: string) => Promise<void>;
+  /** Connections to a vault were revoked: free the agent names they held. */
+  releaseCredentials?: (vaultId: string, credentials: string[]) => Promise<void>;
 }
 
 /** GitHub's login rule. */
@@ -74,6 +77,7 @@ export function sharing(deps: SharingDeps) {
   async function unseat(vault: MemberVault, user: string): Promise<void> {
     const gone = await registry.removeMember(vault.id, user);
     if (!gone) throw new HttpError(404, "No such member.", "NOT_FOUND");
+    await deps.releaseCredentials?.(vault.id, gone.keys.map(keyCredential));
     const them = await registry.accountByUser(user);
     if (them) await deps.revokeVaultGrants?.(them.id, vault.id);
     // Their human stays, with its history; only the login that let them in goes. Best effort: the seat is gone either way.

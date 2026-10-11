@@ -1,13 +1,15 @@
 import { SLUG, presetCatalog, validTimezone, type HumanSetting, type VaultSettings } from "@hippocampus/core";
-import { HttpError, type HostedGitLab, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSetupPort, type HostedSetupStatus, type HostedVault, type SetupItem, type Snippet } from "@hippocampus/dashboard";
+import { HttpError, type HostedGitLab, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSetupPort, type HostedSetupStatus, type HostedVault, type SetupItem } from "@hippocampus/dashboard";
+import { isConnectApp, keySnippets } from "@hippocampus/dashboard/connect";
 import { GitHubStore } from "@hippocampus/store-github";
 import { PRESETS, SEEDS } from "@hippocampus/template";
 import { TOKEN_ID } from "../auth.ts";
+import { keyCredential } from "../oauth.ts";
 import { bootstrapVault } from "./bootstrap.ts";
 import { curatorActionsEnabled, setCuratorActions } from "./curator-actions.ts";
 import type { GitHubApp, InstallationRepo } from "./github-app.ts";
 import { GitLabAuthError, type GitLabAccess, type GitLabProject } from "./gitlab.ts";
-import { MAX_VAULTS_PER_USER, keyRequest, type DisconnectReason, type MemberVault, type Provider, type KeyKind, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
+import { MAX_VAULTS_PER_USER, keyRequest, type DisconnectReason, type MemberVault, type Provider, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
 import { clearPendingInstallation, pendingInstallation, type SessionKV } from "./session.ts";
 import { GITLAB_CONNECT_PATH } from "./gitlab.ts";
 import type { Caller } from "./routes.ts";
@@ -33,6 +35,10 @@ export interface HostedSetupDeps {
   destroyVault?: (vaultId: string) => Promise<void>;
   /** Revoke the account's connector grants for a removed vault. */
   revokeVaultGrants?: (accountId: number, vaultId: string) => Promise<void>;
+  /** Connections to a vault were revoked: free the agent names they held. */
+  releaseCredentials?: (vaultId: string, credentials: string[]) => Promise<void>;
+  /** Seat a new agent in the vault's party (`seat: true` on a new key). */
+  seatAgent?: (vault: MemberVault, agent: { id: string; title: string }, via: string) => Promise<void>;
 }
 
 /** Checking emptiness costs a few requests per repo, so only this many get checked. */
@@ -272,7 +278,20 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
         // The curator sees every secret: only the owner hands that out.
         if (req.kind === "curator" && vault.role !== "owner") throw new HttpError(403, "Only the vault's owner can make a curator key.", "OWNER_ONLY");
         const { token, key } = await registry.mintKey(vault.id, req, account.user);
-        const minted: HostedMintedKey = { ...keyInfo(key), token, snippets: keySnippets(publicUrl, token, key.kind, vault) };
+        // "Seat it in the party": the agent is known from its first call, with no introduction to approve.
+        const seat = (body as { seat?: unknown; title?: unknown } | undefined) ?? {};
+        if (seat.seat === true && key.agent && deps.seatAgent) {
+          const title = typeof seat.title === "string" && seat.title.trim() ? seat.title.trim().slice(0, 80) : key.agent;
+          try {
+            await deps.seatAgent(vault, { id: key.agent, title }, `@${account.login}`);
+          } catch (err) {
+            // Not seated (the id is one of the vault's humans, say): no key either.
+            await registry.revokeKey(vault.id, key.id);
+            throw new HttpError(400, `Couldn't add "${key.agent}" to the party: ${(err as Error).message}`, "INVALID");
+          }
+        }
+        const app = (body as { app?: unknown } | undefined)?.app;
+        const minted: HostedMintedKey = { ...keyInfo(key), token, snippets: keySnippets({ publicUrl, token, kind: key.kind, vault, ...(isConnectApp(app) ? { app } : {}) }) };
         return minted;
       }
       if (path === "curator-actions" && method === "POST") {
@@ -288,6 +307,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
         if (typeof id !== "string" || !TOKEN_ID.test(id)) throw new HttpError(400, "id: expected a key id (64 hex characters)", "INVALID");
         const vault = pickedVault(["owner", "member"]);
         await registry.revokeKey(vault.id, id, keyOwner(vault));
+        await deps.releaseCredentials?.(vault.id, [keyCredential(id)]);
         await changed(vault.id);
         return { ok: true };
       }
@@ -430,25 +450,3 @@ function items(s: HostedSetupStatus): SetupItem[] {
 /** The vault's own MCP address: a key used at another vault's address is refused, so a mixed-up config fails loudly. */
 export const vaultMcpUrl = (publicUrl: string, vaultId: string) => `${publicUrl}/mcp/${vaultId}`;
 
-/** The MCP server's name in a client's config: the vault's repo name, so each vault gets its own (`hippo-lisbon-vault`). */
-export function mcpServerName(vault: Pick<VaultRecord, "fullName">, kind?: KeyKind): string {
-  const repo = vault.fullName.split("/").pop() ?? "";
-  const slug = repo.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "vault";
-  return `hippo-${slug}${kind === "curator" ? "-curator" : ""}`;
-}
-
-/** How to connect with a new key. Every snippet carries the key, so they're shown once, with it. */
-export function keySnippets(publicUrl: string, token: string, kind: KeyKind, vault: Pick<VaultRecord, "id" | "fullName">): Snippet[] {
-  const mcp = vaultMcpUrl(publicUrl, vault.id);
-  const auth = `Bearer ${token}`;
-  const name = mcpServerName(vault, kind);
-  const snippets: Snippet[] = [
-    { label: "Claude Code", lang: "bash", code: `claude mcp add --transport http ${name} ${mcp} --header "Authorization: ${auth}"` },
-    { label: "Any MCP client over HTTP (.mcp.json)", lang: "json", code: JSON.stringify({ mcpServers: { [name]: { type: "http", url: mcp, headers: { Authorization: auth } } } }, null, 2) },
-    { label: "Cursor (~/.cursor/mcp.json)", lang: "json", code: JSON.stringify({ mcpServers: { [name]: { url: mcp, headers: { Authorization: auth } } } }, null, 2) },
-    { label: "VS Code (.vscode/mcp.json)", lang: "json", code: JSON.stringify({ servers: { [name]: { type: "http", url: mcp, headers: { Authorization: auth } } } }, null, 2) },
-  ];
-  if (kind !== "curator")
-    snippets.push({ label: "Claude.ai or ChatGPT (custom connector)", lang: "text", code: mcp, note: "Connectors sign in with GitHub instead of a key: add a custom connector with this URL." });
-  return snippets;
-}

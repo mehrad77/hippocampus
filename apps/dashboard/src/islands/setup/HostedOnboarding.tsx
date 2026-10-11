@@ -6,18 +6,16 @@ import { plural } from "../../lib/format.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
 import { switchVault } from "../../lib/vault.ts";
-import type { HostedInitResult, HostedMintedKey, HostedRepoView, HostedStatus, SessionInfo } from "../../lib/types.ts";
+import type { HostedInitResult, HostedRepoView, HostedStatus, SessionInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { SkeletonPanel } from "../../ui/Parts.tsx";
 import { Personalization } from "../../ui/Personalization.tsx";
-import { ChipsInput, CopyLine, Effects, ErrorCallout, Facts, Field, PresetPicker, refreshSetup, Snippets, StateBadge, ToneTag, useAction, useHash, useScrollToHash } from "./common.tsx";
-import { CuratorRecipes, mintedReveal } from "./HostedKeys.tsx";
+import { ChipsInput, CopyLine, Effects, ErrorCallout, Facts, Field, PresetPicker, refreshSetup, StateBadge, ToneTag, useAction, useHash, useScrollToHash } from "./common.tsx";
+import { ConnectDialog, CurationSetup } from "./Connections.tsx";
 import {
-  agentPluginSnippets,
   draftProblems,
   draftReady,
   forNewVault,
-  hasKey,
   HOSTED_STEPS,
   hostedDefaultStep,
   hostedIndex,
@@ -43,7 +41,6 @@ import {
 } from "./hosted.ts";
 import { domainProblem, truncateKey } from "./model.ts";
 import { StepRailView } from "./StepRail.tsx";
-import { SecretReveal } from "./SecretReveal.tsx";
 
 /** What every hosted step body gets. */
 interface HostedStepProps {
@@ -912,42 +909,34 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
 
 function AgentsStep({ status }: HostedStepProps) {
   const { t, v } = useTerms();
-  const action = useAction();
-  const [minted, setMinted] = useState<HostedMintedKey>();
-  const agentKeys = (status.keys ?? []).filter((k) => k.kind === "agent" || k.kind === "bound").length;
-  const mint = async () => {
-    const res = await action.run(() => postJson<HostedMintedKey>("/setup/keys", { kind: "agent", label: "Agents" }));
-    if (!res) return;
-    setMinted(res);
-    void refreshSetup();
-  };
+  const [connecting, setConnecting] = useState(false);
+  const connected = (status.keys ?? []).filter((k) => k.kind === "agent" || k.kind === "bound").length;
   return (
     <div className="stack">
       <div className="grid grid--2">
         <div className="sz-card">
           <div className="sz-card__head">
-            <Icon name="key" />
-            <strong>Agents with a key</strong>
+            <Icon name="link" />
+            <strong>Connect an app</strong>
           </div>
-          <p className="small">Claude Code, Cursor, VS Code and any MCP client over HTTP. One agent key works for all of them: each agent names itself when it connects.</p>
+          <p className="small">Claude Code, Claude Desktop, Cursor, VS Code, Windsurf or any MCP app. Pick the app and what it may do; you get exactly what to paste into it.</p>
           <div className="row">
-            <button type="button" className="btn btn--primary" onClick={() => void mint()} disabled={action.busy}>
-              <Icon name="key" /> {action.busy ? v("Creating…", "Minting…") : v("Create an agent key", "Mint an agent key")}
+            <button type="button" className="btn btn--primary" onClick={() => setConnecting(true)} disabled={status.vault?.status !== "ready"}>
+              <Icon name="plus" /> Connect an app
             </button>
           </div>
-          {agentKeys > 0 && <p className="small muted">You have {plural(agentKeys, "agent key")}. Manage them in Setup & health.</p>}
-          {action.error !== undefined && <ErrorCallout error={action.error} />}
+          {connected > 0 && <p className="small muted">{plural(connected, "app")} connected. See them in Setup & health.</p>}
         </div>
         <div className="sz-card">
           <div className="sz-card__head">
             <Icon name="cloud" />
-            <strong>Claude.ai or ChatGPT</strong>
+            <strong>Claude.ai or ChatGPT (beta)</strong>
           </div>
-          <p className="small">Add a custom connector with this URL. It signs in with GitHub (as you), so no key is needed.</p>
+          <p className="small">These sign in with your account instead of a key: add a custom connector with this address. Sign-in is still in beta; if it fails, connect another app with a key.</p>
           <CopyLine value={status.mcpUrl} label="MCP URL" />
-          <p className="small muted">Connected apps show up in Setup & health, where you can revoke them.</p>
         </div>
       </div>
+      {status.vault && <ConnectDialog open={connecting} onClose={() => setConnecting(false)} status={status} />}
       <h3 className="sz-subhead">What happens next</h3>
       <ol className="sz-howto">
         <li>
@@ -959,7 +948,6 @@ function AgentsStep({ status }: HostedStepProps) {
         </li>
         <li>{v("Until you approve it, what it saves counts as unverified.", "Until you seat it, what it remembers counts as rumor.")}</li>
       </ol>
-      <SecretReveal reveal={minted && mintedReveal(minted, v, <Snippets snippets={agentPluginSnippets(status.mcpUrl)} />)} onClose={() => setMinted(undefined)} />
     </div>
   );
 }
@@ -968,42 +956,19 @@ function AgentsStep({ status }: HostedStepProps) {
 
 function CuratorStep({ status }: HostedStepProps) {
   const { t, v } = useTerms();
-  const action = useAction();
-  const [minted, setMinted] = useState<HostedMintedKey>();
-  const has = hasKey(status.keys, ["curator"]);
-  const mint = async () => {
-    const res = await action.run(() => postJson<HostedMintedKey>("/setup/keys", { kind: "curator", label: "Curator" }));
-    if (!res) return;
-    setMinted(res);
-    void refreshSetup();
-  };
   return (
     <div className="stack">
       <p>
         {v(
           <>
-            Agents' notes land in the {t("satchel").toLowerCase()} first. Curation (the nightly update) reads them, settles each fact by the rules (your word first, then the responsible agent, then agreement, then the newest), updates records, goals and the timeline, and empties the inbox. Here, one of your own agents does it, through the vault's MCP tools, with a curator key.
+            Agents' notes land in the {t("satchel").toLowerCase()} first. Curation (the nightly update) reads them, settles each fact by the rules (your word first, then the responsible agent, then agreement, then the newest), updates records, goals and the timeline, and empties the inbox. One of your own agents does it, through this vault's MCP tools, with a curator key.
           </>,
           <>
-            The party's notes land in the satchel first. The sleep reads them, settles each fact by precedence (your word, then lane authority, then corroboration, then recency), updates the codex, the quests and the chronicle, and empties the satchel. Here, one of your own agents curates, through the vault's MCP tools, with a curator key.
+            The party's notes land in the satchel first. The sleep reads them, settles each fact by precedence (your word, then lane authority, then corroboration, then recency), updates the codex, the quests and the chronicle, and empties the satchel. One of your own agents curates, through the vault's MCP tools, with a curator key.
           </>,
         )}
       </p>
-      <div className="callout callout--warn" role="note">
-        <Icon name="lock" />
-        <div>
-          <strong>The curator sees secret memories.</strong> While curating it reads every note in full, secret values included, before encrypting them with your public key. Give the curator key only to an agent (and an AI provider) you trust with them.
-        </div>
-      </div>
-      <div className="row">
-        <button type="button" className="btn btn--primary" onClick={() => void mint()} disabled={action.busy}>
-          <Icon name="key" /> {action.busy ? v("Creating…", "Minting…") : has ? v("Create another curator key", "Mint another curator key") : v("Create a curator key", "Mint a curator key")}
-        </button>
-        {has && <ToneTag tone="done" word="You have one" title="A curator key exists" />}
-      </div>
-      {action.error !== undefined && <ErrorCallout error={action.error} />}
-      <CuratorRecipes status={status} />
-      <SecretReveal reveal={minted && mintedReveal(minted, v, <p className="small">Next: use it where the curator runs (below), then close this.</p>)} onClose={() => setMinted(undefined)} />
+      <CurationSetup status={status} bare />
     </div>
   );
 }

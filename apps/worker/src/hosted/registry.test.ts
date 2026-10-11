@@ -380,7 +380,7 @@ describe("sharing", () => {
     expect((await registry.vaultsOf(gm))[0]?.role).toBe("viewer");
     expect((await err(registry.setMemberRole(vault.id, player.user, "viewer"))).status).toBe(404);
     expect(await registry.removeMember(vault.id, player.user)).toBeUndefined();
-    expect(await registry.removeMember(vault.id, gm.user)).toEqual({ human: "game-master" });
+    expect(await registry.removeMember(vault.id, gm.user)).toEqual({ human: "game-master", keys: [theirs.id] });
     expect(await registry.keyByHash(theirs.id)).toBeUndefined();
     expect(await registry.keyByHash(mine.id)).toBeDefined();
     expect(await registry.vaultsOf(gm)).toEqual([]);
