@@ -42,6 +42,8 @@ function GoalBoard({ session }: { session: SessionInfo }) {
 
   const vocab: Vocab = new Map((o.schema?.types ?? []).map((ty) => [ty.name, ty.statuses]));
   const editable = session.capabilities.goal ?? session.capabilities.quest;
+  // Who can own a goal: the humans, and the agents in the party. Only the owner, or an agent with authority over it, can mark it done.
+  const owners = [...(o.humans ?? [{ id: o.human, domains: [] }]).map((h) => ({ id: h.id, label: h.id })), ...o.party.map((m) => ({ id: m.slug, label: m.title }))];
   const goals = goalsOf(o);
   const { board, dormant, finished } = groupGoals(goals);
   const blocked = board.filter((g) => (g.state ?? g.status) === "blocked").length;
@@ -98,7 +100,7 @@ function GoalBoard({ session }: { session: SessionInfo }) {
             {board.length ? (
               <ul className="board" aria-label={v("Active and blocked goals", "Active and blocked quests")}>
                 {board.map((g) => (
-                  <GoalNotice key={g.slug} g={g} today={o.today} editable={editable} statuses={vocab.get(g.type)} />
+                  <GoalNotice key={g.slug} g={g} today={o.today} editable={editable} statuses={vocab.get(g.type)} owners={owners} />
                 ))}
               </ul>
             ) : (
@@ -120,7 +122,7 @@ function GoalBoard({ session }: { session: SessionInfo }) {
               <p className="muted small play-note">{v("Paused for now. Set one back to Active to move it to the goals in progress.", "Set aside, not forgotten. Set one back to active to pin it on the board again.")}</p>
               <ul className="board board--quiet" aria-label={v("Goals on hold", "Dormant quests")}>
                 {dormant.map((g) => (
-                  <GoalNotice key={g.slug} g={g} today={o.today} editable={editable} statuses={vocab.get(g.type)} />
+                  <GoalNotice key={g.slug} g={g} today={o.today} editable={editable} statuses={vocab.get(g.type)} owners={owners} />
                 ))}
               </ul>
             </section>
@@ -137,7 +139,7 @@ const refOf = (g: GoalCard, statuses?: Record<string, string>): GoalRef => ({ sl
 
 // ── One notice on the board ────────────────────────────────────────────────
 
-function GoalNotice({ g, today, editable, statuses }: { g: GoalCard; today: string; editable: boolean; statuses?: Record<string, string> }) {
+function GoalNotice({ g, today, editable, statuses, owners }: { g: GoalCard; today: string; editable: boolean; statuses?: Record<string, string>; owners: { id: string; label: string }[] }) {
   const { v } = useTerms();
   const done = g.objectives.filter((x) => x.done).length;
   const state = g.state ?? stateOf(g.status, statuses);
@@ -160,7 +162,26 @@ function GoalNotice({ g, today, editable, statuses }: { g: GoalCard; today: stri
             <span className="muted">in</span> <EntityLink entity={g.campaign} />
           </span>
         )}
-        {g.owner ? (
+        {editable && owners.length ? (
+          <label className="row">
+            <span className="muted">owner</span>
+            <select
+              className="select"
+              aria-label={`Owner of ${g.title}`}
+              value={g.owner?.slug ?? ""}
+              title="Only the owner, or an agent with authority over this goal, can mark it done, blocked or failed."
+              onChange={(e) => e.target.value && void updateGoal({ slug: g.slug, title: g.title, statuses }, { owner: e.target.value }, today)}
+            >
+              {!g.owner && <option value="">no owner: pick one</option>}
+              {g.owner && !owners.some((x) => x.id === g.owner!.slug) && <option value={g.owner.slug}>{g.owner.title}</option>}
+              {owners.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {x.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : g.owner ? (
           <span>
             <span className="muted">owner</span> <EntityLink entity={g.owner} />
           </span>

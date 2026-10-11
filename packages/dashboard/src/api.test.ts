@@ -148,6 +148,12 @@ describe("dashboard API: actions", () => {
     expect(parseDoc(raw).data).toMatchObject({ progress: { done: 3, total: 6 }, updated_by: "player" });
   });
 
+  it("goal: the human sets an owner by slug, the one the dashboard's picker sends", async () => {
+    const { post, store } = harness();
+    expect(await post("actions/goal", { goal: "residence-permit", owner: "home-finder" })).toMatchObject({ status: 200 });
+    expect(parseDoc((await store.read("goals/residence-permit.md"))!).data).toMatchObject({ owner: "[[home-finder]]" });
+  });
+
   it("goal: progress, due date, counterparty and repeat, as the human", async () => {
     const { post, store } = harness();
     const r = await post("actions/goal", { goal: "residence-permit", progress: { tick: 1 }, due: "2026-12-01", counterparty: "[[migration-agency]]", repeat: { every: "1y" } });

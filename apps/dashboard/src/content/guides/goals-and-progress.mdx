@@ -84,7 +84,7 @@ Objectives are an ordinary markdown checklist inside the note's `objectives` reg
 - **In Obsidian**: click the checkbox.
 - **On the Goals page** of the dashboard: tick it, or untick it if it was marked done by mistake.
 - **An agent**: `update_goal` with `complete`, `reopen` or `add`.
-- **The curator**: when a memory reports progress, often a `task`, the sleep marks objectives done or adds new next steps. A commitment someone makes ("I'll send the lease by Friday") can become a goal of its own.
+- **The curator**: when a memory reports progress, often a `task`, the sleep marks objectives done or adds new next steps. A commitment someone makes ("I'll send the lease by Friday") can become a goal of its own. When the sleep reads that an agent finished, blocked or failed a goal, it only applies that if the agent **owns** the goal or has **authority** over its domain; otherwise it lists the change in the morning review under "Goal status changes not applied". A promise with no named owner goes to the agent that reported it, when that agent is in your party. To fix a goal that has no owner, pick one on the Goals page, or give the agent authority on the Agents page.
 
 Matching is forgiving. Names are compared without case, accents or punctuation, and a partial name works too, so `"insurance"` finds "Health insurance". Completing an objective that doesn't exist adds it, already ticked. `add` skips objectives that already exist, and `reopen` ignores names it can't find.
 

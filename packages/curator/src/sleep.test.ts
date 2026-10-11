@@ -647,6 +647,21 @@ describe("review fixes: one episode never spoils the run, and private words stay
     expect(report.consolidated[3]!.notes).toEqual(["residence-permit: status change not applied: campus-agent neither owns it nor has authority over it; set an owner on the goal or grant campus-agent authority"]);
   });
 
+  it("a promise that names no owner belongs to the party member who reported it, and to nobody when an outsider did", async () => {
+    const store = fixtureStore({
+      "inbox/home-finder/2026-09-27T100000-a.md": memory("home-finder", "2026-09-27T10:00:00Z", "task", "Will book the flat viewing."),
+      "inbox/stranger-agent/2026-09-27T110000-b.md": memory("stranger-agent", "2026-09-27T11:00:00Z", "task", "Will water the plants."),
+    });
+    const llm = new ScriptedLLM()
+      .push("mentions", { entities: [] }, { entities: [] })
+      .push("claims", { ...none, commitments: [{ title: "Book the flat viewing" }] }, { ...none, commitments: [{ title: "Water the plants" }] })
+      .respond("summary", () => ({ summary: "A note." }));
+    const report = await sleep({ store, llm, now });
+    expect(report.failed).toEqual([]);
+    expect(await read(store, "goals/book-the-flat-viewing.md")).toMatchObject({ owner: "[[home-finder]]" });
+    expect((await read(store, "goals/water-the-plants.md")).owner).toBeUndefined();
+  });
+
   it("a new note whose identity key belongs to an unrelated type is kept, with a merge proposal (finding 9)", async () => {
     const config = (await fixtureStore().read("_hippo/config.yaml"))!
       .replace("character: { folder: characters, description: People }", "character: { folder: characters, description: People, fields: { email: { identity_key: true } } }")
