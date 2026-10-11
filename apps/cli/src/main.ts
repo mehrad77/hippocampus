@@ -299,7 +299,7 @@ program
   .argument("[text...]", "the memory; a kind that takes only data needs none")
   .option("-a, --agent <id>", "agent id")
   .option("-k, --kind <kind>", "one of the vault's kinds (observation, fact, decision, task, question, or one a preset adds)", "fact")
-  .option("--data <key=value>", "a data field of the kind, e.g. --data with=[[ana]]; repeat it, and repeat a key for a list", repeatable)
+  .option("--data <key=value>", "a data field of the kind, e.g. --data with=[[migration-agency]]; repeat it, and repeat a key for a list", repeatable)
   .option("--secret", "contains secret values")
   .option("--confidential", "keep it out of search, summaries and the chronicle")
   .action(async (words: string[], opts: { agent?: string; kind: string; data?: string[]; secret?: boolean; confidential?: boolean }) => {
