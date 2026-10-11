@@ -14,6 +14,8 @@ import { sharing } from "./sharing.ts";
 import { LOGIN_PATH, LOGOUT_PATH, createSessions, type SessionKV, type Sessions } from "./session.ts";
 import { apiUrlOf, type HostedSettings } from "./settings.ts";
 import { WEBHOOK_PATH, handleWebhook } from "./webhooks.ts";
+import { DEVICE_PATH, DEVICE_TOKEN_PATH, DeviceRequests } from "./device.ts";
+import { deviceRoutes } from "./device-routes.ts";
 
 // The hosted app's own routes: accounts, onboarding, admin, account settings and GitHub's webhook.
 // Everything else (the dashboard pages, a ready vault's API, MCP) falls through to the caller.
@@ -25,6 +27,10 @@ export interface HostedHooks extends AccountHooks {
   onVaultChanged?: (vaultId: string) => void | Promise<void>;
   /** Link (or unlink, `null`) a GitHub login to one of a vault's humans, in its config (someone joining or leaving). */
   linkHuman?: (vault: MemberVault, human: string, login: string | null, via: string, create?: { domains?: string[] }) => Promise<void>;
+  /** Seat an agent in a vault's party as `via` (a connection made for a new agent). */
+  seatAgent?: (vault: MemberVault, agent: { id: string; title: string }, via: string) => Promise<void>;
+  /** Connections to a vault were revoked (`key:<hash>`, `oauth:<grant>`): free the agent names they held. */
+  releaseCredentials?: (vaultId: string, credentials: string[]) => Promise<void>;
 }
 
 export interface HostedDeps {
@@ -79,7 +85,7 @@ export interface HostedRoutes {
 }
 
 /** Sections of `/dashboard/api/` answered here whatever the vault's state. */
-const OWN = new Set(["setup", "admin", "account", "vaults", "invites"]);
+const OWN = new Set(["setup", "admin", "account", "vaults", "invites", "connect"]);
 
 export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
   const { settings, kv } = deps;
@@ -91,6 +97,8 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
   const connect = gitlab ? gitlabConnect({ publicUrl: settings.publicUrl, kv, access: gitlab, sessions }) : undefined;
   const hooks = deps.hooks ?? {};
   const admin = adminRoutes({ registry, admins: settings.admins, onVaultChanged: hooks.onVaultChanged });
+
+  const device = deviceRoutes({ db: new DeviceRequests(deps.registry, now), registry, settings, seatAgent: hooks.seatAgent });
 
   const memo = new WeakMap<Request, Promise<Caller | undefined>>();
   const who = (request: Request): Promise<Caller | undefined> => {
@@ -181,7 +189,7 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
       const body = method === "POST" ? await readJson(request) : undefined;
       const sub = path.slice(section.length).replace(/^\//, "");
       if (section === "account") return done(await accountRoute(request, method, sub, body, caller));
-      const share = () => sharing({ caller, registry, settings, now, linkHuman: hooks.linkHuman, revokeVaultGrants: hooks.revokeVaultGrants });
+      const share = () => sharing({ caller, registry, settings, now, linkHuman: hooks.linkHuman, revokeVaultGrants: hooks.revokeVaultGrants, releaseCredentials: hooks.releaseCredentials });
       if (section === "vaults") {
         if (sub !== "") return done(json(200, (await share().vaults(method, sub, body)) ?? { ok: true }));
         if (method !== "GET") throw new HttpError(404, `No such route: ${method} ${path}`, "NOT_FOUND");
@@ -189,10 +197,11 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
         return done(json(200, found));
       }
       if (section === "invites") return done(json(200, (await share().invites(method, sub, body)) ?? { ok: true }));
+      if (section === "connect") return done(json(200, await device.dashboard(method, sub, body, url, caller)));
       let result: unknown;
       if (section === "admin") result = await admin(method, sub, body, url, caller.account);
       else {
-        const port = hostedSetup({ caller, settings, registry, app, gitlab, kv, now, onVaultChanged: hooks.onVaultChanged, destroyVault: hooks.destroyVault, revokeVaultGrants: hooks.revokeVaultGrants });
+        const port = hostedSetup({ caller, settings, registry, app, gitlab, kv, now, onVaultChanged: hooks.onVaultChanged, destroyVault: hooks.destroyVault, revokeVaultGrants: hooks.revokeVaultGrants, releaseCredentials: hooks.releaseCredentials, seatAgent: hooks.seatAgent });
         result = (sub === "" || sub === "status") && method === "GET" ? await port.status(url) : await port.handle(method, sub, body, url);
       }
       return done(json(200, result ?? { ok: true }));
@@ -223,6 +232,15 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
       const res = await handleWebhook(request, { secret: settings.webhookSecret, registry, onVaultChanged: hooks.onVaultChanged }).catch((err: unknown) => errorResponse(err, quiet));
       const event = (request.headers.get("x-github-event") ?? "").replace(/[^\w.-]/g, "").slice(0, 40);
       await logEvent({ route: `POST webhook ${event}`.trim(), status: res.status, ms: Date.now() - started }, deps.log);
+      return res;
+    }
+    if (pathname === DEVICE_PATH || pathname === DEVICE_TOKEN_PATH) {
+      const started = Date.now();
+      const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+      // Starting is open to anyone, so it's limited like sign-ins; polling every few seconds isn't.
+      if (pathname === DEVICE_PATH && !(await rateLimit(deps.limits?.signIn, `device:${ip}`))) return json(429, { error: "slow_down", error_description: "Too many requests; try again in a minute." });
+      const res = await (pathname === DEVICE_PATH ? device.start(request) : device.token(request)).catch((err: unknown) => errorResponse(err, quiet));
+      await logEvent({ route: `${method} ${pathname.slice(1)}`, status: res.status, ms: Date.now() - started }, deps.log);
       return res;
     }
     if (pathname === HOSTED_API || pathname.startsWith(`${HOSTED_API}/`)) return api(request, url);

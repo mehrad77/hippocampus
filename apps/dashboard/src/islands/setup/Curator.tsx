@@ -7,7 +7,7 @@ import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
 import type { CuratorStatus } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
-import { Empty, Panel, RelTime, SkeletonPanel } from "../../ui/Parts.tsx";
+import { Empty, RelTime, SkeletonPanel } from "../../ui/Parts.tsx";
 import { ConfirmDialog, ErrorCallout, Facts, ToneTag, useAction } from "./common.tsx";
 import { OUTCOME_TONE } from "./hosted.ts";
 
@@ -16,15 +16,15 @@ type Past = CuratorStatus["history"][number];
 
 const newestFirst = (runs: readonly Past[]) => [...runs].sort((a, b) => b.ended.localeCompare(a.ended));
 
-/** The agent-run sleep: the open run (with abort) and the runs before it. No memory content, only counts. */
-export function CuratorPanel({ commits }: { commits?: { url: string; host: string } }) {
+/** The agent-run sleep's runs: the open one (with abort) and the ones before it. No memory content, only counts. */
+export function CuratorRuns({ commits }: { commits?: { url: string; host: string } }) {
   const { v } = useTerms();
   const s = useResource<CuratorStatus>("/curator", { poll: 30_000 });
   const [aborting, setAborting] = useState<Run>();
   const abort = useAction();
 
   return (
-    <Panel title={v("Curator", "The curator")} icon="moonStars" id="sz-curator" aside={<a className="small" href="#curator">How to set one up</a>}>
+    <>
       {s.error && !s.data ? (
         <ErrorCallout error={s.error} onRetry={() => void s.reload()} />
       ) : !s.data ? (
@@ -62,7 +62,7 @@ export function CuratorPanel({ commits }: { commits?: { url: string; host: strin
         )}
         {abort.error !== undefined && <ErrorCallout error={abort.error} />}
       </ConfirmDialog>
-    </Panel>
+    </>
   );
 }
 
@@ -108,7 +108,7 @@ function History({ runs, commits }: { runs: Past[]; commits?: { url: string; hos
   if (!runs.length)
     return (
       <Empty icon="moonStars" title={v("No runs yet", "The curator hasn't slept yet")}>
-        <a href="#curator">Set up a curator</a> to turn the inbox into records.
+        Set up a curator (below) to turn the inbox into records.
       </Empty>
     );
   return (
@@ -192,7 +192,7 @@ export function CuratorLine() {
           v("No curator has run yet.", "No curator has slept yet.")
         )}
       </span>
-      <a href={href.page("setup", "#sz-curator")}>Curator →</a>
+      <a href={href.page("setup", "#curation")}>Curator →</a>
     </p>
   );
 }

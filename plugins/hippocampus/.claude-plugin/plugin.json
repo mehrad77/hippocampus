@@ -1,7 +1,7 @@
 {
   "name": "hippocampus",
   "version": "0.1.0",
-  "description": "Shared, curated memory for your AI agents. Connects Claude Code to your Hippocampus vault (set HIPPO_MCP_URL and HIPPO_KEY), with skills for using memory and for running sleep as the curator.",
+  "description": "Shared, curated memory for your AI agents. Connects Claude Code to your Hippocampus vault (set HIPPO_MCP_URL and HIPPO_KEY), with skills for using memory, running sleep as the curator, and setting up nightly sleep.",
   "author": { "name": "Hippocampus", "url": "https://github.com/mehrad77/hippocampus" },
   "homepage": "https://github.com/mehrad77/hippocampus",
   "repository": "https://github.com/mehrad77/hippocampus",

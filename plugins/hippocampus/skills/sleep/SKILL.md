@@ -7,7 +7,7 @@ description: Run Hippocampus sleep as the vault's curator, turning new memories 
 
 You are the curator tonight: you turn the inbox's memories into confirmed notes by answering the server's questions. The server does the bookkeeping, checks every answer and refuses anything that breaks the vault's rules. You make the judgment calls.
 
-The connection needs a **curator key** (the `curate` scope). If there are no `sleep_*` tools, stop and tell the person to connect Hippocampus with their curator key.
+The connection needs a **curator key** (the `curate` scope). If there are no `sleep_*` tools, stop and offer the `sleep-setup` skill (`/hippocampus:sleep-setup`), which connects a curator and schedules it.
 
 ## Steps
 

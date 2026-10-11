@@ -860,15 +860,16 @@ export class Registry {
     if (!row) throw new HttpError(404, "No such member.", "NOT_FOUND");
   }
 
-  /** Take someone out of a vault, with the keys they made for it. Returns their membership, for unlinking their human. */
-  async removeMember(vaultId: string, userId: string): Promise<{ human?: string } | undefined> {
+  /** Take someone out of a vault, with the keys they made for it. Returns their human and the keys that went, for cleaning up after them. */
+  async removeMember(vaultId: string, userId: string): Promise<{ human?: string; keys: string[] } | undefined> {
     const row = await this.one<{ human: string | null; role: Role }>("SELECT human, role FROM vault_members WHERE vault_id = ? AND user_id = ?", [vaultId, userId]);
     if (!row || row.role === "owner") return undefined;
+    const keys = (await this.db.all<{ hash: string }>("SELECT hash FROM keys WHERE vault_id = ? AND created_by = ?", [vaultId, userId])).map((k) => k.hash);
     await this.db.batch([
       { sql: "DELETE FROM keys WHERE vault_id = ? AND created_by = ?", params: [vaultId, userId] },
       { sql: "DELETE FROM vault_members WHERE vault_id = ? AND user_id = ?", params: [vaultId, userId] },
     ]);
-    return row.human ? { human: row.human } : {};
+    return { ...(row.human ? { human: row.human } : {}), keys };
   }
 
   // ── Invites ────────────────────────────────────────────────────────────────

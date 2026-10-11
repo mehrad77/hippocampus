@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { VAULT_HEADER, type AdminReferrals, type HostedInvites, type HostedMembers, type HostedNewInvite, type HostedVault, type HostedVaults } from "@hippocampus/dashboard";
+import { VAULT_HEADER, type AdminReferrals, type HostedDeviceRequest, type HostedInvites, type HostedMembers, type HostedNewInvite, type HostedVault, type HostedVaults } from "@hippocampus/dashboard";
 import { configProblem } from "./app.ts";
 import { ORIGIN } from "./hosted/testing.ts";
 import { GM, PLAYER, SCOUT, hostedApp } from "./testing/hosted-app.ts";
@@ -106,11 +106,11 @@ describe("MCP with vault keys", () => {
     const grantFor = async (body: unknown) => ((await (await h.callMcp(await h.mintKey(vault, body))).json()) as { vault: string; grant: unknown });
     expect(await grantFor({ kind: "bound", agent: "home-finder", scopes: ["read", "remember"] })).toEqual({
       vault,
-      grant: { agent: "home-finder", scopes: ["read", "remember"], via: "key", keyKind: "bound" },
+      grant: { agent: "home-finder", scopes: ["read", "remember"], via: "key", keyKind: "bound", credential: expect.stringMatching(/^key:[0-9a-f]{64}$/) },
       body: expect.stringContaining("tools/list"),
     });
-    expect((await grantFor({ kind: "agent" })).grant).toEqual({ scopes: ["read", "remember", "goal"], via: "key", keyKind: "agent" });
-    expect((await grantFor({ kind: "curator" })).grant).toEqual({ scopes: ["read", "curate"], via: "key", keyKind: "curator" });
+    expect((await grantFor({ kind: "agent" })).grant).toEqual({ scopes: ["read", "remember", "goal"], via: "key", keyKind: "agent", credential: expect.stringMatching(/^key:/) });
+    expect((await grantFor({ kind: "curator" })).grant).toEqual({ scopes: ["read", "curate"], via: "key", keyKind: "curator", credential: expect.stringMatching(/^key:/) });
     // The Durable Object gets the grant, never the key itself.
     expect(h.vaults.to(vault, "mcp").every((c) => c.authorization === null)).toBe(true);
   });
@@ -400,5 +400,119 @@ describe("sharing a vault", () => {
     expect((await h.post(gm, "admin/referrals/invites", { user: byLogin.get("job-scout"), allow: false })).status).toBe(200);
     expect(await (await h.post(scout, "invites", {})).json()).toMatchObject({ code: "INVITES_OFF" });
     expect((await h.api(player.visit, "admin/referrals")).status).toBe(403);
+  });
+});
+
+describe("connecting an app", () => {
+  it("seats a new agent with its key, and frees the agent's name when the key is revoked", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const res = await h.post(player.visit, "setup/keys", { kind: "bound", agent: "claude-code", label: "Claude Code", seat: true, title: "Claude Code", app: "cursor" });
+    const minted = (await res.json()) as { id: string; snippets: { label: string }[] };
+    expect(res.status).toBe(200);
+    expect(minted.snippets[0]!.label).toMatch(/^Cursor/);
+    expect(h.vaults.to(player.vault, "addParty")).toEqual([expect.objectContaining({ input: expect.objectContaining({ id: "claude-code", title: "Claude Code" }), via: "@player" })]);
+    // Already in the party: not seated twice.
+    await h.post(player.visit, "setup/keys", { kind: "bound", agent: "claude-code", seat: true });
+    expect(h.vaults.to(player.vault, "addParty")).toHaveLength(1);
+
+    expect((await h.post(player.visit, "setup/keys/revoke", { id: minted.id })).status).toBe(200);
+    expect(h.vaults.to(player.vault, "releaseClaims")).toEqual([expect.objectContaining({ credentials: [`key:${minted.id}`] })]);
+
+    // A key for the vault's human can't be seated, so it isn't kept either.
+    const human = await h.post(player.visit, "setup/keys", { kind: "bound", agent: "player", seat: true });
+    expect(human.status).toBe(400);
+    expect((await h.registry.keys(player.vault)).map((k) => k.agent)).toEqual(["claude-code"]);
+  });
+});
+
+describe("an agent connecting on a person's behalf (device sign-in)", () => {
+  const start = (h: Awaited<ReturnType<typeof hostedApp>>, body: Record<string, string>) =>
+    h.send(new Request(`${ORIGIN}/connect/device`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(body) }));
+  const poll = (h: Awaited<ReturnType<typeof hostedApp>>, device_code: string) =>
+    h.send(new Request(`${ORIGIN}/connect/token`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ grant_type: "urn:ietf:params:oauth:grant-type:device_code", device_code }) }));
+
+  it("gives the agent a key for the vault and agent the person approves, once", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const res = await start(h, { client_name: "Claude Code on the laptop", agent: "claude-code" });
+    const started = (await res.json()) as { device_code: string; user_code: string; verification_uri: string; verification_uri_complete: string; expires_in: number; interval: number };
+    expect(started).toMatchObject({ verification_uri: `${ORIGIN}/dashboard/connect/`, expires_in: 600, interval: 5 });
+    expect(started.user_code).toMatch(/^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/);
+    expect(started.verification_uri_complete).toBe(`${ORIGIN}/dashboard/connect/?code=${started.user_code}`);
+
+    expect(await (await poll(h, started.device_code)).json()).toMatchObject({ error: "authorization_pending" });
+    expect(await (await poll(h, started.device_code)).json()).toMatchObject({ error: "slow_down" });
+
+    const seen = (await (await h.api(player.visit, `connect?code=${started.user_code.toLowerCase()}`)).json()) as HostedDeviceRequest;
+    expect(seen).toMatchObject({ client: "Claude Code on the laptop", agent: "claude-code", vaults: [expect.objectContaining({ id: player.vault })] });
+    // Approving is a write: our own origin only.
+    expect((await h.post(player.visit, "connect/approve", { code: started.user_code, vault: player.vault, access: "remember", seat: true }, {})).status).toBe(403);
+    expect((await h.post(player.visit, "connect/approve", { code: started.user_code, vault: player.vault, access: "remember", seat: true })).status).toBe(200);
+    expect(h.vaults.to(player.vault, "addParty")).toEqual([expect.objectContaining({ input: expect.objectContaining({ id: "claude-code" }) })]);
+
+    const got = (await (await poll(h, started.device_code)).json()) as { access_token: string; token_type: string; mcp_url: string; agent: string; server_name: string; claude_code: string };
+    expect(got).toMatchObject({ token_type: "Bearer", mcp_url: `${ORIGIN}/mcp/${player.vault}`, agent: "claude-code", server_name: "hippo-vault" });
+    expect(got.claude_code).toContain(got.access_token);
+    const key = (await h.registry.keyForToken(got.access_token))!;
+    expect(key).toMatchObject({ kind: "bound", agent: "claude-code", scopes: ["read", "remember", "goal"], vaultId: player.vault });
+    expect((await h.callMcp(got.access_token, undefined, {}, `/mcp/${player.vault}`)).status).toBe(200);
+    // Collected once: the device code is spent.
+    expect(await (await poll(h, started.device_code)).json()).toMatchObject({ error: "expired_token" });
+  });
+
+  it("lets the person refuse, keeps curators for owners, and refuses unknown grants and codes", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const one = (await (await start(h, { client_name: "Somebody's bot" })).json()) as { device_code: string; user_code: string };
+    expect((await h.post(player.visit, "connect/deny", { code: one.user_code })).status).toBe(200);
+    expect(await (await poll(h, one.device_code)).json()).toMatchObject({ error: "access_denied" });
+    expect((await h.api(player.visit, `connect?code=${one.user_code}`)).status).toBe(410);
+
+    const curator = (await (await start(h, { client_name: "Nightly curator", access: "curate" })).json()) as { device_code: string; user_code: string };
+    await h.post(player.visit, "connect/approve", { code: curator.user_code, vault: player.vault, access: "curate" });
+    const got = (await (await poll(h, curator.device_code)).json()) as { access_token: string; server_name: string };
+    expect((await h.registry.keyForToken(got.access_token))?.kind).toBe("curator");
+    expect(got.server_name).toBe("hippo-vault-curator");
+
+    expect(await (await h.send(new Request(`${ORIGIN}/connect/token`, { method: "POST", body: new URLSearchParams({ grant_type: "password", device_code: "x" }) }))).json()).toMatchObject({ error: "unsupported_grant_type" });
+    expect(await (await poll(h, "hdev_made-up")).json()).toMatchObject({ error: "expired_token" });
+    expect((await start(h, {})).status).toBe(400);
+  });
+});
+
+describe("what agents can read before signing in", () => {
+  it("serves llms.txt, an MCP server card and an AI catalog, open to any origin and naming no vault", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const get = (path: string) => h.send(new Request(`${ORIGIN}${path}`));
+
+    const llms = await get("/llms.txt");
+    expect(llms.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
+    const text = await llms.text();
+    expect(text).toMatch(/^# Hippocampus\n\n> /);
+    expect(text).toContain(`POST ${ORIGIN}/connect/device`);
+    expect(text).toContain("Never ask the person to paste a key into a chat");
+
+    const card = await get("/mcp/server-card");
+    expect(card.status).toBe(200);
+    expect(card.headers.get("content-type")).toBe("application/mcp-server-card+json");
+    expect(card.headers.get("access-control-allow-origin")).toBe("*");
+    const c = (await card.json()) as { $schema: string; name: string; description: string; remotes: { type: string; url: string; supportedProtocolVersions: string[] }[] };
+    expect(c.$schema).toBe("https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json");
+    expect(c.name.split("/")).toHaveLength(2);
+    expect(c.description.length).toBeLessThanOrEqual(100);
+    expect(c.remotes[0]).toMatchObject({ type: "streamable-http", url: `${ORIGIN}/mcp` });
+    expect(c.remotes[0]!.supportedProtocolVersions.length).toBeGreaterThan(0);
+
+    const catalog = (await (await get("/.well-known/ai-catalog.json")).json()) as { entries: { identifier: string; type: string; url: string }[] };
+    expect(catalog.entries).toEqual([{ identifier: expect.stringMatching(/^urn:air:/), type: "application/mcp-server-card+json", url: `${ORIGIN}/mcp/server-card` }]);
+
+    for (const body of [text, JSON.stringify(c), JSON.stringify(catalog)]) {
+      expect(body).not.toContain(player.vault);
+      expect(body).not.toContain("player/vault");
+    }
+    // The card isn't behind the OAuth guard; MCP itself still is.
+    expect((await h.send(new Request(`${ORIGIN}/mcp`, { method: "POST", body: "{}" }))).status).toBe(401);
   });
 });

@@ -209,10 +209,15 @@ describe("onboarding", () => {
     expect(minted.body.token).toMatch(/^hippo_/);
     expect(minted.body.snippets.map((s) => s.label)).toEqual([
       "Claude Code",
-      "Any MCP client over HTTP (.mcp.json)",
+      "Claude Desktop (claude_desktop_config.json)",
       "Cursor (~/.cursor/mcp.json)",
       "VS Code (.vscode/mcp.json)",
-      "Claude.ai or ChatGPT (custom connector)",
+      "Windsurf (~/.codeium/windsurf/mcp_config.json)",
+      "Grok (CLI)",
+      "A Grok bot (xAI API: a remote MCP tool)",
+      "Any MCP client over HTTP (.mcp.json)",
+      "A script (environment variables)",
+      "Claude.ai or ChatGPT (sign-in, beta)",
     ]);
     // Each vault has its own address and server name, so two vaults in one app never mix.
     expect(minted.body.snippets[0]!.code).toBe(`claude mcp add --transport http hippo-vault ${ORIGIN}/mcp/${vaultId} --header "Authorization: Bearer ${minted.body.token}"`);

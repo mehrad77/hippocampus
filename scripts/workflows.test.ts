@@ -85,6 +85,7 @@ describe("the hosted app's nightly sleep workflow", () => {
   it("takes its key and URL from the repo's secrets and variables, never inline", () => {
     const action = steps[0]!.with!;
     expect(action.anthropic_api_key).toBe("${{ secrets.ANTHROPIC_API_KEY }}");
+    expect(action.claude_code_oauth_token).toBe("${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}");
     expect(String(action.claude_args)).toContain('"Authorization":"Bearer ${{ secrets.HIPPO_CURATOR_KEY }}"');
     expect(String(action.claude_args)).toContain('"url":"${{ vars.HIPPO_MCP_URL }}"');
     expect(SLEEP_WORKFLOW).not.toMatch(/hippo_[\w-]{20,}|sk-ant-|ghp_|ghs_|https?:\/\/(?!github\.com)/);

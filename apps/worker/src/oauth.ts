@@ -56,6 +56,10 @@ export type GrantProps = KeyProps | OAuthProps;
 /** The OAuth library's user id for an account. It can't hold `:`, which separates the parts of the library's tokens. */
 export const oauthUserId = (accountId: number) => `account-${accountId}`;
 
+/** A connection's id for holding agent names (agent-claims.ts): a key by its hash, an app by its grant. */
+export const keyCredential = (keyId: string) => `key:${keyId}`;
+export const oauthCredential = (grantId: string) => `oauth:${grantId}`;
+
 /** A key's props. Only `bound` keys carry an agent; each kind's scopes are capped at what the kind allows. */
 export function keyProps(key: KeyGrant): KeyProps {
   const allowed = KIND_SCOPES[key.kind];
@@ -75,16 +79,17 @@ export function keyProps(key: KeyGrant): KeyProps {
  * What an MCP request may do, from its token's props. Undefined for props without a vault: grants
  * made before vaults were hosted here, whose holders have to connect again.
  */
-export function grantOf(raw: unknown, tokenScopes: string[]): { props: GrantProps; grant: VaultGrant } | undefined {
+export function grantOf(raw: unknown, tokenScopes: string[], token?: string): { props: GrantProps; grant: VaultGrant } | undefined {
   const props = raw as Partial<GrantProps> | undefined;
   if (typeof props?.vaultId !== "string" || !props.vaultId) return undefined;
   if (props.kind === "key" && props.vault && typeof props.keyId === "string") {
     const p = props as KeyProps;
-    return { props: p, grant: { ...(p.agent ? { agent: p.agent } : {}), scopes: p.scopes.filter(isScope), via: "key", keyKind: p.keyKind } };
+    return { props: p, grant: { ...(p.agent ? { agent: p.agent } : {}), scopes: p.scopes.filter(isScope), via: "key", keyKind: p.keyKind, credential: keyCredential(p.keyId) } };
   }
   if (props.kind === "oauth" && typeof props.agent === "string" && typeof props.accountId === "number") {
     const p = props as OAuthProps;
-    return { props: p, grant: { agent: p.agent, scopes: tokenScopes.filter(isScope), via: "oauth" } };
+    const grantId = token?.split(":")[1];
+    return { props: p, grant: { agent: p.agent, scopes: tokenScopes.filter(isScope), via: "oauth", ...(grantId ? { credential: oauthCredential(grantId) } : {}) } };
   }
   return undefined;
 }
@@ -93,7 +98,8 @@ export function grantOf(raw: unknown, tokenScopes: string[]): { props: GrantProp
 export interface OAuthContext {
   waitUntil(promise: Promise<unknown>): void;
   props?: unknown;
-  auth?: { scope?: string[]; clientId?: string; userId?: string };
+  /** `token` is `<user>:<grant>:<secret>` for the library's own tokens. */
+  auth?: { scope?: string[]; clientId?: string; userId?: string; token?: string };
 }
 
 export interface ProviderHandlers {
@@ -139,7 +145,16 @@ export function invalidToken(publicUrl: string, description: string): Response {
 // ── Connected apps ───────────────────────────────────────────────────────────
 
 /** The account's OAuth grants, for its settings page and for deleting the account. */
-export function connectedApps(oauth: OAuthHelpers): ConnectedApps & { revokeAll(accountId: number): Promise<void>; revokeVault(accountId: number, vaultId: string): Promise<void> } {
+export function connectedApps(
+  oauth: OAuthHelpers,
+  /** A grant for a vault was revoked: free the agent name it held there. */
+  revoked: (vaultId: string, credential: string) => Promise<void> = async () => {},
+): ConnectedApps & { revokeAll(accountId: number): Promise<void>; revokeVault(accountId: number, vaultId: string): Promise<void> } {
+  const revoke = async (g: GrantSummary, accountId: number) => {
+    await oauth.revokeGrant(g.id, oauthUserId(accountId));
+    const vaultId = (g.metadata as { vaultId?: unknown } | undefined)?.vaultId;
+    if (typeof vaultId === "string") await revoked(vaultId, oauthCredential(g.id)).catch(() => undefined);
+  };
   async function grants(accountId: number): Promise<GrantSummary[]> {
     const out: GrantSummary[] = [];
     let cursor: string | undefined;
@@ -168,15 +183,16 @@ export function connectedApps(oauth: OAuthHelpers): ConnectedApps & { revokeAll(
       return apps.sort((a, b) => b.created.localeCompare(a.created));
     },
     async revoke(accountId, id) {
-      if (!(await grants(accountId)).some((g) => g.id === id)) return false;
-      await oauth.revokeGrant(id, oauthUserId(accountId));
+      const g = (await grants(accountId)).find((x) => x.id === id);
+      if (!g) return false;
+      await revoke(g, accountId);
       return true;
     },
     async revokeAll(accountId) {
-      for (const g of await grants(accountId)) await oauth.revokeGrant(g.id, oauthUserId(accountId));
+      for (const g of await grants(accountId)) await revoke(g, accountId);
     },
     async revokeVault(accountId, vaultId) {
-      for (const g of await grants(accountId)) if ((g.metadata as { vaultId?: unknown } | undefined)?.vaultId === vaultId) await oauth.revokeGrant(g.id, oauthUserId(accountId));
+      for (const g of await grants(accountId)) if ((g.metadata as { vaultId?: unknown } | undefined)?.vaultId === vaultId) await revoke(g, accountId);
     },
   };
 }

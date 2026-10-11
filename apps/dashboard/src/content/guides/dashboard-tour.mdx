@@ -122,14 +122,14 @@ On the hosted app, Setup walks you from signing in to a working vault. Nothing h
 | Pick the repo | Lists the app's repositories and says which can become a vault: private, and empty or already a vault |
 | Name it | The vault's name, your id, time zone and domains, optionally the fictional example, and a key for secrets made in this browser |
 | Set up the vault | One commit puts the template into the repo. A repo that's already a vault is adopted: only missing guardrail files are added |
-| Connect agents | Create (mint) keys and get snippets for each client, or connect Claude.ai and ChatGPT with the MCP address |
+| Connect agents | **Connect an app**: pick the app, what it may do and its name, and get exactly what to paste into it; or connect Claude.ai and ChatGPT with the MCP address (beta) |
 | Set up curation | A curator key and how to run it, or the GitHub Actions curator |
 
-Keys are shown once and stored only as a hash; revoke one and it stops at once. See <Link guide="connecting-agents">Connecting agents</Link> and <Link guide="nightly-sleep">The curator</Link>.
+Keys are shown once and stored only as a hash. Afterwards, **Connected apps** on the Setup page lists every connection (keys and sign-in apps), and **Nightly curation** sets up the curator. See <Link guide="connecting-agents">Connecting agents</Link> and <Link guide="nightly-sleep">The curator</Link>.
 
 **The curator panel**, on the same page, shows the sleep run in progress (who holds it, how far it got, when its lease ends) and past runs, newest first. Stop a run there if it's stuck.
 
-**Your account** lists the apps you connected over OAuth, each with the agent it acts as, and disconnects them. It also deletes your account: type your GitHub login to confirm, and your keys, connected apps, the app's installation, and every vault's index and cache are gone. Your vault repos stay where they are, untouched.
+**Your account** deletes your account: type your GitHub login to confirm, and your keys, connected apps, the app's installation, and every vault's index and cache are gone. Your vault repos stay where they are, untouched.
 
 **The Admin page** is for the people the operator listed as admins. It shows who's waiting for access, with their note, to approve or deny, which vaults exist and their state, and **Referrals**: who invited whom, as a graph (arrows from inviter to invitee; bigger circles brought in more people) or a table, where an admin can stop someone's invites. Admins see names and states, never what's in anyone's vault.
 

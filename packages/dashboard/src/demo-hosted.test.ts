@@ -7,7 +7,7 @@ const ORIGIN = "http://127.0.0.1:4339";
 const source = { info: async () => ({ mode: "demo", vault: { kind: "memory" }, campaign: "lisbon-arc", human: "player", actor: { kind: "human", id: "player" } }) } as unknown as DashboardSource;
 
 function client() {
-  const demo = hostedDemo({ base: "/dashboard", source, approveAfter: 0, initDelay: 0 });
+  const demo = hostedDemo({ base: "/dashboard", source, approveAfter: 0, initDelay: 0, firstCallAfter: 0 });
   const call = async (path: string, body?: unknown, headers: Record<string, string> = {}) => {
     const res = await demo(new Request(`${ORIGIN}${path}`, body === undefined ? { headers } : { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }));
     return { status: res?.status, body: res && res.headers.get("content-type")?.includes("json") ? await res.json() : undefined, location: res?.headers.get("location") };

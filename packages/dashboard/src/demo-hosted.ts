@@ -1,6 +1,7 @@
+import { isConnectApp, keySnippets } from "./connect.ts";
 import { demoPresets } from "./demo-setup.ts";
 import { HttpError, errorResponse, json, readJson, securityHeaders } from "./http.ts";
-import { VAULT_HEADER, type AdminReferrals, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem, type Snippet } from "./setup.ts";
+import { VAULT_HEADER, type AdminReferrals, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem } from "./setup.ts";
 import { capabilities, readOnlySource, type CuratorStatus, type DashboardSource, type SessionInfo } from "./source.ts";
 
 // The hosted app for `astro dev` (HIPPO_DEMO_HOSTED=1): an in-memory stand-in for the Worker's
@@ -26,6 +27,8 @@ export interface HostedDemoOptions {
   approveAfter?: number;
   /** How long `init` pretends to take (ms). */
   initDelay?: number;
+  /** How long after a key is made the demo pretends its app called in (ms). */
+  firstCallAfter?: number;
   now?: () => Date;
 }
 
@@ -268,7 +271,10 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     const token = `hippo_demo_${hex(16)}`;
     const key: HostedKeyInfo = { id: hex(32), kind, ...(agent ? { agent } : {}), scopes, label: label || (kind === "curator" ? "Curator" : kind === "bound" ? agent! : "Any agent"), created: now().toISOString() };
     (state.keys[vault.id] ??= []).push(key);
-    return { ...key, token, snippets: keySnippets(origin(request), token, kind, vault) };
+    // The app calls in a few seconds later, so "Waiting for its first call" turns into "Connected".
+    setTimeout(() => (key.lastUsed = now().toISOString()), opts.firstCallAfter ?? 6000);
+    const app = (body as { app?: unknown } | undefined)?.app;
+    return { ...key, token, snippets: keySnippets({ publicUrl: origin(request), token, kind, vault, ...(isConnectApp(app) ? { app } : {}) }) };
   }
 
   async function setupRoute(request: Request, method: string, sub: string, body: unknown, url: URL): Promise<unknown> {
@@ -632,18 +638,3 @@ function page(title: string, body: string): Response {
   return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", ...securityHeaders(), "content-security-policy": "default-src 'none'; frame-ancestors 'none'" } });
 }
 
-/** The same connect snippets the Worker sends with a new key (apps/worker/src/hosted/onboarding.ts). */
-function keySnippets(publicUrl: string, token: string, kind: HostedKeyInfo["kind"], vault: HostedVault): Snippet[] {
-  const mcp = `${publicUrl}/mcp/${vault.id}`;
-  const auth = `Bearer ${token}`;
-  const slug = (vault.fullName.split("/").pop() ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "vault";
-  const name = `hippo-${slug}${kind === "curator" ? "-curator" : ""}`;
-  const snippets: Snippet[] = [
-    { label: "Claude Code", lang: "bash", code: `claude mcp add --transport http ${name} ${mcp} --header "Authorization: ${auth}"` },
-    { label: "Any MCP client over HTTP (.mcp.json)", lang: "json", code: JSON.stringify({ mcpServers: { [name]: { type: "http", url: mcp, headers: { Authorization: auth } } } }, null, 2) },
-    { label: "Cursor (~/.cursor/mcp.json)", lang: "json", code: JSON.stringify({ mcpServers: { [name]: { url: mcp, headers: { Authorization: auth } } } }, null, 2) },
-    { label: "VS Code (.vscode/mcp.json)", lang: "json", code: JSON.stringify({ servers: { [name]: { type: "http", url: mcp, headers: { Authorization: auth } } } }, null, 2) },
-  ];
-  if (kind !== "curator") snippets.push({ label: "Claude.ai or ChatGPT (custom connector)", lang: "text", code: mcp, note: "Connectors sign in with GitHub instead of a key: add a custom connector with this URL." });
-  return snippets;
-}

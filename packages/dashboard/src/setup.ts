@@ -458,3 +458,20 @@ export interface AdminReferrals {
   /** `from` invited `to`, who accepted at `at`; `vault` names the vault the invite shared, if any. */
   edges: { from: string; to: string; at: string; vault?: string }[];
 }
+
+/**
+ * `GET connect?code=`: an app asking to connect on the person's behalf (device sign-in), for them to
+ * approve with `POST connect/approve { code, vault, agent?, access, seat? }` or refuse with `POST connect/deny { code }`.
+ */
+export interface HostedDeviceRequest {
+  code: string;
+  /** The app's name, as it gave it (not verified). */
+  client: string;
+  /** The agent id it asked for. */
+  agent?: string;
+  access?: "remember" | "read" | "curate";
+  expires: string;
+  /** The person's vaults it could connect to. */
+  vaults: HostedVault[];
+  current?: string;
+}

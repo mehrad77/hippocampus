@@ -62,6 +62,7 @@ describe("the GitHub Actions curator", () => {
     expect(w.match(/^\s+- uses: /gm)).toEqual(["      - uses: "]);
     expect(w).toContain("uses: anthropics/claude-code-action@v1");
     expect(w).toContain("anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}");
+    expect(w).toContain("claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}");
     expect(w).toContain(`--mcp-config '{"mcpServers":{"hippocampus":{"type":"http","url":"\${{ vars.HIPPO_MCP_URL }}","headers":{"Authorization":"Bearer \${{ secrets.HIPPO_CURATOR_KEY }}"}}}}'`);
     expect(w).toContain('--allowedTools "mcp__hippocampus__*"');
     expect(w).toContain("--model ${{ vars.HIPPO_CURATOR_MODEL || 'sonnet' }}");

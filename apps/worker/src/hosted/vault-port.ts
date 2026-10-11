@@ -22,6 +22,8 @@ export interface VaultStub {
   addParty(input: { id: string; title: string; lane?: string; authority?: string[] }, via: string): Promise<{ slug: string }>;
   /** Link (or unlink, with `null`) a person's logins to one of the vault's humans: someone joining or leaving it. */
   linkHuman(id: string, logins: { github?: string | null; gitlab?: string | null }, via: string, create?: { domains?: string[] }): Promise<{ changed: boolean }>;
+  /** Connections were revoked (`key:<hash>`, `oauth:<grant>`): free the agent names they held. */
+  releaseClaims(credentials: string[]): Promise<number>;
   disconnect(reason: string): Promise<void>;
   /** Wipe the vault's Durable Object (account deletion). The repo stays. */
   destroy(): Promise<void>;

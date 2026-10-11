@@ -8,8 +8,9 @@ export const SLEEP_WORKFLOW = `# Nightly sleep for this Hippocampus vault: Claud
 # Added by the hosted app; turn it off on the dashboard's setup page, which removes this file.
 #
 # It needs, under Settings → Secrets and variables → Actions in this repo:
-#   Secret    ANTHROPIC_API_KEY     an Anthropic API key (runs are billed to it)
-#   Secret    HIPPO_CURATOR_KEY     a curator key: dashboard → Setup → Keys → Curator
+#   Secret    CLAUDE_CODE_OAUTH_TOKEN  a Claude subscription's token (run: claude setup-token), or
+#   Secret    ANTHROPIC_API_KEY     an Anthropic API key (runs are billed to it); one of the two
+#   Secret    HIPPO_CURATOR_KEY     a curator key: dashboard → Setup → Nightly curation
 #   Variable  HIPPO_MCP_URL         the vault's MCP URL, shown on the dashboard's setup page
 #   Variable  HIPPO_CURATOR_MODEL   optional: the model that curates, like sonnet or opus (default sonnet)
 # Curating shows the model every new memory in full: secret ones in plain text, and confidential details.
@@ -32,6 +33,8 @@ jobs:
     steps:
       - uses: anthropics/claude-code-action@v1
         with:
+          # Whichever is set: a Claude subscription's token, or an API key.
+          claude_code_oauth_token: \${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           anthropic_api_key: \${{ secrets.ANTHROPIC_API_KEY }}
           # A token without permissions, so the action doesn't ask for one of its own.
           github_token: \${{ github.token }}

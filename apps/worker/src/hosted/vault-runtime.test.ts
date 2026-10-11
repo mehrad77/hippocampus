@@ -130,6 +130,31 @@ describe("VaultRuntime: MCP", () => {
     expect(repo.log()).toHaveLength(2);
   });
 
+  it("keeps a shared key off agent names another connection holds", async () => {
+    const { repo, connect, runtime } = await setup();
+    const shared = await connect({ ...AGENT_KEY, credential: "key:shared" });
+    const other = await connect({ ...AGENT_KEY, credential: "key:other-shared" });
+    const homeFinder = await connect({ ...bound("home-finder"), credential: "key:home-finder-laptop" });
+    const say = (c: typeof shared, agent: string) => c.call("remember", { agent, text: "Viewing booked for the Alfama flat on Friday." });
+
+    // The first to write as a name holds it.
+    expect((await say(shared, "transit-scout")).isError).toBeFalsy();
+    expect((await say(shared, "transit-scout")).isError).toBeFalsy();
+    const taken = await say(other, "transit-scout");
+    expect(taken.isError).toBe(true);
+    expect(taken.text).toMatch(/connected through another app or key/);
+
+    // A bound key always writes as its agent, and takes the name from a shared key.
+    expect((await say(shared, "home-finder")).isError).toBeFalsy();
+    expect((await homeFinder.call("remember", { text: "The landlord prefers email." })).isError).toBeFalsy();
+    expect((await say(shared, "home-finder")).isError).toBe(true);
+
+    // Revoked, the bound key lets go.
+    expect(await runtime.releaseClaims(["key:home-finder-laptop"])).toBe(1);
+    expect((await say(other, "home-finder")).isError).toBeFalsy();
+    expect(repo.log().filter((c) => c.message.startsWith("remember(")).length).toBe(5);
+  });
+
   it("lets an agent introduce itself", async () => {
     const { repo, connect } = await setup();
     const { call } = await connect(AGENT_KEY);

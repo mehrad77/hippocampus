@@ -16,6 +16,7 @@ import type { InstallationToken, Narrowing, Permissions } from "./github-app.ts"
 import { logEvent } from "./limits.ts";
 import { DailyCounter, QUOTAS, limitRuns, quotaOverrides, sizeGuard, type Quotas, type SizeGuarded } from "./quotas.ts";
 import { SqlRunStore, onPut } from "./run-store.ts";
+import { AgentClaims } from "./agent-claims.ts";
 
 // One hosted vault, served from its own Durable Object. Everything here is plain TypeScript over
 // ports (the object's storage, a token minter, fetch), so it runs under Node in tests; vault-host.ts
@@ -44,6 +45,8 @@ export interface VaultGrant {
   scopes: Scope[];
   via: "key" | "oauth";
   keyKind?: "agent" | "curator" | "bound";
+  /** Which connection this is (`key:<hash>`, `oauth:<grant>`), for holding agent names (agent-claims.ts). */
+  credential?: string;
 }
 
 /** The signed-in person on the dashboard: the vault's owner, or someone it's shared with. */
@@ -132,7 +135,7 @@ const upgradeRaced = () => new HttpError(409, "The vault changed while it was be
 const upgradeRefused = () =>
   new HttpError(409, "This vault's upgrade can't be applied here. The owner can run `hippo migrate` in a local clone and push.", "VAULT_UPGRADE_REFUSED");
 
-export const grantPrincipal = (grant: VaultGrant): Principal => ({ kind: "agent", agent: grant.agent, scopes: grant.scopes });
+export const grantPrincipal = (grant: VaultGrant): Principal => ({ kind: "agent", agent: grant.agent, scopes: grant.scopes, ...(grant.credential ? { credential: grant.credential } : {}) });
 
 const TOKENS_TABLE = "CREATE TABLE IF NOT EXISTS tokens (id INTEGER PRIMARY KEY CHECK (id = 1), token TEXT NOT NULL, expires_at INTEGER NOT NULL)";
 
@@ -225,6 +228,7 @@ export class VaultRuntime {
   private current = false;
   private upgrading?: Promise<VaultUpgrade>;
   private readonly runs: RunStore;
+  private readonly claims: AgentClaims;
 
   constructor(private readonly d: VaultRuntimeDeps) {
     this.meta = d.meta;
@@ -241,6 +245,7 @@ export class VaultRuntime {
     } else this.token = storedToken(d.storage.sql, () => d.app.installationToken(installationId, { repositoryIds: [repoId], permissions: RUNTIME_PERMISSIONS }), now);
     this.writer = new ScribeQueue(this.reads());
     this.runs = this.leased(limitRuns(new SqlRunStore(d.storage.sql), this.counter, this.quotas.sleepRunsPerDay));
+    this.claims = new AgentClaims(d.storage.sql, this.clock);
     this.relay = new SleepRelay({
       open: async (at) => {
         await this.ready();
@@ -273,7 +278,7 @@ export class VaultRuntime {
 
   /** A store for one request or relay step: its writes are audited as `principal` and committed one at a time. */
   store(principal: Principal): SizeGuarded {
-    return sizeGuard(new AuditedStore({ reads: this.reads(), writer: this.writer, principal, quotas: this.quotas }), this.quotas);
+    return sizeGuard(new AuditedStore({ reads: this.reads(), writer: this.writer, principal, quotas: this.quotas, claims: this.claims }), this.quotas);
   }
 
   private readonly searcher: SearcherFactory = async (vault) => (await this.openIndex()).searcher(vault);
@@ -512,6 +517,11 @@ export class VaultRuntime {
       .sort((a, b) => a.id.localeCompare(b.id));
   }
 
+  /** A connection was revoked: the agent names it held are free again. */
+  async releaseClaims(credentials: string[]): Promise<number> {
+    return credentials.reduce((n, c) => n + this.claims.release(c), 0);
+  }
+
   /** Links (or, with `null`, unlinks) a person's logins to one of the vault's humans: someone joining or leaving a shared vault. */
   async linkHuman(id: string, logins: HumanLogins, via: string, create?: { domains?: string[] }): Promise<{ changed: boolean }> {
     await this.ready();
@@ -683,6 +693,10 @@ export class HostedVault {
 
   async linkHuman(id: string, logins: HumanLogins, via: string, create?: { domains?: string[] }): Promise<{ changed: boolean }> {
     return this.require().linkHuman(id, logins, via, create);
+  }
+
+  async releaseClaims(credentials: string[]): Promise<number> {
+    return this.require().releaseClaims(credentials);
   }
 
   /** Stop serving; storage stays until `destroy`, so a reconnect picks up where it left off. */

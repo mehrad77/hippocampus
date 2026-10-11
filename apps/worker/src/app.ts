@@ -10,6 +10,7 @@ import { hostedMissing, hostedSettings, type HostedSettings, type HostedVars } f
 import { vaultMeta, type DashboardUser, type VaultHosts, type VaultMeta, type VaultStub } from "./hosted/vault-port.ts";
 import { AUTHORIZE_PATH, REGISTER_PATH, addressedVault, authorizePage, connectedApps, grantOf, invalidToken, keyProps, providerOptions, type OAuthContext } from "./oauth.ts";
 import { page, plain } from "./pages.ts";
+import { AI_CATALOG_PATH, DISCOVERY_HEADERS, LLMS_PATH, SERVER_CARD_PATH, aiCatalog, llmsTxt, serverCard } from "./discovery.ts";
 
 // The hosted Worker's request handling, independent of the Workers runtime: the OAuth provider in
 // front, then the hosted app's own routes, the consent page, and each vault's Durable Object for
@@ -113,6 +114,14 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
     return state;
   }
 
+  /** Connections to a vault were revoked: free the agent names they held. A vault that's gone has nothing to free. */
+  async function releaseClaims(vaultId: string, credentials: string[]): Promise<void> {
+    if (!credentials.length) return;
+    const vault = await routes.registry.vault(vaultId);
+    if (vault?.status !== "ready") return;
+    await (await stubFor(vaultMeta(vault))).releaseClaims(credentials).catch(() => undefined);
+  }
+
   /** A vault's registry row changed: bring its Durable Object in line. */
   async function onVaultChanged(id: string): Promise<void> {
     forget(id);
@@ -142,7 +151,7 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
   };
   const options = providerOptions(publicUrl, handlers);
   const oauth = getOAuthApi(options, env);
-  const apps = connectedApps(oauth);
+  const apps = connectedApps(oauth, (vaultId, credential) => releaseClaims(vaultId, [credential]));
   const routes = createHostedRoutes({
     settings,
     kv: deps.kv,
@@ -156,6 +165,11 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
       onVaultChanged,
       revokeOAuthGrants: (accountId) => apps.revokeAll(accountId),
       revokeVaultGrants: (accountId, vaultId) => apps.revokeVault(accountId, vaultId),
+      releaseCredentials: (vaultId, credentials) => releaseClaims(vaultId, credentials),
+      seatAgent: async (vault, agent, via) => {
+        const stub = await stubFor(vaultMeta(vault));
+        if (!(await stub.party()).some((p) => p.id === agent.id)) await stub.addParty(agent, via);
+      },
       linkHuman: async (vault, human, login, via, create) => {
         const stub = await stubFor(vaultMeta(vault));
         await stub.linkHuman(human, { github: login }, via, create);
@@ -178,7 +192,7 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
       await log(route, started, 404, undefined, "NOT_FOUND");
       return json(404, { error: "not_found", error_description: `MCP lives at ${publicUrl}/mcp/<vault id>.` });
     }
-    const found = grantOf(ctx.props, ctx.auth?.scope ?? []);
+    const found = grantOf(ctx.props, ctx.auth?.scope ?? [], ctx.auth?.token);
     if (!found) {
       await log(route, started, 401, undefined, "REAUTHORIZE");
       return invalidToken(publicUrl, "This connection was made before vaults were hosted here. Connect it again.");
@@ -228,10 +242,24 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
       return res;
     }
     if (pathname === "/") return home(request);
+    if (pathname === LLMS_PATH || pathname === AI_CATALOG_PATH) return discovery(request, pathname);
     // The hosted routes answer the API until the account has a ready vault; then it's the vault's.
     if (isDashboardApi(pathname)) return dashboardApi(request, url);
     if (isDashboardPath(pathname)) return serveAsset(deps.assets, request);
     return plain(404, "Not found");
+  }
+
+  /** The public discovery documents (discovery.ts): the same for everyone, so cacheable and open to any origin. */
+  function discovery(request: Request, pathname: string): Response {
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: DISCOVERY_HEADERS });
+    if (request.method !== "GET" && request.method !== "HEAD") return plain(405, "Method not allowed", { allow: "GET, HEAD, OPTIONS" });
+    const [type, body] =
+      pathname === LLMS_PATH
+        ? ["text/markdown; charset=utf-8", llmsTxt(publicUrl)]
+        : pathname === AI_CATALOG_PATH
+          ? ["application/ai-catalog+json", JSON.stringify(aiCatalog(publicUrl), null, 2)]
+          : ["application/mcp-server-card+json", JSON.stringify(serverCard(publicUrl), null, 2)];
+    return new Response(request.method === "HEAD" ? null : body, { headers: { "content-type": type, "x-content-type-options": "nosniff", ...DISCOVERY_HEADERS } });
   }
 
   async function home(request: Request): Promise<Response> {
@@ -294,6 +322,8 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
             return json(429, { error: "temporarily_unavailable", error_description: "Too many registrations; try again in a minute." }, { "retry-after": "60" });
           }
         }
+        // The server card sits under /mcp, which the OAuth library guards; it's public, so it's answered first.
+        if (new URL(request.url).pathname === SERVER_CARD_PATH) return discovery(request, SERVER_CARD_PATH);
         return await provider.fetch(request, env, ctx as Parameters<typeof provider.fetch>[2]);
       } catch {
         // Messages can name vaults or carry their content, so only the fact of it is logged.
