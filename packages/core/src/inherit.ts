@@ -61,7 +61,7 @@ function mixinsOf(vault: Vault, e: Entity, skip: Set<string>): Entity[] {
 }
 
 /**
- * The cadence of `own`, else of its candidates (chain, mixins, groups it's a `member_of`): any
+ * The cadence of `own`, else of its candidates (the chain's nearest, mixins, groups it's a `member_of`): any
  * `none` wins (someone said not to keep in touch), else the most common value, the shortest on a tie.
  */
 export function meshCadence(own: string | undefined, candidates: (string | undefined)[], warnings: string[] = []): string | undefined {
@@ -107,9 +107,12 @@ export function resolveInheritance(vault: Vault, e: Entity): Inheritance {
     .filter((r) => r.rel === "member_of")
     .map((r) => vault.resolve(r.target))
     .filter((g): g is Entity => !!g);
+  // Along the `extends:` chain the nearest cadence wins (colleague's 1m over stranger's none), as
+  // with every inherited value; only parallel sources (that one, mixins, groups) are meshed.
+  const nearest = chain.find((c) => c.fm.cadence?.trim())?.fm.cadence;
   const cadence = meshCadence(
     e.fm.cadence,
-    [...chain, ...mixins, ...groups].map((c) => c.fm.cadence),
+    [nearest, ...[...mixins, ...groups].map((c) => c.fm.cadence)],
     warnings,
   );
   return { chain, mixins, defaults, guidelines, ...(cadence ? { cadence } : {}), warnings };

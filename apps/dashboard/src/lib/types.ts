@@ -65,6 +65,7 @@ export type {
   LlmSettings,
   LlmSetupRequest,
   LocalVaultStatus,
+  PresetInfo,
   ScheduleStatus,
   VaultSetupRequest,
   Job,

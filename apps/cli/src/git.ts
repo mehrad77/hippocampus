@@ -112,8 +112,30 @@ export class Git {
     }
   }
 
-  async commit(message: string): Promise<void> {
-    await this.run("-c", `user.name=${CURATOR_AUTHOR.name}`, "-c", `user.email=${CURATOR_AUTHOR.email}`, "commit", "--quiet", "-m", message);
+  /** Commit what's staged as Hippocampus, or with `asUser` as the user's own git identity when one is set. */
+  async commit(message: string, opts: { asUser?: boolean } = {}): Promise<void> {
+    if (opts.asUser && (await this.hasIdentity())) await this.run("commit", "--quiet", "-m", message);
+    else await this.run("-c", `user.name=${CURATOR_AUTHOR.name}`, "-c", `user.email=${CURATOR_AUTHOR.email}`, "commit", "--quiet", "-m", message);
+  }
+
+  private async hasIdentity(): Promise<boolean> {
+    try {
+      return !!(await this.run("config", "user.email")) && !!(await this.run("config", "user.name"));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Stage exactly `paths` and commit them, leaving the human's other edits alone. Nothing happens
+   * outside a git repo or when the paths changed nothing. Returns whether it committed.
+   */
+  async commitPaths(paths: string[], message: string, opts: { asUser?: boolean } = {}): Promise<boolean> {
+    if (!this.isRepo() || !paths.length) return false;
+    await this.stage(paths);
+    if (!(await this.hasStaged())) return false;
+    await this.commit(message, opts);
+    return true;
   }
 
   async push(): Promise<void> {

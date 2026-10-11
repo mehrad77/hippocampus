@@ -16,7 +16,7 @@ import {
 } from "@hippocampus/core";
 import { HttpError } from "@hippocampus/dashboard";
 import { GitHubStore } from "@hippocampus/store-github";
-import { SEEDS, TEMPLATE } from "@hippocampus/template";
+import { PRESETS, SEEDS, TEMPLATE } from "@hippocampus/template";
 import { GitHubAppError, type GitHubApp, type Permissions } from "./github-app.ts";
 import type { Registry, VaultRecord } from "./registry.ts";
 
@@ -70,6 +70,8 @@ export interface BootstrapOptions {
   settings: VaultSettings;
   /** An example campaign laid over the template (`example-relocation`). */
   seed?: string;
+  /** Presets added to a new vault, in order (names of `PRESETS`). An adopted vault keeps what it has. */
+  presets?: string[];
   /** The vault's clock while building, for reproducible output. */
   now?: Date;
 }
@@ -118,7 +120,7 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
       throw new HttpError(409, `${info.fullName} has a ${CONFIG_PATH} that doesn't load: ${(err as Error).message}`, "BAD_VAULT");
     }
   }
-  const files = p.mode === "initialize" ? await buildVaultFiles(TEMPLATE, { ...o.settings, seed, now: o.now }) : undefined;
+  const files = p.mode === "initialize" ? await buildVaultFiles(TEMPLATE, { ...o.settings, seed, presets: o.presets, presetFiles: PRESETS, now: o.now }) : undefined;
 
   const { vault, replaced } = await o.registry.claimVault({ accountId: o.accountId, installationId: o.installationId, repoId: info.id, fullName: info.fullName, branch: info.branch });
   try {

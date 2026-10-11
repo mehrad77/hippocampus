@@ -2,6 +2,7 @@ import { parseDocument } from "yaml";
 import { CONFIG_PATH, renderConfig, setHumans } from "./config.ts";
 import { HANDBOOK_PATH, renderHandbook } from "./handbook.ts";
 import { parseDoc, renderDoc } from "./markdown.ts";
+import { applyPresets } from "./presets.ts";
 import type { HumanDef } from "./schema.ts";
 import { MemoryStore, type VaultStore } from "./store.ts";
 import { Vault } from "./vault.ts";
@@ -38,6 +39,10 @@ export interface VaultSettings {
 export interface BuildVaultOptions extends VaultSettings {
   /** Seed files (an example campaign), laid over the template. */
   seed?: Record<string, string>;
+  /** Presets to add, in order (names in `presetFiles`). */
+  presets?: string[];
+  /** The presets there are, by name (`PRESETS` from @hippocampus/template). */
+  presetFiles?: Record<string, Record<string, string>>;
   /** The vault's clock during the build, for reproducible output. */
   now?: Date;
 }
@@ -57,6 +62,16 @@ export function validateVaultSettings(s: VaultSettings): void {
   for (const d of s.domains ?? []) if (!SLUG.test(d)) throw new Error(`domain "${d}" must be lowercase letters, digits and dashes`);
 }
 
+/** Throws unless every name is a preset of `bundle`, each once. */
+export function validatePresetNames(names: string[], bundle: Record<string, Record<string, string>>): void {
+  const seen = new Set<string>();
+  for (const n of names) {
+    if (!bundle[n]) throw new Error(`no preset "${n}" (available: ${Object.keys(bundle).sort().join(", ") || "none"})`);
+    if (seen.has(n)) throw new Error(`preset "${n}" is listed twice`);
+    seen.add(n);
+  }
+}
+
 /**
  * The files of a new vault: the template with the seed over it, the config filled in, the
  * player character placed, every note normalized and the Handbook rendered. Pure over file maps,
@@ -64,11 +79,13 @@ export function validateVaultSettings(s: VaultSettings): void {
  */
 export async function buildVaultFiles(template: Record<string, string>, opts: BuildVaultOptions = {}): Promise<Record<string, string>> {
   validateVaultSettings(opts);
+  if (opts.presets) validatePresetNames(opts.presets, opts.presetFiles ?? {});
   const store = new MemoryStore({ ...template, ...opts.seed });
   const raw = await store.read(CONFIG_PATH);
   if (raw === undefined) throw new Error(`the template has no ${CONFIG_PATH}`);
   await store.write(CONFIG_PATH, patchConfig(raw, opts));
   await placePlayerCharacter(store);
+  if (opts.presets?.length) await applyPresets(store, opts.presetFiles ?? {}, opts.presets);
 
   const now = opts.now;
   const vault = await Vault.load(store, now ? { now: () => now } : {});

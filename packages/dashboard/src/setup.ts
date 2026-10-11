@@ -142,7 +142,7 @@ export interface LocalSetupStatus {
   kind: "local";
   items: SetupItem[];
   vault?: LocalVaultStatus;
-  defaults: { dir: string; timezone?: string; seeds: string[]; domains: string[] };
+  defaults: { dir: string; timezone?: string; seeds: string[]; domains: string[]; presets?: PresetInfo[] };
   secrets: SecretsStatus;
   llm: LlmSettings;
   git?: GitStatus;
@@ -154,8 +154,14 @@ export interface LocalSetupStatus {
   envFile: string;
 }
 
+/** A preset a new vault can start with (see `presets/` and `hippo preset list`). */
+export interface PresetInfo {
+  name: string;
+  description: string;
+}
+
 export type VaultSetupRequest =
-  | { action: "create"; dir: string; campaign: string; human: string; timezone: string; domains: string[]; seed?: string; makeDefault?: boolean }
+  | { action: "create"; dir: string; campaign: string; human: string; timezone: string; domains: string[]; seed?: string; presets?: string[]; makeDefault?: boolean }
   | { action: "open"; dir: string; makeDefault?: boolean }
   | { action: "github"; repo: string; branch?: string; token?: string; makeDefault?: boolean }
   | { action: "mcp"; url: string; token?: string };
@@ -234,6 +240,8 @@ export interface HostedSetupStatus {
   curatorActions?: boolean;
   publicUrl: string;
   mcpUrl: string;
+  /** Presets a new vault can start with. */
+  presets?: PresetInfo[];
   items: SetupItem[];
 }
 
@@ -252,7 +260,7 @@ export interface HostedInitRequest {
   seed?: "example-relocation";
   /** age public key for `secrets.recipient`. */
   recipient?: string;
-  /** Presets to lay over the template. None are offered on the hosted app yet, so only an empty list. */
+  /** Presets to lay over the template, in order (names from `HostedSetupStatus.presets`). */
   presets?: string[];
 }
 

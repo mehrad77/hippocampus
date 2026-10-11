@@ -471,7 +471,7 @@ export async function consolidate(vault: Vault, llm: LLM, ep: Episode, searcher:
     }
   }
   if (commitments.length && ep.confidential) skipped.add("commitments");
-  else for (const c of commitments) applyCommitment(vault, c, ep, report, take);
+  else for (const c of commitments) applyCommitment(vault, c, ep, report, take, kind.def.goalType);
   if (skipped.size) report.notes.push(`confidential: ${[...skipped].join(", ")} kept out of shared notes`);
 
   // Belt and braces: a model may echo a secret as a name or alias; it must never reach a note.
@@ -578,12 +578,14 @@ function tryGoalUpdate(vault: Vault, goal: Entity, update: GoalUpdate, by: strin
 }
 
 /**
- * A promise becomes a goal of the vault's default goal type, unless an open goal with the same title
- * (normalized) and the same counterparty already tracks it: then that one is updated.
+ * A promise becomes a goal of the kind's `goal_type` (else the vault's default goal type), unless an
+ * open goal with the same title (normalized) and the same counterparty already tracks it: then that
+ * one is updated.
  */
-function applyCommitment(vault: Vault, c: Commitment, ep: Episode, report: EpisodeReport, take: (e: Entity, isNew?: boolean) => void): void {
+function applyCommitment(vault: Vault, c: Commitment, ep: Episode, report: EpisodeReport, take: (e: Entity, isNew?: boolean) => void, goalType?: string): void {
   const title = c.title.trim();
-  const type = vault.schema.defaultTypeFor("goal");
+  if (goalType && !vault.schema.has(goalType, "goal")) report.notes.push(`goal_type "${goalType}" isn't a type with the goal capability; using the default goal type`);
+  const type = goalType && vault.schema.has(goalType, "goal") ? goalType : vault.schema.defaultTypeFor("goal");
   if (!title) return;
   if (!type) {
     report.notes.push("a commitment had nowhere to go: no type has the goal capability");

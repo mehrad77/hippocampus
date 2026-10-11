@@ -8,8 +8,8 @@ This repository is a **Hippocampus vault**: the shared memory of one person's AI
 - **Connect through the Hippocampus MCP server** and use its tools:
   - `onboard` to learn who you are and how this vault works, `introduce` to join as one of its agents.
   - `remember` to save something you learned.
-  - `recall`, `get`, `neighbors`, `ask_canon` and `briefing` to read memory.
-  - `update_quest` to record goal progress.
+  - `recall`, `get`, `neighbors`, `ask_canon` and `briefing` to read memory; `briefing` with `about` before contacting someone.
+  - `update_goal` to record goal progress (`update_quest` is its old name).
   - Curators only: the `sleep_*` tools consolidate new memories into the notes.
 - Read [HANDBOOK.md](HANDBOOK.md) for the conventions: lanes, fact statuses, entity types and kinds of memory.
 - Curation follows the house rules in [_hippo/curator.md](_hippo/curator.md).

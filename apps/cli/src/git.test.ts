@@ -49,3 +49,22 @@ describe("Git commits", () => {
     expect(await git.changedPaths(c!.sha)).toEqual([{ status: "A", path: "a.md" }]);
   });
 });
+
+describe("Git commitPaths", () => {
+  let tmp: string | undefined;
+  afterEach(() => tmp && rmSync(tmp, { recursive: true, force: true }));
+
+  it("commits exactly the given paths, and leaves the human's other edits unstaged", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "hippo-git-"));
+    execFileSync("git", ["init", "--quiet", "-b", "main"], { cwd: tmp });
+    execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: tmp });
+    writeFileSync(join(tmp, "preset.md"), "p");
+    writeFileSync(join(tmp, "mine.md"), "m");
+    const git = new Git(tmp);
+    expect(await git.commitPaths(["preset.md"], withTrailers("chore: add the people preset", { [ACTOR_TRAILER]: "human" }))).toBe(true);
+    expect(await git.changedPaths((await git.commits())[0]!.sha)).toEqual([{ status: "A", path: "preset.md" }]);
+    expect(await git.status()).toMatchObject({ dirty: 1 });
+    // Nothing left to commit: no empty commit.
+    expect(await git.commitPaths(["preset.md"], "again")).toBe(false);
+  });
+});

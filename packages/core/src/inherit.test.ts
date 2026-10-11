@@ -83,15 +83,20 @@ describe("resolveInheritance", () => {
     const v = await load({
       ...groups,
       "characters/own.md": note('type: character\ncadence: 3d\nextends: "[[stranger]]"'),
-      "characters/colleague-only.md": note('type: character\nextends: "[[colleague]]"\ntags: [close-friend]'),
+      "characters/colleague-only.md": note('type: character\nextends: "[[colleague]]"'),
+      "characters/colleague-friend.md": note('type: character\nextends: "[[colleague]]"\ntags: [close-friend]'),
+      "characters/stranger-friend.md": note('type: character\nextends: "[[stranger]]"\ntags: [close-friend]'),
       "characters/friend.md": note('type: character\ntags: [close-friend]\nrelations:\n  - { rel: member_of, target: "[[study-group]]" }\n  - { rel: member_of, target: "[[book-club]]" }'),
       "characters/quiet.md": note('type: character\ntags: [close-friend]\nrelations:\n  - { rel: member_of, target: "[[quiet-club]]" }'),
       "characters/plain.md": note("type: character"),
     });
     const cadence = (slug: string) => resolveInheritance(v, v.resolve(slug)!).cadence;
     expect(cadence("own")).toBe("3d");
-    // The chain reaches `stranger` (none).
-    expect(cadence("colleague-only")).toBe("none");
+    // Along the chain the nearest wins: colleague's 1m, not the stranger's none it extends.
+    expect(cadence("colleague-only")).toBe("1m");
+    // That one meshes with the mixins: 1m and close-friend's 2w tie, the shorter wins; a none anywhere wins.
+    expect(cadence("colleague-friend")).toBe("2w");
+    expect(cadence("stranger-friend")).toBe("none");
     expect(cadence("friend")).toBe("2w");
     expect(cadence("quiet")).toBe("none");
     expect(cadence("plain")).toBeUndefined();

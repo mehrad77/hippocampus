@@ -13,6 +13,7 @@ export * from "./kinds.ts";
 export * from "./markdown.ts";
 export * from "./migrations.ts";
 export * from "./ops.ts";
+export * from "./presets.ts";
 export * from "./reconcile.ts";
 export * from "./reducers.ts";
 export * from "./schema.ts";

@@ -31,7 +31,12 @@ describe("initRequest", () => {
     expect(bad({ humans: [] })).toThrow(/humans/);
     expect(bad({ humans: ["player", "Player"] })).toThrow(/each id once/);
     expect(bad({ humans: [{ id: "player", github: "not a login" }] })).toThrow(/GitHub login/);
-    expect(bad({ presets: ["people"] })).toThrow(/presets/);
+    expect(bad({ presets: ["pirates"] })).toThrow(/presets: "pirates" isn't one; choose from business, developer/);
     expect(bad({ presets: "people" })).toThrow(/presets/);
+  });
+
+  it("takes bundled presets, each once", () => {
+    expect(initRequest({ ...BASE, name: "Harbor term", human: "player", presets: ["people", "developer", "people"] }).presets).toEqual(["people", "developer"]);
+    expect(initRequest({ ...BASE, name: "Harbor term", human: "player", presets: [] }).presets).toBeUndefined();
   });
 });

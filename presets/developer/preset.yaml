@@ -1,0 +1,4 @@
+description: Software work. Repositories and the services they run, with depends_on and used_by between them; incidents; decisions logged on the repo they shape (ADR-style), and team conventions as guidelines.
+config:
+  relations:
+    - { name: depends_on, inverse: used_by }

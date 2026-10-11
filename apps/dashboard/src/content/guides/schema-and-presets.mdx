@@ -155,16 +155,20 @@ A **preset** is a bundle of type and kind notes, templates and a few starter not
 
 | Preset | Adds, for example |
 | --- | --- |
-| people | Archetypes (stranger, colleague, close friend) people inherit guidelines and contact cadence from; groups; identity keys, birthdays and succession on people; kinds for quick contacts and moments |
-| developer | Repositories and services, with `depends_on` and `used_by`; an incident kind |
-| business | Clients, and deals and invoices as goals; a commitment kind |
+| people | Archetypes (stranger, colleague, close friend, family, recruiter, landlord, professor, bureaucrat) people `extends:` and inherit guidelines and contact cadence from, with stakes and autonomy only you set; groups; identity keys, birthdays and succession on people; your voice per language and `## Never say` / `## Boundaries` on your own note; a `rollup` kind (one conversation's numbers, no text) and a `moment` kind (a gist) |
+| developer | Repositories and services, with `depends_on` and `used_by`; an incident kind; decisions logged on the repo they shape |
+| business | Clients, and deals and invoices as goals; a commitment kind that opens a deal with its counterparty and due date |
 | student | Courses, and assignments as goals; a lecture kind; a timetable as repeating goals |
 | household | Assets, and chores and bills as repeating goals; a purchase kind |
 
 Because a preset is only notes, nothing in it is magic: you can read every definition, change it, or write your own.
 
-<Aside kind="lore" title="Coming soon">
+Pick presets when you create a vault (in Setup, or `hippo init --preset people student`), or add one later:
 
-`hippo preset add <name>` will add a preset to an existing vault, merging its notes with yours. Until it ships, copy the notes you want into `_hippo/schema/` by hand.
+```bash
+npx @mehrad77/hippocampus -v ~/vaults/my-vault preset add developer
+```
 
-</Aside>
+Adding a preset copies only what your vault doesn't have, merges its fields into types you already have (a `merge: true` note, like the people preset's additions to people), adds its domains and relations to the config and its name under `presets:`, and appends its sections to your own note when they're missing. It commits exactly those files. Files you already have stay as they are unless you pass `--force`.
+
+Along an `extends:` chain the nearest cadence wins: a colleague's `1m` holds even though the stranger it extends says `none`. Archetypes and groups named in tags are weighed together, and a `none` among them wins.

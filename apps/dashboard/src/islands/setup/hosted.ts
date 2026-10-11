@@ -213,6 +213,8 @@ export interface CampaignDraft {
   domains: string[];
   /** Lay the fictional example campaign over the template. */
   seed: boolean;
+  /** Presets to add, in the order they were ticked. */
+  presets: string[];
   secrets: "create" | "skip";
   /** The age public key made in the browser; the private half never leaves it. */
   recipient?: string;
@@ -221,7 +223,7 @@ export interface CampaignDraft {
 }
 
 export function newDraft(timezone: string): CampaignDraft {
-  return { campaign: "", human: "player", timezone, domains: [...TEMPLATE_DOMAINS], seed: false, secrets: "create", saved: false };
+  return { campaign: "", human: "player", timezone, domains: [...TEMPLATE_DOMAINS], seed: false, presets: [], secrets: "create", saved: false };
 }
 
 export function draftProblems(d: CampaignDraft): { campaign?: string; human?: string; timezone?: string; secrets?: string } {
@@ -244,6 +246,7 @@ export function initRequest(d: CampaignDraft, repoId: number): HostedInitRequest
     timezone: d.timezone.trim(),
     domains: d.domains,
     ...(d.seed ? { seed: "example-relocation" as const } : {}),
+    ...(d.presets?.length ? { presets: d.presets } : {}),
     ...(d.secrets === "create" && d.recipient ? { recipient: d.recipient } : {}),
   };
 }

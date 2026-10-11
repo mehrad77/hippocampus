@@ -48,6 +48,8 @@ export interface ResolvedKind {
   /** Yes/no, or per `data.channel` (`*` for channels not listed); see `countsAsContact` in kinds.ts. */
   countsAsContact: boolean | Record<string, boolean>;
   reducers: string[];
+  /** The goal type its commitments become, when it names one. */
+  goalType?: string;
   description: string;
   examples: Examples;
 }
@@ -256,6 +258,7 @@ function resolveKinds(config: HippoConfig, notes: Map<string, SourceNote>, warn:
       data: Object.fromEntries(Object.entries({ ...base?.data, ...def.data }).map(([k, f]) => [k, normalizeField(f)])),
       countsAsContact: def.counts_as_contact ?? base?.counts_as_contact ?? false,
       reducers: def.reducers ?? base?.reducers ?? [],
+      ...((def.goal_type ?? base?.goal_type) ? { goalType: def.goal_type ?? base?.goal_type } : {}),
       description: def.description ?? base?.description ?? "",
       examples,
     };

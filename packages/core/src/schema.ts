@@ -316,6 +316,8 @@ export const KindDef = z.looseObject({
   /** Whether it counts as contact with its targets (`stats.last_contact`): yes/no, or per `data.channel` (`*` for the rest). */
   counts_as_contact: z.union([z.boolean(), z.record(z.string(), z.boolean())]).optional(),
   reducers: list(z.string()),
+  /** For `task` kinds: the type of goal their commitments become (`deal`); else the vault's default goal type. */
+  goal_type: opt(z.string()),
   description: opt(z.string()),
 });
 export type KindDef = z.infer<typeof KindDef>;
@@ -360,6 +362,8 @@ const ConfigObject = z.object({
   relations: z.array(RelationDef).default([]),
   /** Tag vocabulary used for lanes/authority (e.g. residency, housing). */
   domains: z.array(z.string()).default([]),
+  /** Presets laid over the template, in the order they were added (see presets.ts). */
+  presets: z.array(z.coerce.string()).default([]),
   folders: z
     .object({
       inbox: z.string().default("inbox"),

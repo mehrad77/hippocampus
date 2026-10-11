@@ -26,16 +26,18 @@ These go before the command, e.g. `hippo -v ~/vaults/my-vault validate`.
 
 | Command | What it does |
 | --- | --- |
-| `init <dir> [--seed <name-or-path>]` | Create a vault from the template in a new or empty folder. `--seed example-relocation` adds the fictional example, or pass your own seed folder. `--campaign` (the vault's name), `--human` (your id, default `player`), `--timezone` and `--domains a,b` fill in the config; add more humans under `humans:` in `_hippo/config.yaml`. Also runs `git init` |
+| `init <dir> [--seed <name-or-path>]` | Create a vault from the template in a new or empty folder. `--seed example-relocation` adds the fictional example, or pass your own seed folder. `--preset <name…>` adds presets. `--name` (the vault's name; `--campaign` is the older flag), `--human` (an id, default `player`; repeat it for several humans, the primary first), `--timezone` and `--domains a,b` fill in the config. Also runs `git init` |
+| `preset list` | The presets this version bundles, with what each adds |
+| `preset add <name> [--force]` | Add a preset to the vault: copy what it doesn't have, merge the preset's fields into your types, add its domains and relations, append its sections to your note, and commit exactly those files. `--force` replaces files you already have; `--as <human>` picks whose note gets the sections |
 | `dashboard` | Open the dashboard on 127.0.0.1 (`-p <port>`, default 4747), through a one-time sign-in link. `--no-open` only prints the link. `--demo` for the fictional example, `--mcp <url>` (token from `HIPPO_MCP_TOKEN` or `--token`) for any Hippocampus MCP server. `--as <human>` picks which of the vault's humans the dashboard acts as (default: the first). With no vault yet, it opens Setup |
 | `serve [--agent <id>] [--http <port>]` | The MCP server, over stdio (bound to `--agent`), or over HTTP at `127.0.0.1:<port>/mcp?agent=<id>`. It includes the curator's `sleep_*` tools, so a local agent can run sleep |
 | `sleep` | Consolidate the inbox with the configured model: pull, curate, audit, commit, push. `--limit <n>`, `--dry-run`, `--no-git`, `--no-push` |
 | `audit [--since <when>] [--range <a..b>]` | Check recent commits by agents and the curator (their `Hippo-Actor` trailer) against what each may change. Default: the last 26 hours. Prints commit, path and rule, never content |
-| `remember <text...>` | Write an episode from the shell. As you by default; `-a <id>` for an agent, `-k <kind>` for any of the vault's kinds (default `fact`; an unknown one is filed as an observation), `--secret` |
+| `remember [text...]` | Write an episode from the shell. As you by default; `-a <id>` for an agent, `-k <kind>` for any of the vault's kinds (default `fact`; an unknown one is filed as an observation), `--data key=value` for its typed data (repeat it; a repeated key makes a list; a data-only kind needs no text), `--confidential`, `--secret` |
 | `handbook` | Regenerate `HANDBOOK.md` |
 | `validate` | Load the vault and report its format version, counts, and problems such as duplicate note names or invalid frontmatter, plus advisory shape notes against the vault's types and kinds |
-| `migrate [--dry-run]` | Upgrade the vault's file format to this version of the tool, e.g. format 1's quests and clocks to format 2's goals and progress |
-| `fmt` | Re-render every note: normalize frontmatter, regenerate the facts, relations, progress and other managed regions |
+| `migrate [--dry-run]` | Upgrade the vault's file format to this version of the tool, e.g. format 1's quests and clocks to format 2's goals and progress. In a git vault it commits exactly the files it changed, as the `migration` actor |
+| `fmt [--stats]` | Re-render every note: normalize frontmatter, regenerate the facts, relations, progress and other managed regions. `--stats` first recounts every note's contact stats from the chronicle |
 | `index` | Rebuild the search index, with embeddings if configured |
 | `secrets keygen [--reuse]` | Create the age identity and write its public key into the vault config. `--reuse` uses the identity already on this machine (for a second vault) |
 | `secrets show <entity> [field]` | Decrypt an entity's secret facts on this machine |

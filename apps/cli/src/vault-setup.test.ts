@@ -44,6 +44,19 @@ describe("initVault", () => {
     expect(existsSync(join(target, ".git"))).toBe(true);
   });
 
+  it("adds presets and several humans, the primary first", async () => {
+    const target = join(tmp, "people");
+    await initVault({ target, assets: assetRoot(), humans: [{ id: "sam" }, { id: "player" }], presets: ["people", "student"] });
+    const vault = await Vault.load(new FsStore(target));
+    expect(vault.config.humans.map((h) => h.id)).toEqual(["sam", "player"]);
+    expect(vault.config.presets).toEqual(["people", "student"]);
+    expect(vault.schema.type("assignment")?.capabilities).toEqual(["goal"]);
+    expect(vault.entities.get("stranger")?.fm.type).toBe("archetype");
+    expect(readFileSync(join(target, "characters/sam.md"), "utf8")).toContain("## Never say");
+    await expect(initVault({ target: join(tmp, "nope"), assets: assetRoot(), presets: ["pirates"] })).rejects.toThrow(/no preset "pirates"/);
+    expect(existsSync(join(tmp, "nope"))).toBe(false);
+  });
+
   it("copies a bundled seed and keeps its own player character", async () => {
     const target = join(tmp, "demo");
     await initVault({ target, seed: "example-relocation", assets: assetRoot() });

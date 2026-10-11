@@ -1,3 +1,4 @@
+import { demoPresets } from "./demo-setup.ts";
 import { HttpError, errorResponse, json, readJson, securityHeaders } from "./http.ts";
 import type { HostedConnectedApp, HostedCuratorActionsResult, HostedInitResult, HostedKeyInfo, HostedMintedKey, HostedRepo, HostedSessionInfo, HostedSetupStatus, HostedVault, SetupItem, Snippet } from "./setup.ts";
 import { capabilities, type CuratorStatus, type DashboardSource, type SessionInfo } from "./source.ts";
@@ -150,6 +151,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       ...(state.vault ? { vault: state.vault, keys: state.keys, curatorActions: state.curatorActions } : {}),
       publicUrl,
       mcpUrl: `${publicUrl}/mcp`,
+      presets: demoPresets(),
       items: [],
     };
     s.items = items(s);

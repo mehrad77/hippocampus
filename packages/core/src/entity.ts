@@ -210,9 +210,10 @@ export function renderEntity(e: Entity, opts: { goal?: boolean } = {}): string {
   return renderDoc(orderedFrontmatter(e.fm), body);
 }
 
-/** The human's own guidelines: the prose under a `## Guidelines` heading, outside managed regions. */
+/** The human's own guidelines: the prose under a `## Guidelines` heading, outside managed regions and comments. */
 export function getHumanGuidelines(e: Entity): string {
-  const prose = humanText(e.body);
+  // Comments hold examples and hints (the people preset's), not rules.
+  const prose = humanText(e.body).replace(/<!--[\s\S]*?-->/g, "").replace(/%%[\s\S]*?%%/g, "");
   const m = /^##[ \t]+Guidelines[ \t]*$/im.exec(prose);
   if (!m) return "";
   const rest = prose.slice(m.index + m[0].length);
