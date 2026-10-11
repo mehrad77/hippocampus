@@ -35,6 +35,7 @@ export class VaultHost extends DurableObject<HostedEnv> {
         app: new GitHubApp({ appId: s.appId, privateKey: s.privateKey, apiUrl: s.apiUrl }),
         apiUrl: s.apiUrl,
         webUrl: s.oauthUrl,
+        publicUrl: s.publicUrl,
         // The object reads the account's sealed GitLab tokens from the registry, and refreshes them there.
         ...(s.gitlab ? gitlabDeps(s.gitlab, new GitLabAccess(s.gitlab, new Registry(d1(env.REGISTRY)))) : {}),
         embedding: hostedEmbedding(env, { ai: env.AI }),
