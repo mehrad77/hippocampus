@@ -87,14 +87,21 @@
    * blue 50, green 50), re-stepped from Carbon's chart order so every adjacent pair clears the
    * colorblind (ΔE 15.8) and normal-vision (19.6) floors with 3:1 contrast on white. */
   --t-faction: #6929c4;
-  --t-quest: #1192e8;
+  --t-goal: #1192e8;
+  /* v1 name of goal */
+  --t-quest: var(--t-goal);
   --t-location: #eb6200;
   --t-item: #9f1853;
   --t-character: #009d9a;
   --t-party: #8e6a00;
   --t-lore: #4589ff;
-  --t-campaign: #24a148;
+  --t-arc: #24a148;
+  /* v1 name of arc */
+  --t-campaign: var(--t-arc);
   --t-other: #8d8d8d;
+  /* Confidential values (◐) and proposals: always shown with their glyph and word too. */
+  --t-confidential: #6929c4;
+  --t-proposal: #0043ce;
 
   --chart-surface: var(--surface);
   --grid: #e0e0e0;
@@ -164,14 +171,21 @@
      * yellow 50, blue 50, green 50). Worst adjacent colorblind ΔE is 6.9, the floor band: allowed because
      * an entity's type is always also named (chips, legends, map labels), never shown by color alone. */
     --t-faction: #8a3ffc;
-    --t-quest: #1192e8;
+    --t-goal: #1192e8;
+    /* v1 name of goal */
+    --t-quest: var(--t-goal);
     --t-location: #eb6200;
     --t-item: #d02670;
     --t-character: #009d9a;
     --t-party: #b28600;
     --t-lore: #4589ff;
-    --t-campaign: #24a148;
+    --t-arc: #24a148;
+    /* v1 name of arc */
+    --t-campaign: var(--t-arc);
     --t-other: #8d8d8d;
+    /* Confidential values (◐) and proposals: always shown with their glyph and word too. */
+    --t-confidential: #a56eff;
+    --t-proposal: #78a9ff;
     --grid: #393939;
     --series-1: #8a3ffc;
     --series-2: #1192e8;
@@ -227,14 +241,21 @@
    * yellow 50, blue 50, green 50). Worst adjacent colorblind ΔE is 6.9, the floor band: allowed because
    * an entity's type is always also named (chips, legends, map labels), never shown by color alone. */
   --t-faction: #8a3ffc;
-  --t-quest: #1192e8;
+  --t-goal: #1192e8;
+  /* v1 name of goal */
+  --t-quest: var(--t-goal);
   --t-location: #eb6200;
   --t-item: #d02670;
   --t-character: #009d9a;
   --t-party: #b28600;
   --t-lore: #4589ff;
-  --t-campaign: #24a148;
+  --t-arc: #24a148;
+  /* v1 name of arc */
+  --t-campaign: var(--t-arc);
   --t-other: #8d8d8d;
+  /* Confidential values (◐) and proposals: always shown with their glyph and word too. */
+  --t-confidential: #a56eff;
+  --t-proposal: #78a9ff;
   --grid: #393939;
   --series-1: #8a3ffc;
   --series-2: #1192e8;
@@ -306,14 +327,21 @@
 
   /* Entity types (categorical, fixed order). */
   --t-faction: #2f6fb0;
-  --t-quest: #c4541f;
+  --t-goal: #c4541f;
+  /* v1 name of goal */
+  --t-quest: var(--t-goal);
   --t-location: #24976b;
   --t-item: #b07d00;
   --t-character: #c2577f;
   --t-party: #3f7d1a;
   --t-lore: #5b46b0;
-  --t-campaign: #d0453f;
+  --t-arc: #d0453f;
+  /* v1 name of arc */
+  --t-campaign: var(--t-arc);
   --t-other: #8a7d6a;
+  /* Confidential values (◐) and proposals: always shown with their glyph and word too. */
+  --t-confidential: #5b46b0;
+  --t-proposal: #2f6fb0;
 
   /* Charts */
   --chart-surface: var(--surface);
@@ -377,14 +405,21 @@
     --retconned: #aeb2b8;
     --retconned-bg: #2a2a2b;
     --t-faction: #4f8fd6;
-    --t-quest: #d9692e;
+    --t-goal: #d9692e;
+    /* v1 name of goal */
+    --t-quest: var(--t-goal);
     --t-location: #2aa57a;
     --t-item: #b3820d;
     --t-character: #d26a93;
     --t-party: #5f9b2f;
     --t-lore: #8f7ee6;
-    --t-campaign: #e06a62;
+    --t-arc: #e06a62;
+    /* v1 name of arc */
+    --t-campaign: var(--t-arc);
     --t-other: #8b806f;
+    /* Confidential values (◐) and proposals: always shown with their glyph and word too. */
+    --t-confidential: #8f7ee6;
+    --t-proposal: #4f8fd6;
     --grid: #2e271f;
     --shadow-1: 0 1px 0 rgb(255 220 160 / 0.04) inset, 0 1px 2px rgb(0 0 0 / 0.4);
     --shadow-2: 0 1px 0 rgb(255 220 160 / 0.05) inset, 0 14px 32px -16px rgb(0 0 0 / 0.8), 0 2px 6px -2px rgb(0 0 0 / 0.5);
@@ -431,14 +466,21 @@
   --retconned: #aeb2b8;
   --retconned-bg: #2a2a2b;
   --t-faction: #4f8fd6;
-  --t-quest: #d9692e;
+  --t-goal: #d9692e;
+  /* v1 name of goal */
+  --t-quest: var(--t-goal);
   --t-location: #2aa57a;
   --t-item: #b3820d;
   --t-character: #d26a93;
   --t-party: #5f9b2f;
   --t-lore: #8f7ee6;
-  --t-campaign: #e06a62;
+  --t-arc: #e06a62;
+  /* v1 name of arc */
+  --t-campaign: var(--t-arc);
   --t-other: #8b806f;
+  /* Confidential values (◐) and proposals: always shown with their glyph and word too. */
+  --t-confidential: #8f7ee6;
+  --t-proposal: #4f8fd6;
   --grid: #2e271f;
   --shadow-1: 0 1px 0 rgb(255 220 160 / 0.04) inset, 0 1px 2px rgb(0 0 0 / 0.4);
   --shadow-2: 0 1px 0 rgb(255 220 160 / 0.05) inset, 0 14px 32px -16px rgb(0 0 0 / 0.8), 0 2px 6px -2px rgb(0 0 0 / 0.5);

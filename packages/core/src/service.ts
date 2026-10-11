@@ -1,6 +1,6 @@
 import { actorProps } from "./actor.ts";
 import { displayName, formatValue, getHumanGuidelines, getSummary, type Entity } from "./entity.ts";
-import { addDuration, applyGoalUpdate, getObjectives, goalProps, goalStateOf, legacyClocks, nextDue, type Clock, type GoalState, type GoalUpdate, type Progress, type Repeat } from "./goal.ts";
+import { applyGoalUpdate, getObjectives, goalProps, goalStateOf, legacyClocks, nextDue, type Clock, type GoalState, type GoalUpdate, type Progress, type Repeat } from "./goal.ts";
 import { createEpisode, type NewEpisode } from "./episode.ts";
 import { HANDBOOK_PATH, renderHandbook, renderOnboarding } from "./handbook.ts";
 import { validateEpisode } from "./kinds.ts";
@@ -16,15 +16,16 @@ import { ACTOR_TRAILER, actorTrailer, withTrailers } from "./trailers.ts";
 import { Vault, VaultError } from "./vault.ts";
 import {
   addDays,
+  cadenceOf,
   catalog,
   chroniclePage,
-  daysBetween,
   entityCard,
   entityDetail,
   episodeView,
   graph,
   isConfidentialField,
   lastSleepAt,
+  overdueContacts,
   overview,
   parseChronicleDay,
   readChronicle,
@@ -33,6 +34,7 @@ import {
   shown,
   upcomingDates,
   viewContext,
+  type CadenceView,
   type Catalog,
   type ChronicleEntryView,
   type ChroniclePage,
@@ -73,27 +75,6 @@ export interface GuidelinesView {
   items: Guideline[];
   /** Guidelines it inherits (`extends:`, inheritable tags), each with the note it comes from. */
   inherited: InheritedGuideline[];
-}
-
-/** How often to be in touch, and how late the next contact is. */
-export interface CadenceView {
-  /** `2w`, `1m`, or `none`. */
-  every: string;
-  /** When the next contact is due (the last contact plus `every`). */
-  due?: string;
-  /** Days past `due`, when it is past. */
-  overdueDays?: number;
-}
-
-export interface OverdueContact {
-  ref: string;
-  title: string;
-  last_contact: string;
-  cadence: string;
-  due: string;
-  days_overdue: number;
-  /** The group it's a `member_of`, if any. */
-  group?: string;
 }
 
 export interface EntityBrief {
@@ -201,46 +182,6 @@ function guidelinesView(vault: Vault, e: Entity): GuidelinesView {
     items: e.fm.guidelines ?? [],
     inherited: resolveInheritance(vault, e).guidelines.filter((g) => g.source !== e.slug),
   };
-}
-
-/** The effective cadence of `e` (own, else inherited or from its groups) and how overdue contact is on `today`. */
-function cadenceOf(vault: Vault, e: Entity, today: string): CadenceView | undefined {
-  const every = resolveInheritance(vault, e).cadence;
-  if (!every) return undefined;
-  const last = e.fm.stats?.last_contact;
-  const due = every !== "none" && last ? addDuration(last, every) : undefined;
-  const late = due ? daysBetween(due, today) : 0;
-  return { every, ...(due ? { due } : {}), ...(late > 0 ? { overdueDays: late } : {}) };
-}
-
-/**
- * Up to `cap` overdue contacts, most overdue first, spread across groups: each group's most overdue
- * comes before anyone's second, so one big group doesn't fill the list.
- */
-export function overdueContacts(vault: Vault, today: string, cap: number): OverdueContact[] {
-  const all: OverdueContact[] = [];
-  for (const e of vault.entities.values()) {
-    if (vault.schema.has(e.fm.type, "actor") || !e.fm.stats?.last_contact) continue;
-    const c = cadenceOf(vault, e, today);
-    if (!c?.overdueDays || !c.due) continue;
-    const group = e.fm.relations.filter((r) => r.rel === "member_of").map((r) => vault.resolve(r.target)?.slug).find(Boolean);
-    all.push({ ref: link(e.slug), title: displayName(e), last_contact: e.fm.stats.last_contact, cadence: c.every, due: c.due, days_overdue: c.overdueDays, ...(group ? { group: link(group) } : {}) });
-  }
-  all.sort((a, b) => b.days_overdue - a.days_overdue || a.ref.localeCompare(b.ref));
-  const picked: OverdueContact[] = [];
-  const rounds = new Map<string, number>();
-  for (const o of all) rounds.set(o.group ?? o.ref, 0);
-  // Round r takes the r-th most overdue of each group, in overall order.
-  for (let round = 0; picked.length < cap && picked.length < all.length; round++) {
-    for (const o of all) {
-      if (picked.length >= cap) break;
-      const key = o.group ?? o.ref;
-      if (picked.includes(o) || rounds.get(key)! > round) continue;
-      picked.push(o);
-      rounds.set(key, rounds.get(key)! + 1);
-    }
-  }
-  return picked.sort((a, b) => b.days_overdue - a.days_overdue || a.ref.localeCompare(b.ref));
 }
 
 /** Whether a chronicle entry is about `e`: it touched it, or its text links it. */

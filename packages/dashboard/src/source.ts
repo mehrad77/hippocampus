@@ -1,4 +1,4 @@
-import type { Catalog, ChroniclePage, EntityDetail, EpisodeData, EpisodeKind, Graph, NewPartyMember, Overview, QuestUpdate, SearchResult, Shown } from "@hippocampus/core";
+import type { Catalog, ChroniclePage, EntityDetail, EpisodeData, EpisodeKind, GoalUpdate, Graph, NewPartyMember, Overview, ProposalDecision, QuestUpdate, SearchResult, Shown } from "@hippocampus/core";
 
 /** Where the dashboard's data comes from. `setup` means no vault yet: only Session Zero works. */
 export type Mode = "local" | "github" | "mcp" | "worker" | "demo" | "setup";
@@ -11,7 +11,7 @@ export interface VaultInfo {
   url?: string;
 }
 
-/** Whose name actions are filed under: the human, or (over MCP) the token's agent. */
+/** Whose name actions are filed under: one of the vault's humans, or (over MCP) the token's agent. */
 export interface Actor {
   kind: "human" | "agent";
   id: string;
@@ -20,8 +20,14 @@ export interface Actor {
 export interface SourceInfo {
   mode: Mode;
   vault: VaultInfo;
+  /** The vault's name. */
+  name?: string;
+  /** @deprecated Same as `name`. */
   campaign: string;
+  /** The primary human. */
   human: string;
+  /** Every human's id, the primary first. */
+  humans?: string[];
   actor: Actor;
 }
 
@@ -47,6 +53,15 @@ export interface IntroductionDecision {
 
 export type IntroductionResult = { decision: "approve"; agent: string; path: string } | { decision: "dismiss"; agent: string };
 
+/** A human settles a proposal or a possible merge (merges can only be declined). */
+export interface ProposalChoice {
+  decision: "accept" | "decline";
+  /** A value typed by the human instead of the proposed one (refused for secret fields). */
+  value?: string;
+  /** Index into the proposal's claims (default: the latest). */
+  claim?: number;
+}
+
 export interface Remember {
   text?: string;
   kind?: EpisodeKind;
@@ -71,7 +86,12 @@ export interface DashboardSource {
   chronicle(month?: string): Promise<ChroniclePage>;
   search(query: string, limit?: number): Promise<SearchResult>;
   rule?(dispute: string, choice: RuleChoice, via?: string): Promise<RuleResult>;
+  goal?(ref: string, update: GoalUpdate): Promise<{ goal: string; changes: string[] }>;
+  /** @deprecated The v1 shape of `goal`; sources that have `goal` may leave it out (the API translates). */
   quest?(ref: string, update: QuestUpdate): Promise<{ quest: string; changes: string[] }>;
+  proposal?(ref: string, choice: ProposalChoice, via?: string): Promise<ProposalDecision>;
+  /** A human withdraws a fact (`field`, or `field` in `scope`): it becomes retconned. */
+  retract?(ref: string, field: string, scope?: string, via?: string): Promise<{ entity: string; field: string }>;
   remember?(input: Remember): Promise<{ id: string; path: string }>;
   addParty?(input: NewPartyMember, via?: string): Promise<{ slug: string; path: string }>;
   introduction?(input: IntroductionDecision, via?: string): Promise<IntroductionResult>;
@@ -103,7 +123,14 @@ export type SetupKind = "local" | "hosted" | "none";
 
 export interface Capabilities {
   rule: boolean;
+  /** Goal updates (`POST actions/goal`). */
+  goal: boolean;
+  /** @deprecated Same as `goal`. */
   quest: boolean;
+  /** Accept or decline proposals and merges. */
+  proposal: boolean;
+  /** Withdraw a fact. */
+  retract: boolean;
   remember: boolean;
   party: boolean;
   /** Approve or dismiss agents' introductions. */
@@ -129,7 +156,10 @@ export interface SessionInfo extends Partial<Omit<SourceInfo, "mode">> {
 export function capabilities(source: DashboardSource | undefined, setup: SetupKind): Capabilities {
   return {
     rule: !!source?.rule,
-    quest: !!source?.quest,
+    goal: !!(source?.goal || source?.quest),
+    quest: !!(source?.goal || source?.quest),
+    proposal: !!source?.proposal,
+    retract: !!source?.retract,
     remember: !!source?.remember,
     party: !!source?.addParty,
     introductions: !!source?.introduction,

@@ -1,0 +1,164 @@
+---
+title: Goals and progress
+summary: Things to get done, with an owner, a status, a due date, objectives and a progress count. Goals can repeat, and agents update them directly.
+order: 4
+section: The table
+sigil: quest
+---
+import Progress from "../../components/guides/Progress.astro";
+import Aside from "../../components/guides/Aside.astro";
+import Link from "../../components/guides/Link.astro";
+
+A **goal** is something to get done: get the residence permit, find an apartment, enroll at Harbor University, pay the rent every month. Each goal is a note in `goals/` with an owner, a status and, as you need them, a due date, a progress count, a checklist of objectives and a repeat. Goals are the one kind of note agents may edit directly, through `update_goal`, so progress shows up without waiting for the night.
+
+Any type with the `goal` capability behaves this way. The vault's own `goal` type has it, and so can types you add, such as a bill or an assignment. See <Link guide="schema-and-presets">Types, kinds and presets</Link>.
+
+## Anatomy of a goal note
+
+```markdown
+---
+type: goal
+title: "Residence permit"
+tags: [residency, insurance]
+status: active
+owner: "[[residency-agent]]"
+counterparty: "[[migration-agency]]"
+due: 2026-11-30
+progress: { done: 3, total: 6 }
+relations: [{ rel: part_of, target: "[[lisbon-arc]]" }, { rel: requires, target: "[[apartment-hunt]]" }]
+---
+
+%% hippo:begin objectives %%
+- [x] Address proof
+- [x] Health insurance
+- [ ] Online application
+- [ ] Agency appointment
+- [ ] Residence card in hand
+%% hippo:end objectives %%
+
+## Notes
+Anything you write here is yours.
+```
+
+| Property | Meaning |
+| --- | --- |
+| `status` | `active`, `blocked`, `done`, `failed` or `dormant`, or a word from the type's own status list (below). Missing means `active` |
+| `owner` | Who drives it: an agent or a person, as a link |
+| `counterparty` | Who it's with or for, such as `[[migration-agency]]` or a landlord |
+| `due` | When it's due (ISO date) |
+| `progress` | `done` out of `total` steps, for progress that isn't a checklist |
+| `repeat` | How it comes back once done: `{ every: 1m }`, optionally with `after_last` |
+| `last_done` | When a repeating goal was last completed. Set for you |
+| `tags` | Domains, which also decide who has authority over the goal's facts |
+| `relations` | Usually `part_of` an arc; `requires` and `blocks` link goals to each other |
+
+The curator also renders a readable line into a `progress` region of the note, like `▰▰▰▱▱▱ 3/6 · due 2026-11-30`.
+
+## Statuses
+
+Every goal is in one of five core states:
+
+| State | Use it when |
+| --- | --- |
+| `active` | Work is under way (the default) |
+| `blocked` | Waiting on something outside your control |
+| `dormant` | Parked on purpose, for later |
+| `done` | Finished |
+| `failed` | Abandoned, or no longer possible |
+
+A type can bring its own words instead. Its type note lists them, each mapped to a core state, so a deal can be `won` or `lost` and still count as done or failed:
+
+```yaml
+# _hippo/schema/types/deal.md
+statuses: { open: active, waiting: blocked, won: done, lost: failed }
+```
+
+A word the type doesn't know is read as `active`; `update_goal` refuses it and lists the words it accepts.
+
+Every goal that isn't done or failed is listed in `HANDBOOK.md`, with its owner, progress and due date. When an agent calls `onboard`, its own goals come first.
+
+## Objectives
+
+Objectives are an ordinary markdown checklist inside the note's `objectives` region, so there are four ways to tick one:
+
+- **In Obsidian**: click the checkbox.
+- **On the Goals page** of the dashboard: tick it, or untick it if it was marked done by mistake.
+- **An agent**: `update_goal` with `complete`, `reopen` or `add`.
+- **The curator**: when a memory reports progress, often a `task`, the sleep marks objectives done or adds new next steps. A commitment someone makes ("I'll send the lease by Friday") can become a goal of its own.
+
+Matching is forgiving. Names are compared without case, accents or punctuation, and a partial name works too, so `"insurance"` finds "Health insurance". Completing an objective that doesn't exist adds it, already ticked. `add` skips objectives that already exist, and `reopen` ignores names it can't find.
+
+## Progress
+
+Some progress isn't a checklist. How much paperwork is left before the appointment? How many of the twelve lessons are done? For that, a goal carries one **progress** count: `done` out of `total`.
+
+<div class="guide-progresses">
+  <Progress name="Paperwork" done={3} total={6} due="2026-10-31" />
+  <Progress name="Lease signing" done={2} total={4} />
+  <Progress name="Language lessons" done={5} total={12} />
+</div>
+
+- **Moving it**: set `done` or `total`, or `tick` steps forward (`tick: 1`) or back (`tick: -1`). It always stays between zero and `total`, and shrinking `total` never leaves it overfull.
+- **On the Goals page** of the dashboard, you can move it by hand.
+
+<Aside kind="tip">
+
+Use objectives for steps you can name, and progress for momentum you can only count. "Pay first-term tuition" is an objective. "Four of six documents gathered" is progress.
+
+</Aside>
+
+<Aside kind="lore" title="Coming from clocks">
+
+Vault format 1 had quests with Blades-style clocks. `hippo migrate` (and the hosted app, on its own) turns each quest into a goal in `goals/`: `deadline` becomes `due`, the first clock becomes `progress`, and any further clocks become objectives such as `⏱ Lease signing 2/4`, so nothing is lost.
+
+</Aside>
+
+## Repeating goals
+
+Rent, a monthly call home, a yearly tax return: some goals come back. Give them a `repeat`:
+
+```yaml
+repeat: { every: 1m }                         # 1d, 2w, 1m, 1y
+repeat: { every: 2w, after_last: interaction } # two weeks after the last contact with the counterparty
+```
+
+When a repeating goal is marked done, it rolls over at once: `last_done` is set to today, `due` moves to the next date, the objectives are unticked, progress goes back to zero, and the status returns to active. With `after_last`, the next date counts from the latest memory of that kind with the counterparty (or with `interaction(with=[[someone]])`), so calling your landlord early pushes the next call back.
+
+## Due dates and what's coming up
+
+Hippocampus collects every date it can find:
+
+- goal `due` dates, including the next date of a repeating goal;
+- date facts on any note: fields the type declares as dates (a `recurs: yearly` one, like a birthday, at its next anniversary), or, when the type doesn't say, fields whose name looks like a date, such as `appointment_date` on the Migration Agency.
+
+Agents get them in `briefing`, which looks 30 days ahead by default (`horizon_days`, up to 365), along with contacts that are overdue. The dashboard's Home page looks 90 days ahead, with how many days are left.
+
+## Updating goals as an agent
+
+`update_goal` is applied **directly**: no inbox, no sleep. The goal note and `HANDBOOK.md` are saved at once, as one commit when the vault is on GitHub or on the hosted app.
+
+```json
+{
+  "goal": "residence-permit",
+  "complete": ["online application"],
+  "progress": { "tick": 1 },
+  "due": "2026-11-30"
+}
+```
+
+| Argument | Effect |
+| --- | --- |
+| `status` | A core state or a word of the type's statuses. `done` on a repeating goal rolls it over |
+| `complete` / `reopen` / `add` | Tick, untick, or add objectives |
+| `progress` | Any of `done`, `total`, `tick` |
+| `due` | The due date; `null` clears it |
+| `owner`, `counterparty` | Hand the goal to someone else, or say who it's with |
+| `repeat` | `{ every, after_last }`; `null` stops it repeating |
+
+The note's `updated_by` records who made the change. On the hosted app, an agent needs the `goal` scope to see this tool at all. Edits you make on the Goals page are filed under your own id. More on scopes in <Link guide="connecting-agents">Connecting agents</Link>.
+
+<Aside kind="tip" title="Older agents still work">
+
+`update_quest` is kept as another name for `update_goal`, so agents set up before goals keep working: its `quest` argument names the goal, a `clock` moves the progress and a `deadline` sets the due date. Keys and connectors that were granted the old `quest` scope get `goal`.
+
+</Aside>

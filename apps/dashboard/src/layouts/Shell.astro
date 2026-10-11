@@ -28,7 +28,7 @@ const [plainTitle, codexTitle] = titles ?? (page in TERMS ? TERMS[page as TermKe
 // [page, icon, badge key]; names come from TERMS in both voices.
 const play: [Page, IconName, string?][] = [
   ["tavern", "tavern"],
-  ["quests", "quest"],
+  ["goals", "quest"],
   ["council", "council", "council"],
   ["satchel", "satchel", "satchel"],
 ];
@@ -109,7 +109,7 @@ const current = (p: string) => (p === page || (page === "guide" && p === "guides
       </div>
       <nav class="tabbar" aria-label="Quick">
         <a href={href.page("tavern")} aria-current={current("tavern")}><NavIcon name="tavern" /><Term k="tavern" /></a>
-        <a href={href.page("quests")} aria-current={current("quests")}><NavIcon name="quest" /><Term plain="Goals" codex="Quests" /></a>
+        <a href={href.page("goals")} aria-current={current("goals")}><NavIcon name="quest" /><Term plain="Goals" codex="Quests" /></a>
         <button type="button" data-open-scribe aria-label="Add a note to the inbox"><NavIcon name="quill" /><Term plain="Add" codex="Scribe" /></button>
         <a href={href.page("council")} aria-current={current("council")}><NavIcon name="council" /><Term k="council" /><span class="navlink__badge" data-badge="council" hidden></span></a>
         <button type="button" data-open-drawer aria-label="More"><NavIcon name="menu" />More</button>

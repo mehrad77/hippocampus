@@ -6,8 +6,13 @@ import { daysLeftLabel, fieldLabel, plural, shortDate, urgency } from "../lib/fo
 import { groupRelations } from "../lib/graph.ts";
 import { useTerms, type Voice } from "../lib/prefs.ts";
 import { href, param } from "../lib/routes.ts";
-import type { DisputeView, EntityDetail, EpisodeView, FactDetail, PartyMember, QuestCard, Ref, SessionInfo } from "../lib/types.ts";
-import { ClockDial } from "../ui/ClockDial.tsx";
+import { postJson } from "../lib/api.ts";
+import { toast } from "../lib/events.ts";
+import { repeatLabel } from "../lib/progress.ts";
+import type { DisputeView, EntityDetail, EpisodeView, FactDetail, GoalCard, GuidelineView, PartyMember, Ref, SessionInfo } from "../lib/types.ts";
+import { ProgressBar } from "../ui/ProgressBar.tsx";
+import { errorMessage, settle } from "../ui/play/actions.ts";
+import { GoalSeal } from "../ui/play/Bits.tsx";
 import { EntityLink } from "../ui/EntityLink.tsx";
 import { Icon } from "../ui/Icon.tsx";
 import { AgentLink, FactTally, StatusChip, TypeLink, initial, useKindLabel, useRefs, useTypeLabel } from "../ui/lore/bits.tsx";
@@ -134,7 +139,8 @@ function Sheet({ slug, session }: { slug: string; session: SessionInfo }) {
               </p>
             </Panel>
           )}
-          <Ledger facts={d.facts} card={c} human={v("You", session.human ?? "you")} refs={refs} days={days} voice={voice} />
+          <Ledger facts={d.facts} card={c} me={session.actor?.kind === "human" ? session.actor.id : undefined} canRetract={!!session.capabilities.retract && session.actor?.kind === "human"} slug={c.slug} refs={refs} days={days} voice={voice} />
+          {d.guidelines && <Guidelines g={d.guidelines} me={session.actor?.kind === "human" ? session.actor.id : undefined} refs={refs} voice={voice} />}
           <Ties relations={d.relations} slug={c.slug} voice={voice} />
           <Panel title="Your notes" icon="quill" className="sheet-notes">
             {d.notes.trim() ? (
@@ -150,8 +156,12 @@ function Sheet({ slug, session }: { slug: string; session: SessionInfo }) {
           </Panel>
         </div>
         <div className="stack" style={{ ["--gap" as string]: "24px" }}>
-          {d.quest && <QuestBlock q={d.quest} voice={voice} />}
+          {(d.goal ?? d.quest) && <GoalBlock g={(d.goal ?? d.quest)!} voice={voice} />}
           {d.party && <PartyBlock p={d.party} voice={voice} />}
+          {(d.stats || d.cadence) && <Contact d={d} voice={voice} />}
+          {d.inherits && d.inherits.length > 0 && <Inherits refs={d.inherits} voice={voice} />}
+          {d.questions && d.questions.length > 0 && <Questions d={d} refs={refs} voice={voice} />}
+          {d.decisions && d.decisions.length > 0 && <Decisions d={d} refs={refs} voice={voice} />}
           {d.disputes.length > 0 && <Disputes disputes={d.disputes} voice={voice} />}
           {d.pending.length > 0 && <Pending episodes={d.pending} refs={refs} voice={voice} />}
           <Mentions d={d} refs={refs} voice={voice} />
@@ -226,6 +236,14 @@ function SheetHead({ d, session, refs, voice: { v } }: { d: EntityDetail; sessio
   );
 }
 
+/** Why an earlier value left: [plain, codex]. */
+const WHY: Record<string, [string, string]> = {
+  replaced: ["replaced", "overruled"],
+  succeeded: ["changed since", "succeeded"],
+  retconned: ["withdrawn", "retconned"],
+  ruled: ["decided", "ruled"],
+};
+
 /** [label, tooltip] per authority, in the plain and codex voices. */
 const AUTHORITY: Record<FactDetail["authority"], [plain: [string, string], codex: [string, string]]> = {
   human: [
@@ -242,14 +260,26 @@ const AUTHORITY: Record<FactDetail["authority"], [plain: [string, string], codex
   ],
 };
 
-function Ledger({ facts, card, human, refs, days, voice }: { facts: FactDetail[]; card: EntityDetail["card"]; human: string; refs: Map<string, Ref>; days: Map<string, string>; voice: Voice }) {
+interface LedgerProps {
+  facts: FactDetail[];
+  card: EntityDetail["card"];
+  /** The human the dashboard acts as: their facts read "you", other people's their name. */
+  me?: string;
+  canRetract: boolean;
+  slug: string;
+  refs: Map<string, Ref>;
+  days: Map<string, string>;
+  voice: Voice;
+}
+
+function Ledger({ facts, card, me, canRetract, slug, refs, days, voice }: LedgerProps) {
   const { v } = voice;
   return (
     <Panel title={v("Facts", "Ledger")} icon="codex" aside={facts.length ? <FactTally facts={card.facts} /> : undefined}>
       {facts.length ? (
         <ul className="ledger">
           {facts.map((f) => (
-            <FactRow key={f.field} f={f} human={human} refs={refs} days={days} voice={voice} />
+            <FactRow key={f.field} f={f} me={me} retract={canRetract ? () => retract(slug, f) : undefined} refs={refs} days={days} voice={voice} />
           ))}
         </ul>
       ) : (
@@ -261,8 +291,54 @@ function Ledger({ facts, card, human, refs, days, voice }: { facts: FactDetail[]
   );
 }
 
-function FactRow({ f, human, refs, days, voice: { t, v } }: { f: FactDetail; human: string; refs: Map<string, Ref>; days: Map<string, string>; voice: Voice }) {
-  const [label, help] = v(...AUTHORITY[f.authority]);
+/** A human withdraws a fact: it becomes "replaced" (retconned), and the next report about it starts over. */
+async function retract(slug: string, f: FactDetail): Promise<void> {
+  const field = f.name ?? f.field;
+  try {
+    await postJson("/actions/retract", { entity: slug, field, ...(f.scope ? { scope: f.scope } : {}) });
+    toast(`${fieldLabel(field)}${f.scope ? ` (${f.scope})` : ""}: withdrawn`, "ok");
+  } catch (err) {
+    toast(`${fieldLabel(field)}: ${errorMessage(err)}`, "error");
+  } finally {
+    void settle();
+  }
+}
+
+/** The fact's qualifiers: where it holds, when, how sure its source was, and who may set it. */
+function Qualifiers({ f, voice: { v } }: { f: FactDetail; voice: Voice }) {
+  const range = f.validFrom || f.validUntil ? `${f.validFrom ? shortDate(f.validFrom) : "…"} – ${f.validUntil ? shortDate(f.validUntil) : v("now", "now")}` : undefined;
+  if (!f.scope && !range && f.confidence === undefined && !f.humanOnly) return null;
+  return (
+    <div className="ledger__quals small">
+      {f.scope && (
+        <span className="chip" title={v(`Holds only in this context: ${f.scope}`, `Holds only where ${f.scope}`)}>
+          @ {f.scope}
+        </span>
+      )}
+      {range && (
+        <span className="chip" title={v("When this was true", "When this held")}>
+          <Icon name="hourglass" size={12} /> {range}
+        </span>
+      )}
+      {f.confidence !== undefined && (
+        <span className="chip" title={v("How sure the source was", "The source's own confidence")}>
+          {Math.round(f.confidence * 100)}% sure
+        </span>
+      )}
+      {f.humanOnly && (
+        <span className="chip chip--human-only" title={v("Only a person sets this; an agent's report becomes a suggestion for you", "Only a player sets this; an agent's word becomes a petition")}>
+          <Icon name="key" size={12} /> {v("people only", "players only")}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function FactRow({ f, me, retract, refs, days, voice }: { f: FactDetail; me?: string; retract?: () => void; refs: Map<string, Ref>; days: Map<string, string>; voice: Voice }) {
+  const { t, v } = voice;
+  const [confirm, setConfirm] = useState(false);
+  const mine = f.byHuman && (!me || f.by.toLowerCase() === me.toLowerCase());
+  const [label, help] = f.authority === "human" && !mine ? [v(`set by ${f.by}`, `${f.by}'s word`), v(`${f.by} set this; a person's word outranks every agent`, `${f.by}'s word outranks every agent`)] : v(...AUTHORITY[f.authority]);
   const hasProv = f.src.length > 0 || f.seenBy.length > 0 || f.was.length > 0;
   const bits = [
     f.src.length && v(plural(f.src.length, "source note"), plural(f.src.length, "source")),
@@ -271,7 +347,7 @@ function FactRow({ f, human, refs, days, voice: { t, v } }: { f: FactDetail; hum
   ].filter(Boolean);
   return (
     <li className={`ledger__row ledger__row--${f.status}`}>
-      <div className="ledger__field">{fieldLabel(f.field)}</div>
+      <div className="ledger__field">{fieldLabel(f.name ?? f.field)}</div>
       <div className="ledger__main">
         <span className="ledger__value">
           <Value shown={f} />
@@ -283,8 +359,9 @@ function FactRow({ f, human, refs, days, voice: { t, v } }: { f: FactDetail; hum
           </a>
         )}
       </div>
+      <Qualifiers f={f} voice={voice} />
       <div className="ledger__who">
-        <span>{f.byHuman ? <strong>{human}</strong> : <AgentLink agent={f.by} refs={refs} />}</span>
+        <span>{f.byHuman ? <strong>{mine ? v("You", me ?? "you") : f.by}</strong> : <AgentLink agent={f.by} refs={refs} />}</span>
         <span className={`authority authority--${f.authority}`} title={help}>
           {f.authority === "human" && <Icon name="key" size={13} />}
           {label}
@@ -294,6 +371,23 @@ function FactRow({ f, human, refs, days, voice: { t, v } }: { f: FactDetail; hum
           <span className="flag flag--stale" title={v("Confirmed, but nobody has re-checked it for a while", "Canon, but nobody has confirmed it for a while")}>
             <Icon name="hourglass" /> {v("needs re-checking", "stale")}
           </span>
+        )}
+        {retract && f.status !== "retconned" && !f.secret && (
+          confirm ? (
+            <span className="row" style={{ ["--gap" as string]: "6px" }}>
+              <span className="small">{v("Withdraw this fact?", "Strike it from canon?")}</span>
+              <button type="button" className="btn btn--sm btn--danger" onClick={() => (setConfirm(false), retract())}>
+                {v("Withdraw", "Retcon")}
+              </button>
+              <button type="button" className="btn btn--sm btn--ghost" onClick={() => setConfirm(false)}>
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <button type="button" className="btn btn--sm btn--ghost" onClick={() => setConfirm(true)} title={v("Mark it replaced; the next report about it starts over", "Retcon it; the next report starts over")}>
+              {v("Withdraw", "Retcon")}
+            </button>
+          )
         )}
       </div>
       {hasProv && (
@@ -342,6 +436,7 @@ function FactRow({ f, human, refs, days, voice: { t, v } }: { f: FactDetail; hum
                           <Value shown={w} />
                         </span>
                         <span className="small muted">
+                          {w.why && <>{WHY[w.why] ? v(...WHY[w.why]!) : w.why} · </>}
                           {w.by && <>by {w.by}</>}
                           {w.at && (
                             <>
@@ -395,49 +490,76 @@ function Ties({ relations, slug, voice: { v } }: { relations: EntityDetail["rela
   );
 }
 
-function QuestBlock({ q, voice: { v } }: { q: QuestCard; voice: Voice }) {
-  const done = q.objectives.filter((o) => o.done).length;
-  const u = urgency(q.daysLeft);
+function GoalBlock({ g, voice: { v } }: { g: GoalCard; voice: Voice }) {
+  const done = g.objectives.filter((o) => o.done).length;
+  const u = urgency(g.daysLeft);
+  const due = g.nextDue ?? g.due ?? g.deadline;
+  const repeats = repeatLabel(g.repeat);
   return (
-    <Panel title={v("Goal", "Quest")} icon="quest" aside={<a href={href.page("quests", `#${q.slug}`)}>{v("All goals →", "Quest board →")}</a>}>
+    <Panel title={v("Goal", "Quest")} icon="quest" aside={<a href={href.page("goals", `#${g.slug}`)}>{v("All goals →", "Quest board →")}</a>}>
       <div className="stack">
         <dl className="kv">
           <dt>Status</dt>
           <dd>
-            <StatusChip status={q.status} />
+            <GoalSeal status={g.state ?? g.status} word={g.word} />
           </dd>
-          {q.owner && (
+          {g.owner && (
             <>
               <dt>Owner</dt>
               <dd>
-                <EntityLink entity={q.owner} />
+                <EntityLink entity={g.owner} />
               </dd>
             </>
           )}
-          {q.deadline && (
+          {g.counterparty && (
             <>
-              <dt>Deadline</dt>
+              <dt>{v("With", "With")}</dt>
               <dd>
-                <DateText date={q.deadline} /> <span className={`small due due--${u}`}>· {daysLeftLabel(q.daysLeft)}</span>
+                <EntityLink entity={g.counterparty} />
               </dd>
             </>
           )}
-          {q.campaign && (
+          {due && (
             <>
-              <dt>{v("Project", "Campaign")}</dt>
+              <dt>{repeats && due !== g.due ? "Next due" : "Due"}</dt>
               <dd>
-                <EntityLink entity={q.campaign} />
+                <DateText date={due} /> <span className={`small due due--${u}`}>· {daysLeftLabel(g.daysLeft)}</span>
+              </dd>
+            </>
+          )}
+          {repeats && (
+            <>
+              <dt>Repeats</dt>
+              <dd>
+                {repeats}
+                {g.lastDone && <span className="small muted"> · last done {shortDate(g.lastDone)}</span>}
+              </dd>
+            </>
+          )}
+          {g.campaign && (
+            <>
+              <dt>{v("Part of", "Campaign")}</dt>
+              <dd>
+                <EntityLink entity={g.campaign} />
+              </dd>
+            </>
+          )}
+          {g.progress && (
+            <>
+              <dt>Progress</dt>
+              <dd>
+                <ProgressBar name={g.title} done={g.progress.done} total={g.progress.total} size="sm" />
               </dd>
             </>
           )}
         </dl>
-        {q.objectives.length > 0 && (
+        {g.objectives.length > 0 && (
           <div className="stack" style={{ ["--gap" as string]: "8px" }}>
             <div className="row small muted">
-              <Runes done={done} total={q.objectives.length} /> {done} of {q.objectives.length} {v("steps", "objectives")}
+              <Runes done={done} total={g.objectives.length} /> {done} of {g.objectives.length} {v("steps", "objectives")}
             </div>
             <ul className="objectives">
-              {q.objectives.map((o, i) => (
+              {g.objectives.map((o, i) => (
                 <li key={i} data-done={o.done ? "" : undefined}>
                   <span className="objectives__box" aria-hidden />
                   <span>
@@ -449,25 +571,194 @@ function QuestBlock({ q, voice: { v } }: { q: QuestCard; voice: Voice }) {
             </ul>
           </div>
         )}
-        {q.clocks.length > 0 && (
-          <div className="clocks">
-            {q.clocks.map((ck) => (
-              <div key={ck.name} className="clocks__item">
-                <ClockDial name={ck.name} segments={ck.segments} filled={ck.filled} size={52} />
-                <div>
-                  <strong>{ck.name}</strong>
-                  <span className="small muted">
-                    {ck.filled}/{ck.segments}
-                    {ck.deadline && (
-                      <span className={`due due--${urgency(ck.daysLeft)}`}> · {daysLeftLabel(ck.daysLeft)}</span>
-                    )}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
+      </div>
+    </Panel>
+  );
+}
+
+/** A guideline's standing: canon (✓) once enough sources or a person said it, else a rumor (?). */
+function GuidelineItem({ g, me, refs, source, voice: { v } }: { g: GuidelineView; me?: string; refs: Map<string, Ref>; source?: Ref; voice: Voice }) {
+  const status = g.status === "canon" ? "canon" : "rumor";
+  return (
+    <li className="mention">
+      <div className="mention__meta">
+        <Seal status={status} />
+        {g.scope && <span className="chip">@ {g.scope}</span>}
+        <span className="small muted">
+          {g.byHuman ? (me && g.by.toLowerCase() !== me.toLowerCase() ? g.by : v("you", "your word")) : <AgentLink agent={g.by} refs={refs} />}
+        </span>
+        {source && (
+          <span className="small muted">
+            {v("from", "inherited from")} <EntityLink entity={source} />
+          </span>
         )}
       </div>
+      <span className="mention__text">
+        <RichText text={g.rule} />
+      </span>
+    </li>
+  );
+}
+
+function Guidelines({ g, me, refs, voice }: { g: NonNullable<EntityDetail["guidelines"]>; me?: string; refs: Map<string, Ref>; voice: Voice }) {
+  const { v } = voice;
+  return (
+    <Panel title={v("Guidelines", "Customs")} icon="scroll" aside={v("how to deal with this", "how to treat this")}>
+      <div className="stack" style={{ ["--gap" as string]: "12px" }}>
+        {g.human.trim() && (
+          <div>
+            <div className="small muted">{v("Yours (the Guidelines section of the note)", "Your own (under ## Guidelines in the note)")}</div>
+            <Markdown text={g.human} />
+          </div>
+        )}
+        {g.items.length > 0 && (
+          <ul className="list">
+            {g.items.map((it, i) => (
+              <GuidelineItem key={i} g={it} me={me} refs={refs} voice={voice} />
+            ))}
+          </ul>
+        )}
+        {g.inherited.length > 0 && (
+          <ul className="list">
+            {g.inherited.map((it, i) => (
+              <GuidelineItem key={i} g={it} me={me} refs={refs} source={it.source} voice={voice} />
+            ))}
+          </ul>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function Contact({ d, voice: { v } }: { d: EntityDetail; voice: Voice }) {
+  const st = d.stats;
+  const c = d.cadence;
+  const counts = Object.entries(st?.counts ?? {}).filter(([k]) => !k.includes("/"));
+  return (
+    <Panel title={v("Contact", "Encounters")} icon="hourglass">
+      <dl className="kv">
+        {st?.last_contact && (
+          <>
+            <dt>{v("Last contact", "Last met")}</dt>
+            <dd>
+              <DateText date={st.last_contact} />
+            </dd>
+          </>
+        )}
+        {st?.first_met && (
+          <>
+            <dt>{v("First contact", "First met")}</dt>
+            <dd>
+              <DateText date={st.first_met} />
+            </dd>
+          </>
+        )}
+        {c && (
+          <>
+            <dt>{v("Keep in touch", "Cadence")}</dt>
+            <dd>
+              {c.every === "none" ? v("no schedule", "none") : `every ${c.every}`}
+              {c.due && (
+                <span className={`small due due--${c.overdueDays ? "overdue" : "far"}`}>
+                  {" "}
+                  · {c.overdueDays ? `${plural(c.overdueDays, "day")} overdue` : `next by ${shortDate(c.due)}`}
+                </span>
+              )}
+            </dd>
+          </>
+        )}
+        {counts.length > 0 && (
+          <>
+            <dt>{v("Times", "Tally")}</dt>
+            <dd className="row" style={{ ["--gap" as string]: "4px 10px" }}>
+              {counts.map(([k, n]) => (
+                <span key={k} className="chip">
+                  {k} · {n}
+                </span>
+              ))}
+            </dd>
+          </>
+        )}
+      </dl>
+    </Panel>
+  );
+}
+
+function Inherits({ refs, voice: { v } }: { refs: Ref[]; voice: Voice }) {
+  return (
+    <Panel title={v("Based on", "Inherits from")} icon="link" aside={v("defaults and guidelines come from these", "its customs come from these")}>
+      <ol className="row" style={{ ["--gap" as string]: "4px 10px", listStyle: "none", margin: 0, padding: 0 }}>
+        {refs.map((r, i) => (
+          <li key={r.slug}>
+            {i > 0 && (
+              <span className="muted" aria-hidden>
+                ›{" "}
+              </span>
+            )}
+            <EntityLink entity={r} />
+          </li>
+        ))}
+      </ol>
+    </Panel>
+  );
+}
+
+const QUESTION: Record<string, [glyph: string, plain: string, codex: string]> = {
+  open: ["?", "open", "open"],
+  answered: ["✓", "answered", "answered"],
+  dropped: ["✕", "dropped", "let go"],
+};
+
+function Questions({ d, refs, voice: { v } }: { d: EntityDetail; refs: Map<string, Ref>; voice: Voice }) {
+  const qs = [...(d.questions ?? [])].sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1));
+  return (
+    <Panel title={v("Open questions", "Riddles")} icon="eye" aside={`${qs.filter((q) => q.status === "open").length} open`}>
+      <ul className="list">
+        {qs.map((q) => {
+          const [glyph, plain, codex] = QUESTION[q.status] ?? QUESTION.open!;
+          return (
+            <li key={q.id} className="mention">
+              <div className="mention__meta">
+                <span className={`seal seal--${q.status === "open" ? "rumor" : q.status === "answered" ? "canon" : "retconned"}`}>
+                  <span className="seal__glyph" aria-hidden>
+                    {glyph}
+                  </span>
+                  {v(plain, codex)}
+                </span>
+                {q.by && <AgentLink agent={q.by} refs={refs} />}
+                {q.at && <RelTime at={q.at} />}
+              </div>
+              <span className="mention__text">
+                <RichText text={q.q} />
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </Panel>
+  );
+}
+
+function Decisions({ d, refs, voice: { v } }: { d: EntityDetail; refs: Map<string, Ref>; voice: Voice }) {
+  const list = [...(d.decisions ?? [])].reverse();
+  return (
+    <Panel title={v("Decisions", "Decrees")} icon="council">
+      <ul className="list">
+        {list.map((x) => (
+          <li key={x.id} className="mention">
+            <div className="mention__meta">
+              {x.by && <AgentLink agent={x.by} refs={refs} />}
+              {x.at && <RelTime at={x.at} />}
+              {x.revisit && <span className="chip">{v("revisit", "revisit")} {shortDate(x.revisit)}</span>}
+            </div>
+            <span className="mention__text">
+              <RichText text={x.what} />
+            </span>
+            {x.why && <span className="small muted">Why: {x.why}</span>}
+            {x.alternatives.length > 0 && <span className="small muted">{v("Instead of", "Over")}: {x.alternatives.join("; ")}</span>}
+          </li>
+        ))}
+      </ul>
     </Panel>
   );
 }
@@ -537,7 +828,9 @@ function Disputes({ disputes, voice: { t, v } }: { disputes: DisputeView[]; voic
           <li key={x.slug} className="mention">
             <div className="mention__meta">
               <strong>{fieldLabel(x.field)}</strong>
-              {x.status === "open" ? <Seal status="disputed" /> : <span className="chip">resolved</span>}
+              {x.kind === "proposal" && <span className="chip chip--proposal">{v("suggestion", "petition")}</span>}
+              {x.kind === "merge" && <span className="chip chip--proposal">{v("possible duplicate", "one soul?")}</span>}
+              {x.status === "open" ? x.kind === "conflict" ? <Seal status="disputed" /> : <span className="chip">{x.state ?? "pending"}</span> : <span className="chip">{x.state ?? "resolved"}</span>}
               {(x.resolved ?? x.opened) && <RelTime at={x.resolved ?? x.opened} />}
             </div>
             <div className="small">
@@ -553,7 +846,7 @@ function Disputes({ disputes, voice: { t, v } }: { disputes: DisputeView[]; voic
             </div>
             {x.status === "open" && (
               <a className="small" href={href.page("council", `#${x.slug}`)}>
-                {v("Decide →", "Rule on it →")}
+                {x.kind === "conflict" ? v("Decide →", "Rule on it →") : v("Accept or decline →", "Answer it →")}
               </a>
             )}
           </li>
@@ -580,7 +873,14 @@ function Pending({ episodes, refs, voice: { v } }: { episodes: EpisodeView[]; re
                 </span>
               )}
             </div>
-            {ep.secret || ep.text === null ? (
+            {ep.confidential && !ep.secret ? (
+              <span className="episode--sealed">
+                <span className="conf">
+                  <span aria-hidden>◐</span> confidential
+                </span>{" "}
+                {v("Kept out of every view until it's consolidated.", "Kept from the table until the curator reads it.")}
+              </span>
+            ) : ep.secret || ep.text === null ? (
               <span className="episode--sealed">
                 <span className="lock">
                   <Icon name="lock" size={14} /> {v("hidden", "sealed")}

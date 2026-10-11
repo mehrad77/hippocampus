@@ -3,16 +3,16 @@ import { emit } from "../lib/events.ts";
 import { daysLeftLabel, fieldLabel, plural, relTime, shortDate, titleCase, urgency } from "../lib/format.ts";
 import { useTerms, type Voice } from "../lib/prefs.ts";
 import { href } from "../lib/routes.ts";
-import { kindLabel } from "../lib/terms.ts";
-import type { Overview, QuestCard, SessionInfo } from "../lib/types.ts";
+import type { GoalCard, Overview, SessionInfo } from "../lib/types.ts";
 import { ActivityBars, StatusMeter } from "../ui/Charts.tsx";
-import { ClockDial } from "../ui/ClockDial.tsx";
 import { EntityLink } from "../ui/EntityLink.tsx";
 import { Icon } from "../ui/Icon.tsx";
 import { PageGate } from "../ui/PageGate.tsx";
 import { Empty, Panel, RelTime, Runes, SkeletonPanel } from "../ui/Parts.tsx";
 import { RichText } from "../ui/RichText.tsx";
-import { QuestSeal } from "../ui/play/Bits.tsx";
+import { ProgressBar } from "../ui/ProgressBar.tsx";
+import { GoalSeal } from "../ui/play/Bits.tsx";
+import { goalsOf, kindLabel } from "../ui/play/model.ts";
 import { Value } from "../ui/Value.tsx";
 
 export default function TavernView() {
@@ -31,13 +31,15 @@ function Tavern({ session }: { session: SessionInfo }) {
         <SkeletonPanel lines={6} />
       </div>
     );
-  const active = o.quests.filter((q) => q.status === "active" || q.status === "blocked");
-  const needs = o.attention.disputes.length + o.attention.waiting.length + o.attention.introductions.length + o.attention.unknownAgents.length;
+  const active = goalsOf(o).filter((g) => (g.state ?? g.status) === "active" || (g.state ?? g.status) === "blocked");
+  const goals = o.counts.goals ?? o.counts.quests;
+  const name = o.name ?? o.campaign;
+  const needs = o.attention.disputes.length + o.attention.waiting.length + o.attention.introductions.length + o.attention.unknownAgents.length + (o.attention.overdue?.length ?? 0);
   return (
     <div className="stack" style={{ ["--gap" as string]: "28px" }}>
       <header className="page-head">
         <div>
-          <div className="page-head__kicker">{v(o.campaign, `Previously on ${o.campaign}`)}</div>
+          <div className="page-head__kicker">{v(name, `Previously on ${name}`)}</div>
           <h1>{v("Home", "The Tavern")}</h1>
           <p className="page-head__lede">
             {greeting(o, needs, voice)}{" "}
@@ -60,7 +62,7 @@ function Tavern({ session }: { session: SessionInfo }) {
       <div className="stats">
         <Stat label="Open disputes" value={o.counts.disputes} note={o.counts.disputes ? v("need your decision", "await your ruling") : v("none open", "all settled")} href={href.page("council")} tone={o.counts.disputes ? "danger" : undefined} />
         <Stat label={v("In the inbox", "In the satchel")} value={o.counts.inbox} note={v("until the nightly update", "until the next sleep")} href={href.page("satchel")} />
-        <Stat label={v("Active goals", "Active quests")} value={(o.counts.quests.active ?? 0) + (o.counts.quests.blocked ?? 0)} note={o.counts.quests.blocked ? `${o.counts.quests.blocked} blocked` : "none blocked"} href={href.page("quests")} />
+        <Stat label={v("Active goals", "Active quests")} value={(goals.active ?? 0) + (goals.blocked ?? 0)} note={goals.blocked ? `${goals.blocked} blocked` : "none blocked"} href={href.page("goals")} />
         <Stat label={v("Confirmed facts", "Canon facts")} value={o.counts.facts.canon} note={v(`${o.counts.facts.rumor} unverified`, `${o.counts.facts.rumor} rumors`)} href={href.page("codex")} />
         <Stat label={v("Records", "Entities")} value={o.counts.entities} note={`${Object.keys(o.counts.byType).length} kinds`} href={href.page("codex")} />
       </div>
@@ -68,16 +70,16 @@ function Tavern({ session }: { session: SessionInfo }) {
       <div className="grid grid--main">
         <div className="stack" style={{ ["--gap" as string]: "24px" }}>
           <PreviouslyOn o={o} voice={voice} />
-          <Panel title={t("quests")} icon="quest" aside={<a href={href.page("quests")}>{v("All goals →", "All quests →")}</a>}>
+          <Panel title={t("goals")} icon="quest" aside={<a href={href.page("goals")}>{v("All goals →", "All quests →")}</a>}>
             {active.length ? (
               <div className="grid grid--2" style={{ ["--gap" as string]: "14px" }}>
-                {active.slice(0, 4).map((q) => (
-                  <QuestTile key={q.slug} q={q} />
+                {active.slice(0, 4).map((g) => (
+                  <GoalTile key={g.slug} g={g} />
                 ))}
               </div>
             ) : (
               <Empty icon="quest" title={v("No active goals", "No quests in motion")}>
-                {v("Add a goal note (quests/ folder) in Obsidian, or ask an agent to create one.", "Add a quest note in Obsidian, or ask your game master agent to post one.")}
+                {v("Add a goal note (goals/ folder) in Obsidian, or ask an agent to create one.", "Add a goal note in Obsidian, or ask an agent to post one.")}
               </Empty>
             )}
           </Panel>
@@ -100,8 +102,10 @@ function Tavern({ session }: { session: SessionInfo }) {
 }
 
 function greeting(o: Overview, needs: number, { v }: Voice): string {
-  const n = o.counts.disputes;
+  const n = o.attention.disputes.filter((d) => d.kind === "conflict").length;
+  const asks = o.attention.disputes.length - n;
   if (n) return v(`${plural(n, "dispute")} need${n === 1 ? "s" : ""} your decision.`, `${plural(n, "dispute")} await${n === 1 ? "s" : ""} your ruling.`);
+  if (asks) return v(`${plural(asks, "suggestion")} wait${asks === 1 ? "s" : ""} for your decision.`, `${plural(asks, "petition")} await${asks === 1 ? "s" : ""} your word.`);
   if (needs) return v("A few things need your attention.", "A few things need your eye.");
   return v("Nothing needs your attention.", "All quiet at the table.");
 }
@@ -116,7 +120,7 @@ function Stat({ label, value, note, href, tone }: { label: string; value: number
   );
 }
 
-function PreviouslyOn({ o, voice: { v, plain } }: { o: Overview; voice: Voice }) {
+function PreviouslyOn({ o, voice: { v, look } }: { o: Overview; voice: Voice }) {
   const entries = [...o.chronicle].reverse().slice(0, 8);
   return (
     <Panel title={v("Recent activity", "Previously on…")} icon="chronicle" aside={<a href={href.page("chronicle")}>{v("Full timeline →", "The whole chronicle →")}</a>}>
@@ -126,7 +130,7 @@ function PreviouslyOn({ o, voice: { v, plain } }: { o: Overview; voice: Voice })
             <li key={e.id} className={`timeline__item kind--${e.kind}`}>
               <div className="timeline__meta">
                 <EntityLink entity={{ slug: e.agent, title: titleCase(e.agent), type: "party" }} />
-                <span className="chip">{kindLabel(e.kind, plain)}</span>
+                <span className="chip">{kindLabel(e.kind, o.schema?.kinds, look)}</span>
                 <RelTime at={e.at} className="muted small" />
               </div>
               <RichText text={e.text} />
@@ -153,24 +157,31 @@ function PreviouslyOn({ o, voice: { v, plain } }: { o: Overview; voice: Voice })
   );
 }
 
-function QuestTile({ q }: { q: QuestCard }) {
-  const done = q.objectives.filter((x) => x.done).length;
-  const u = urgency(q.daysLeft);
+function GoalTile({ g }: { g: GoalCard }) {
+  const done = g.objectives.filter((x) => x.done).length;
+  const u = urgency(g.daysLeft);
+  const state = g.state ?? g.status ?? "active";
+  const due = g.nextDue ?? g.due ?? g.deadline;
   return (
-    <a className={`quest-tile quest-tile--${q.status}`} href={href.entity(q.slug)}>
+    <a className={`quest-tile quest-tile--${state}`} href={href.entity(g.slug)}>
       <div className="row" style={{ ["--gap" as string]: "8px", justifyContent: "space-between" }}>
-        <strong className="quest-tile__title">{q.title}</strong>
-        {q.status === "blocked" && <QuestSeal status="blocked" />}
+        <strong className="quest-tile__title">{g.title}</strong>
+        {(state === "blocked" || (g.word && g.word !== state)) && <GoalSeal status={state} word={g.word} />}
       </div>
       <div className="row small muted">
-        {q.owner && <span>{q.owner.title}</span>}
-        {q.deadline && <span className={`due due--${u}`}>· due {daysLeftLabel(q.daysLeft)}</span>}
+        {g.owner && <span>{g.owner.title}</span>}
+        {g.counterparty && <span>· with {g.counterparty.title}</span>}
+        {due && <span className={`due due--${u}`}>· due {daysLeftLabel(g.daysLeft)}</span>}
       </div>
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <span className="row small">
-          <Runes done={done} total={q.objectives.length} /> {done}/{q.objectives.length}
-        </span>
-        {q.clocks[0] && <ClockDial name={q.clocks[0].name} segments={q.clocks[0].segments} filled={q.clocks[0].filled} size={34} />}
+        {g.objectives.length > 0 ? (
+          <span className="row small">
+            <Runes done={done} total={g.objectives.length} /> {done}/{g.objectives.length}
+          </span>
+        ) : (
+          <span />
+        )}
+        {g.progress && <ProgressBar name={g.title} done={g.progress.done} total={g.progress.total} size="sm" />}
       </div>
     </a>
   );
@@ -178,8 +189,10 @@ function QuestTile({ q }: { q: QuestCard }) {
 
 function Attention({ o, voice: { t, v } }: { o: Overview; voice: Voice }) {
   const a = o.attention;
-  const items: { icon: "council" | "warn" | "hourglass" | "party" | "eye"; tone: string; title: React.ReactNode; detail: React.ReactNode; href: string }[] = [
-    ...a.disputes.map((d) => ({
+  const items: { icon: "council" | "warn" | "hourglass" | "party" | "eye" | "clock"; tone: string; title: React.ReactNode; detail: React.ReactNode; href: string }[] = [
+    ...a.disputes
+      .filter((d) => d.kind === "conflict")
+      .map((d) => ({
       icon: "council" as const,
       tone: "danger",
       title: (
@@ -194,6 +207,44 @@ function Attention({ o, voice: { t, v } }: { o: Overview; voice: Voice }) {
         </span>
       )),
       href: href.page("council", `#${d.slug}`),
+    })),
+    // Suggestions for fields only a person sets, and notes that may be the same thing.
+    ...a.disputes
+      .filter((d) => d.kind !== "conflict")
+      .map((d) => ({
+        icon: "council" as const,
+        tone: "warn",
+        title:
+          d.kind === "merge" ? (
+            <>
+              {v("Possible duplicate", "Two entries, one soul?")}: {(d.targets ?? [d.entity]).map((r) => r.title).join(" · ")}
+            </>
+          ) : (
+            <>
+              {v("Suggestion", "Petition")}: {d.entity.title} · {fieldLabel(d.field)}
+            </>
+          ),
+        detail:
+          d.kind === "merge" ? (
+            (d.evidence ?? v("They share an identifying detail.", "They share a mark."))
+          ) : (
+            <>
+              {d.claims.at(-1) ? <Value shown={d.claims.at(-1)!} /> : null} <span className="muted">({d.claims.at(-1)?.by ?? "?"} · {v("only a person sets this", "a player's call")})</span>
+            </>
+          ),
+        href: href.page("council", `#${d.slug}`),
+      })),
+    ...(a.overdue ?? []).map((c) => ({
+      icon: "clock" as const,
+      tone: "warn",
+      title: v(<>Time to get in touch with {c.ref.title}</>, <>{c.ref.title} hasn't heard from you</>),
+      detail: (
+        <>
+          {v("last contact", "last met")} {shortDate(c.lastContact)} · every {c.cadence} · {plural(c.daysOverdue, "day")} overdue
+          {c.group ? ` · ${c.group.title}` : ""}
+        </>
+      ),
+      href: href.entity(c.ref.slug),
     })),
     ...a.waiting.map((e) => ({
       icon: "hourglass" as const,

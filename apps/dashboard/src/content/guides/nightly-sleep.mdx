@@ -1,6 +1,6 @@
 ---
 title: The curator
-summary: Who sleeps on the party's notes, and how. Agent-run sleep with a curator key, schedules, the Claude Code plugin, the Actions curator, hippo sleep with your own model, house rules, and why nothing is ever lost.
+summary: Who sleeps on the agents' memories, and how. Agent-run sleep with a curator key, schedules, the Claude Code plugin, the Actions curator, hippo sleep with your own model, house rules, and why nothing is ever lost.
 order: 8
 section: Running it
 sigil: moonStars
@@ -25,12 +25,12 @@ Both follow the same steps and the same rules, and both commit as *Hippocampus*.
    - **Hints**: names and links in `about` are matched to notes directly, with no model involved.
    - **Mentions**: the curator lists the entities the episode talks about.
    - **Resolve**: each mention is matched by name and alias. Failing that, the curator picks from search candidates or says it's new. New notes are tagged with your domains, or the reporter's lane.
-   - **Claims**: the curator extracts facts, relations and quest progress, reusing the field names a note already has.
-   - **Reconcile and apply**: deterministic code decides each fact's status (<Link guide="precedence-and-disputes">precedence</Link>), adds relations, updates quests, and encrypts secrets.
+   - **Claims**: the curator extracts facts, relations, goal progress, commitments and guidelines, reusing the field names a note already has.
+   - **Reconcile and apply**: deterministic code decides each fact's status (<Link guide="precedence-and-disputes">precedence</Link>), adds relations, updates goals and contact stats, opens proposals for fields only a human sets, and encrypts secrets.
    - **Chronicle**: the episode is appended to `chronicle/YYYY/MM/YYYY-MM-DD.md` as a callout, with the notes it touched and secrets redacted. Then it leaves the inbox.
-4. **Summaries.** Each touched note (party sheets aside) gets its summary paragraph refreshed, if `curator.summaries` is on.
+4. **Summaries.** Each touched note (agent sheets aside) gets its summary paragraph refreshed, if `curator.summaries` is on.
 5. **Review and handbook.** `_hippo/review.md` and `HANDBOOK.md` are regenerated.
-6. **Audit and commit.** The changes are checked against what the curator may do (never your prose, facts you set, the config or the party, and never a secret in plain text), then committed with a `Hippo-Actor: curator` trailer and the model's name.
+6. **Audit and commit.** The changes are checked against what the curator may do (never your prose, facts you set, the config, the schema or the agents' sheets, and never a secret or a confidential value in plain text), then committed with a `Hippo-Actor: curator` trailer and the model's name.
 
 <Aside kind="lore" title="Why so many small steps?">
 
@@ -105,10 +105,10 @@ The **curator panel** on the Setup page shows the open run (who holds it, its pr
 For a vault on your machine, `hippo sleep` runs the same steps with a model you configure, and wraps them in git: it pulls first (`git pull --rebase --autostash`), then stages only the paths it changed, never your unrelated edits, commits and pushes.
 
 ```bash
-HIPPO_LLM_PROVIDER=lmstudio HIPPO_LLM_MODEL=google/gemma-4-26b-a4b-qat npx @mehrad77/hippocampus@0.1 -v ~/vaults/my-campaign sleep
+HIPPO_LLM_PROVIDER=lmstudio HIPPO_LLM_MODEL=google/gemma-4-26b-a4b-qat npx @mehrad77/hippocampus@0.1 -v ~/vaults/my-vault sleep
 ```
 
-With `--github you/my-campaign`, pull and push collapse into one commit through the GitHub API, with no clone needed. `hippo serve` also offers the curator tools locally, so an agent can curate a local vault the same way.
+With `--github you/my-vault`, pull and push collapse into one commit through the GitHub API, with no clone needed. `hippo serve` also offers the curator tools locally, so an agent can curate a local vault the same way.
 
 ### Choosing a model
 
@@ -133,7 +133,7 @@ With `anthropic`, `xai` or a hosted OpenAI-compatible API, episode text is sent 
 ### Rehearsals: dry runs
 
 ```bash
-npx @mehrad77/hippocampus -v ~/vaults/my-campaign sleep --dry-run --limit 3
+npx @mehrad77/hippocampus -v ~/vaults/my-vault sleep --dry-run --limit 3
 ```
 
 `--dry-run` runs the whole curator, models included, and prints what it did, but **writes nothing** and touches no git. It's the safe way to try a new model or a new version. Session Zero can run the same rehearsal from the browser. Other switches: `--limit <n>`, `--no-git` (don't pull, commit or push) and `--no-push` (commit, but don't push).
@@ -145,7 +145,7 @@ npx @mehrad77/hippocampus -v ~/vaults/my-campaign sleep --dry-run --limit 3
 **Linux and elsewhere.** A cron line works:
 
 ```bash
-30 3 * * * cd ~/vaults/my-campaign && HIPPO_LLM_PROVIDER=ollama HIPPO_LLM_MODEL=<model> npx -y @mehrad77/hippocampus@0.1 sleep >> /tmp/hippocampus-sleep.log 2>&1
+30 3 * * * cd ~/vaults/my-vault && HIPPO_LLM_PROVIDER=ollama HIPPO_LLM_MODEL=<model> npx -y @mehrad77/hippocampus@0.1 sleep >> /tmp/hippocampus-sleep.log 2>&1
 ```
 
 Pin the version (`@0.1`) wherever you schedule it, so upgrades happen when you choose. Then run `hippo migrate` if the vault format changed. See <Link guide="cli">the command line</Link>.
@@ -171,12 +171,16 @@ Episodes that didn't fit in this run's batch simply wait their turn.
 | Section | What to do |
 | --- | --- |
 | ⚖ Disputes awaiting your ruling | Rule in the Council, or write `ruling:` |
+| 💡 Proposals | Accept or decline values for fields only you set |
+| 🔗 Possible duplicates | Merge the two notes by hand, or decline |
 | ❓ Rumors (unverified) | Confirm, correct, or leave for corroboration |
+| 🧭 New guidelines | Rules of thumb an agent reported this run; confirm or correct them |
 | 🕸 Stale canon | Re-confirm facts older than `stale_after_days` |
 | 🧩 Orphan notes | Link them to something, or delete the ones that are noise |
+| 📐 Shape notes | Advisory: values that don't fit their field's kind, unknown kinds, and fields in use that their type doesn't declare (candidates for the schema) |
 | ✗ Failed episodes | Check the error; they'll be retried |
 
-The dashboard's Tavern shows the same list, live, and adds unknown agents and introductions waiting for you. Five minutes with a coffee is usually enough.
+The dashboard's Home page (the Tavern) shows the same list, live, and adds unknown agents and introductions waiting for you. Five minutes with a coffee is usually enough.
 
 ## Things sleep never does
 

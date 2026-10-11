@@ -46,29 +46,29 @@ The choice applies at once and is saved in this browser only, never in your vaul
 | Replaced | retconned |
 | Nightly update | Sleep |
 
-The commands stay the same in both looks: the nightly update is still `hippo sleep`. The other guides use the campaign names; this table is the key.
+The commands stay the same in both looks: the nightly update is still `hippo sleep`. The guides use the plain names, and mention the codex name where it helps; this table is the key.
 
 ## Where the data comes from
 
 | How you open it | Reads | Your actions are filed as |
 | --- | --- | --- |
-| `hippo dashboard`, in or with `-v` a vault folder | The local folder | You, the human |
-| `hippo --github you/my-campaign dashboard` | The GitHub repo, no checkout (token in `HIPPO_GITHUB_TOKEN`) | You; each action is one commit |
+| `hippo dashboard`, in or with `-v` a vault folder | The local folder | You, the primary human, or the one you name with `--as <human>` |
+| `hippo --github you/my-vault dashboard` | The GitHub repo, no checkout (token in `HIPPO_GITHUB_TOKEN`) | You; each action is one commit |
 | `hippo dashboard --mcp https://…/mcp` | Any Hippocampus MCP server (token in `HIPPO_MCP_TOKEN`) | The token's agent, within its scopes |
-| `/dashboard/` on the hosted app | Your vault repo, behind GitHub sign-in | You; rulings and new agents also name your GitHub login |
-| `hippo dashboard --demo` | A fictional campaign, in memory | Nobody: it's a sandbox, gone when you stop it |
+| `/dashboard/` on the hosted app | Your vault repo, behind GitHub sign-in | The human whose `github` matches your login, else the primary one; rulings and new agents also name your GitHub login |
+| `hippo dashboard --demo` | A fictional example, in memory | Nobody: it's a sandbox, gone when you stop it |
 
 **Over MCP** the dashboard reads through resources that agent hosts don't list, and writes through the same tools agents use. New notes and goal edits are filed as the token's agent. Rulings belong to the human, so they aren't available there. Whatever a source can't do, the dashboard simply hides.
 
-**The demo** is the fictional Lisbon arc from the bundled seed, with three weeks of made-up agent activity replayed through the nightly update's own rules: a passport secret, a flat in Alfama, an agency that keeps moving its counter. It's the safe way to look around, take screenshots, or show someone how it works.
+**The demo** is the fictional Lisbon arc from the bundled seed, with three weeks of made-up agent activity replayed through the nightly update's own rules: a passport secret, a flat in Alfama, an agency that keeps moving its counter, a goal with progress, and a proposal waiting for you. It's the safe way to look around, take screenshots, or show someone how it works.
 
 ## Work (At the table)
 
 | Page | What you see | What you can do |
 | --- | --- | --- |
 | **Home** (Tavern) | Recent activity from the timeline ("Previously on…"), what needs your attention, goals in progress, dates in the next 90 days, your agents, 30 days of activity, recently changed notes | Jump straight to whatever needs you |
-| **Goals** (Quest board) | Every goal (quest) with owner, status, objectives, clocks and deadlines | Tick and untick objectives, turn clocks, set status and deadlines |
-| **Disputes** (Council) | Open disputes: each claim with who, whether they had authority, and when, beside the current value | Decide (rule): pick a claim, apply a `ruling:` already in the note, or type the value |
+| **Goals** (Quest board) | Every goal with owner, status, objectives, progress, due date and repeat | Tick and untick objectives, move progress, set status and due dates. See <Link guide="goals-and-progress">Goals and progress</Link> |
+| **Disputes** (Council) | Open disputes: each claim with who, whether they had authority, and when, beside the current value. Also proposals for fields only a human sets, and possible duplicates | Decide (rule): pick a claim, apply a `ruling:` already in the note, or type the value. Accept or decline a proposal; decline a possible duplicate |
 | **Inbox** (Satchel) | The inbox, newest first: agent, kind, time and hints for each note (episode) | See what the next nightly update will read, and which notes already waited through one |
 
 "Needs your attention" gathers open disputes, unverified facts (rumors), confirmed facts that need re-checking (stale canon), orphan notes, notes that sat through a nightly update, and agents that aren't set up yet. The badges on Disputes and Inbox count open disputes and notes in the inbox. A decision (ruling) on the Disputes page is confirmed (canon) **immediately**, by you. See <Link guide="precedence-and-disputes">Precedence and disputes</Link>.
@@ -78,17 +78,17 @@ The commands stay the same in both looks: the nightly update is still `hippo sle
 | Page | What it is |
 | --- | --- |
 | **Records** (Codex) | Every note, by type, with tags and how many facts are confirmed, unverified or disputed |
-| **Record pages** (entity sheets) | One note in full: summary, facts with their status and provenance, relations both ways, disputes, the goal or agent card, timeline mentions from the last 90 days, inbox notes about it, and your own notes |
+| **Record pages** (entity sheets) | One note in full: summary, facts with their status, provenance, scope and validity (confidential ones masked), guidelines, contact stats, decisions and open questions, relations both ways, disputes, the goal or agent card, timeline mentions from the last 90 days, inbox notes about it, and your own notes |
 | **Connections** (Map) | The relation graph: notes as nodes colored by type, relations as edges |
 | **Timeline** (Chronicle) | Month by month, day by day: every processed note with its agent, kind, time and the notes it touched |
-| **Agents** (Party) | Each agent's role (lane), authority, host, when it was last seen, waiting notes, recent activity and the goals it owns. Add an agent here, and approve or dismiss agents that introduced themselves |
+| **Agents** (Party) | The vault's humans and their domains. Each agent's role (lane), authority, host, when it was last seen, waiting notes, recent activity and the goals it owns. Add an agent here, and approve or dismiss agents that introduced themselves |
 
 On a record page, each fact shows who said it, whether they had authority, when, which notes back it, earlier values, and whether it's stale. It's the quickest way to answer "why does Hippocampus believe this?"
 
 ## Everywhere
 
 - **⌘K** opens the command palette: jump to any note or page, or search memory the way agents' `recall` does.
-- **Add a note** (Scribe a memory) drops a note into the inbox in your name. Pick a kind, link the notes it's about, and tick the box if it contains an ID or a password. It's confirmed at the next nightly update, with your authority.
+- **Add a note** (Scribe a memory) drops a note into the inbox in your name. Pick one of the vault's kinds, fill in any data fields it has, link the notes it's about, and tick the boxes if it contains an ID or a password, or should stay confidential. It's confirmed at the next nightly update, with your authority.
 - **Help** (Guides) is these pages. They ship with the tool and work without JavaScript.
 - **Setup & health** holds the setup steps (Session Zero) and the Personalization settings.
 - **Your account** (hosted app only): the chip with your GitHub login opens your account settings, the Admin page if you're an admin, and Sign out.
@@ -120,7 +120,7 @@ On the hosted app, Setup walks you from signing in to a working vault. Nothing h
 | Create a repo | Opens GitHub's new-repository form, filled in: private, named `vault`. You create it yourself |
 | Install the app | Installs the Hippocampus GitHub App on that one repository |
 | Pick the repo | Lists the app's repositories and says which can become a vault: private, and empty or already a vault |
-| Name it | The campaign's name, your id, time zone and domains, optionally the example campaign, and a key for secrets made in this browser |
+| Name it | The vault's name, your id, time zone and domains, optionally the fictional example, and a key for secrets made in this browser |
 | Set up the vault | One commit puts the template into the repo. A repo that's already a vault is adopted: only missing guardrail files are added |
 | Connect agents | Create (mint) keys and get snippets for each client, or connect Claude.ai and ChatGPT with the MCP address |
 | Set up curation | A curator key and how to run it, or the GitHub Actions curator |

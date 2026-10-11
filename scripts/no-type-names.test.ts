@@ -19,7 +19,7 @@ const ALLOWED: { file: string; line: string; why: string }[] = [
   { file: "apps/worker/src/hosted/registry.ts", line: "KEY_SCOPES", why: "key scope names" },
   { file: "apps/worker/src/hosted/registry.ts", line: '["read", "remember", "quest"]', why: "key scope names" },
   { file: "packages/dashboard/src/mcp-source.ts", line: 'can("quest")', why: "key scope name" },
-  { file: "packages/dashboard/src/demo-hosted.ts", line: '"remember", "quest"]', why: "key scope names" },
+  { file: "packages/dashboard/src/demo-hosted.ts", line: '"goal", "quest"]', why: "key scope names (both, like new hosted keys)" },
   // Config keys and values of the v1 format (renamed in v2), not entity types.
   { file: "packages/core/src/schema.ts", line: 'name: z.coerce.string().default("campaign")', why: "the vault name's v1 default" },
   { file: "packages/core/src/bootstrap.ts", line: '!doc.has("campaign") ? "name" : "campaign"', why: "v1 config key `campaign` (the vault's name)" },

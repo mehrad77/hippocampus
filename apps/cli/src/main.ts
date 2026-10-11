@@ -295,13 +295,14 @@ secrets
 
 program
   .command("dashboard")
-  .description("Open the dashboard in your browser: the campaign at a glance, rulings, quests, and Session Zero setup.")
+  .description("Open the dashboard in your browser: your memory at a glance, rulings, goals, and Session Zero setup.")
   .option("-p, --port <n>", "port on 127.0.0.1 (the next free one if it's taken)", "4747")
   .option("--no-open", "print the sign-in link without opening a browser")
   .option("--demo", "the fictional example campaign, in memory")
   .option("--mcp <url>", "a Hippocampus MCP server (e.g. your Worker's /mcp); token from HIPPO_MCP_TOKEN or --token")
   .option("--token <token>", "bearer token for --mcp")
-  .action(async (opts: { port: string; open: boolean; demo?: boolean; mcp?: string; token?: string }) => {
+  .option("--as <human>", "which of the vault's humans the dashboard acts as (default: the first)")
+  .action(async (opts: { port: string; open: boolean; demo?: boolean; mcp?: string; token?: string; as?: string }) => {
     await runDashboard({ ...opts, vault: program.opts<{ vault: string }>().vault, github: github(), index: useIndex(), origins: envOrigins, log: err });
   });
 

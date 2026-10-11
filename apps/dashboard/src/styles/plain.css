@@ -476,8 +476,9 @@
   border-radius: 0;
 }
 
-:root:not([data-style="codex"]) .clock__seg--on {
-  fill: var(--accent);
+:root:not([data-style="codex"]) .progress__cell--on,
+:root:not([data-style="codex"]) .progress__fill {
+  background: var(--accent);
 }
 
 :root:not([data-style="codex"]) .door > svg {

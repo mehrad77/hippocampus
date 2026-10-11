@@ -1,4 +1,4 @@
-import { QuestStatus } from "@hippocampus/core";
+import { GoalState, type GoalUpdate, type QuestUpdate } from "@hippocampus/core";
 import { z } from "zod";
 import { HttpError, errorResponse, json, readJson, type ErrorReport, type Guard, type GuardResult } from "./http.ts";
 import type { SetupPort } from "./setup.ts";
@@ -27,9 +27,36 @@ const RuleBody = z.object({
   pending: z.boolean().optional(),
 });
 
+const objectives = z.array(text(300)).max(50).optional();
+
+const GoalBody = z.object({
+  goal: text(200),
+  // A core state or a word of the goal type's own statuses; the service checks.
+  status: text(40).optional(),
+  complete: objectives,
+  reopen: objectives,
+  add: objectives,
+  progress: z
+    .object({
+      done: z.number().int().min(0).max(1000).optional(),
+      total: z.number().int().min(1).max(1000).optional(),
+      tick: z.number().int().min(-1000).max(1000).optional(),
+    })
+    .optional(),
+  due: day.nullable().optional(),
+  owner: text(100).optional(),
+  counterparty: text(200).optional(),
+  repeat: z
+    .object({ every: text(20).optional(), after_last: text(60).optional() })
+    .refine((r) => r.every || r.after_last, "say how often it repeats")
+    .nullable()
+    .optional(),
+});
+
+/** The v1 body, for dashboards and scripts from before goals. */
 const QuestBody = z.object({
   quest: text(200),
-  status: QuestStatus.optional(),
+  status: GoalState.optional(),
   complete: z.array(text(300)).max(50).optional(),
   reopen: z.array(text(300)).max(50).optional(),
   add: z.array(text(300)).max(50).optional(),
@@ -58,6 +85,19 @@ const RememberBody = z.object({
   confidence: z.number().min(0).max(1).optional(),
   secret: z.boolean().optional(),
   at: z.string().max(40).optional(),
+});
+
+const ProposalBody = z.object({
+  dispute: text(200),
+  decision: z.enum(["accept", "decline"]),
+  value: z.string().trim().min(1).max(500).optional(),
+  claim: z.number().int().min(0).optional(),
+});
+
+const RetractBody = z.object({
+  entity: text(200),
+  field: text(120),
+  scope: text(120).optional(),
 });
 
 const PartyBody = z.object({
@@ -133,9 +173,26 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
             const { dispute, ...choice } = RuleBody.parse(body);
             return json(200, await need(source.rule, "rulings").call(source, dispute, choice, via));
           }
+          case "actions/goal": {
+            const { goal, ...update } = GoalBody.parse(body);
+            if (source.goal) return json(200, await source.goal(goal, update));
+            // A source from before goals: the v1 update says the same, when it can.
+            const r = await need(source.quest, "goal updates").call(source, goal, goalToQuest(update));
+            return json(200, { goal: r.quest, changes: r.changes });
+          }
           case "actions/quest": {
             const { quest, ...update } = QuestBody.parse(body);
-            return json(200, await need(source.quest, "quest updates").call(source, quest, update));
+            if (source.quest) return json(200, await source.quest(quest, update));
+            const r = await need(source.goal, "quest updates").call(source, quest, questToGoal(update));
+            return json(200, { quest: r.goal, changes: r.changes });
+          }
+          case "actions/proposal": {
+            const { dispute, ...choice } = ProposalBody.parse(body);
+            return json(200, await need(source.proposal, "proposals").call(source, dispute, choice, via));
+          }
+          case "actions/retract": {
+            const { entity, field, scope } = RetractBody.parse(body);
+            return json(200, await need(source.retract, "retracting facts").call(source, entity, field, scope, via));
           }
           case "actions/remember":
             return json(200, await need(source.remember, "remembering").call(source, RememberBody.parse(body)));
@@ -152,6 +209,25 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
       return errorResponse(err, opts.report);
     }
   };
+}
+
+/** A v1 quest update in goal terms: a clock is the goal's progress, a deadline its due date. */
+export function questToGoal({ clock, deadline, ...rest }: QuestUpdate): GoalUpdate {
+  const out: GoalUpdate = { ...rest };
+  if (clock) out.progress = { total: clock.segments, done: clock.filled, tick: clock.tick };
+  const due = deadline ?? clock?.deadline;
+  if (due) out.due = due;
+  return out;
+}
+
+/** A goal update for a source that only knows quests; what v1 can't say is refused. */
+export function goalToQuest({ progress, due, counterparty, repeat, ...rest }: GoalUpdate): QuestUpdate {
+  if (counterparty !== undefined || repeat !== undefined || due === null) throw new HttpError(501, "This source predates goals: it can't set a counterparty, a repeat, or clear a due date", "UNSUPPORTED");
+  if (rest.status !== undefined && !GoalState.safeParse(rest.status).success) throw new HttpError(400, `This source predates goals: status must be one of ${GoalState.options.join(", ")}`, "VAULT");
+  const out: QuestUpdate = { ...rest };
+  if (progress) out.clock = { name: "Progress", segments: progress.total, filled: progress.done, tick: progress.tick };
+  if (due) out.deadline = due;
+  return out;
 }
 
 function need<T>(fn: T | undefined, what: string): T {

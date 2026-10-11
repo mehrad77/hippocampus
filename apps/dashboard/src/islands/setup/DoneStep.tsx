@@ -40,10 +40,10 @@ export function DoneStep({ status }: StepProps) {
           <strong>{v(t("tavern"), "The Tavern")}</strong>
           <span className="small muted">What happened, what needs you</span>
         </a>
-        <a className="sz-door" href={href.page("quests")}>
+        <a className="sz-door" href={href.page("goals")}>
           <Icon name="quest" size={28} />
-          <strong>{t("quests")}</strong>
-          <span className="small muted">Objectives, clocks and deadlines</span>
+          <strong>{t("goals")}</strong>
+          <span className="small muted">Steps, progress and due dates</span>
         </a>
         <a className="sz-door" href={href.page("guides")}>
           <Icon name="guides" size={28} />

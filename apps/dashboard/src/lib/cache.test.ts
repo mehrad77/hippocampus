@@ -16,7 +16,7 @@ function memoryStorage(): Storage {
   };
 }
 
-const caps = { rule: true, quest: true, remember: true, party: true, introductions: true, setup: "hosted", curator: true } as const;
+const caps = { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, party: true, introductions: true, setup: "hosted", curator: true } as const;
 const session = (login: string, repo: string): SessionInfo => ({ mode: "worker", user: { login }, vault: { kind: "github", repo }, capabilities: caps });
 
 let responses: Record<string, unknown>;

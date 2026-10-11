@@ -1,7 +1,6 @@
 ---
-import Shell from "../layouts/Shell.astro";
-import QuestsView from "../islands/QuestsView.tsx";
+import { href } from "../lib/routes.ts";
+
+// The Goals page was the Quest board at /quests/ before vault format v2; old links and bookmarks land here.
+return Astro.redirect(href.page("goals"));
 ---
-<Shell title="Quest board" page="quests">
-  <QuestsView client:only="react" />
-</Shell>

@@ -6,7 +6,7 @@ import { toast } from "../lib/events.ts";
 import { fieldLabel, plural, titleCase } from "../lib/format.ts";
 import { useTerms } from "../lib/prefs.ts";
 import { href } from "../lib/routes.ts";
-import type { ClaimView, DisputeView, Overview, PartyMember, RuleResult, SessionInfo, Shown } from "../lib/types.ts";
+import type { ClaimView, DisputeView, Overview, PartyMember, ProposalDecision, RuleResult, SessionInfo, Shown } from "../lib/types.ts";
 import { EntityLink } from "../ui/EntityLink.tsx";
 import { Icon } from "../ui/Icon.tsx";
 import { PageGate } from "../ui/PageGate.tsx";
@@ -41,14 +41,20 @@ function Council({ session }: { session: SessionInfo }) {
       </div>
     );
 
-  const human = session.human ?? o.human;
+  // Who "you" are: the human the dashboard acts as (several people may share the vault).
+  const human = session.actor?.kind === "human" ? session.actor.id : (session.human ?? o.human);
   const canRule = session.capabilities.rule;
-  // The longest-waiting case first.
-  const disputes = [...o.attention.disputes].sort((a, b) => (a.opened ?? "").localeCompare(b.opened ?? ""));
+  const canDecide = !!session.capabilities.proposal;
+  // The longest-waiting case first. Proposals and possible duplicates are asks, not disagreements.
+  const all = [...o.attention.disputes].sort((a, b) => (a.opened ?? "").localeCompare(b.opened ?? ""));
+  const disputes = all.filter((d) => (d.kind ?? "conflict") === "conflict");
+  const proposals = all.filter((d) => d.kind === "proposal");
+  const merges = all.filter((d) => d.kind === "merge");
+  const name = o.name ?? o.campaign;
   return (
     <div className="stack play" style={{ ["--gap" as string]: "28px" }}>
       <PageHead
-        kicker={v<React.ReactNode>(o.campaign, <>The council chamber · {o.campaign}</>)}
+        kicker={v<React.ReactNode>(name, <>The council chamber · {name}</>)}
         title={v(t("council"), "The Council")}
         lede={
           disputes.length ? (
@@ -69,7 +75,39 @@ function Council({ session }: { session: SessionInfo }) {
       />
       <div className="grid grid--main council">
         <div className="stack" style={{ ["--gap" as string]: "24px" }}>
-          {disputes.length ? disputes.map((d) => <Case key={d.slug} d={d} party={o.party} human={human} canRule={canRule} onPropose={setProposal} />) : <Adjourned />}
+          {disputes.length ? disputes.map((d) => <Case key={d.slug} d={d} party={o.party} human={human} canRule={canRule} onPropose={setProposal} />) : <Adjourned asks={proposals.length + merges.length} />}
+          {proposals.length > 0 && (
+            <section className="stack" aria-labelledby="proposals-h" style={{ ["--gap" as string]: "16px" }}>
+              <h2 className="play-h" id="proposals-h">
+                <Icon name="quill" /> {v("Suggestions", "Petitions")} <span className="play-h__count">{proposals.length}</span>
+              </h2>
+              <p className="muted small play-note">
+                {v(
+                  "Only a person sets these fields. An agent suggested a value: accept it, give your own, or decline (the same value isn't suggested again).",
+                  "Only a player sets these fields. An agent petitions for a value: grant it, give your own, or turn it down (the same petition won't come back).",
+                )}
+              </p>
+              {proposals.map((d) => (
+                <ProposalCase key={d.slug} d={d} party={o.party} human={human} canDecide={canDecide} />
+              ))}
+            </section>
+          )}
+          {merges.length > 0 && (
+            <section className="stack" aria-labelledby="merges-h" style={{ ["--gap" as string]: "16px" }}>
+              <h2 className="play-h" id="merges-h">
+                <Icon name="link" /> {v("Possible duplicates", "Two entries, one soul?")} <span className="play-h__count">{merges.length}</span>
+              </h2>
+              <p className="muted small play-note">
+                {v(
+                  "Two notes share something that identifies one thing (an email, an address). If they're the same, merge them in Obsidian; if not, decline and they won't be flagged again.",
+                  "Two entries share a mark that names one thing. If they're one, merge them by hand in Obsidian; if not, decline and the council lets it rest.",
+                )}
+              </p>
+              {merges.map((d) => (
+                <MergeCase key={d.slug} d={d} canDecide={canDecide} />
+              ))}
+            </section>
+          )}
         </div>
         <HowItWorks />
       </div>
@@ -109,7 +147,7 @@ function Case({ d, party, human, canRule, onPropose }: { d: DisputeView; party: 
         {d.current ? (
           <span className="row">
             <Value shown={d.current} /> <Seal status={d.current.status} />
-            <span className="muted small">set by {d.current.byHuman ? `${human} (you)` : d.current.by}</span>
+            <span className="muted small">set by {d.current.byHuman && d.current.by.toLowerCase() === human.toLowerCase() ? `${human} (you)` : d.current.by}</span>
           </span>
         ) : (
           <span className="muted">No value recorded yet.</span>
@@ -154,7 +192,7 @@ function Case({ d, party, human, canRule, onPropose }: { d: DisputeView; party: 
               <dd>
                 <span className="row" style={{ ["--gap" as string]: "6px" }}>
                   <Who c={c} party={party} human={human} />
-                  <AuthorityBadge authority={c.authority} />
+                  <AuthorityBadge authority={c.authority} by={c.by} me={human} />
                 </span>
               </dd>
               <dt>When</dt>
@@ -193,7 +231,7 @@ function Case({ d, party, human, canRule, onPropose }: { d: DisputeView; party: 
 
 function Who({ c, party, human }: { c: ClaimView; party: PartyMember[]; human: string }) {
   const { v } = useTerms();
-  if (c.byHuman) return <strong>{human} (you)</strong>;
+  if (c.byHuman) return <strong>{c.by.toLowerCase() === human.toLowerCase() ? `${human} (you)` : c.by}</strong>;
   const member = party.find((p) => p.slug === c.by.toLowerCase());
   if (member) return <EntityLink entity={member} />;
   return (
@@ -268,6 +306,189 @@ function DifferentValue({ d, onPropose }: { d: DisputeView; onPropose: (p: Propo
         </button>
       </div>
     </form>
+  );
+}
+
+// ── Proposals and possible duplicates ─────────────────────────────────────
+
+/** Accept or decline a proposal (or decline a possible duplicate); the card leaves the list at once. */
+async function decide(d: DisputeView, body: { decision: "accept" | "decline"; value?: string; claim?: number }, say: (accepted: string, declined: string) => string): Promise<boolean> {
+  try {
+    const res = await postJson<ProposalDecision>("/actions/proposal", { dispute: d.slug, ...body });
+    patch<Overview>("/overview", (o) => ({
+      ...o,
+      attention: { ...o.attention, disputes: o.attention.disputes.filter((x) => x.slug !== d.slug) },
+      counts: { ...o.counts, disputes: Math.max(0, o.counts.disputes - 1) },
+    }));
+    const shown = res.secret || res.confidential || res.value == null ? "" : `: ${res.value}`;
+    toast(res.decision === "accepted" ? `${say("Accepted", "Granted")}: ${d.entity.title} · ${fieldLabel(d.field)}${shown}` : `${say("Declined", "Turned down")}: ${d.entity.title} · ${fieldLabel(d.field)}`, "ok");
+    return true;
+  } catch (err) {
+    toast(errorMessage(err), "error");
+    return false;
+  } finally {
+    void settle();
+  }
+}
+
+function ProposalCase({ d, party, human, canDecide }: { d: DisputeView; party: PartyMember[]; human: string; canDecide: boolean }) {
+  const { v } = useTerms();
+  const titleId = useId();
+  const inputId = useId();
+  const [busy, setBusy] = useState(false);
+  const [own, setOwn] = useState<string | null>(null);
+  const latest = d.claims.length - 1;
+  const run = async (body: Parameters<typeof decide>[1]) => {
+    setBusy(true);
+    await decide(d, body, v);
+    setBusy(false);
+  };
+  return (
+    <article className="case panel" id={d.slug} aria-labelledby={titleId}>
+      <header className="case__head">
+        <div>
+          <div className="case__kicker">
+            {v("Suggested value for the", "Petition for the")} {fieldLabel(d.field)}
+            {d.opened && (
+              <>
+                {" "}
+                · <RelTime at={d.opened} />
+              </>
+            )}
+          </div>
+          <h2 className="case__title" id={titleId}>
+            <EntityLink entity={d.entity} /> <span className="case__field">· {fieldLabel(d.field)}</span>
+          </h2>
+        </div>
+        <span className="chip chip--proposal">
+          <span aria-hidden>✎</span> {v("suggestion", "petition")}
+        </span>
+      </header>
+      {d.evidence && <p className="small">{d.evidence}</p>}
+      <div className="case__now">
+        <span className="label">{v("Current value", "In the codex now")}</span>
+        {d.current ? (
+          <span className="row">
+            <Value shown={d.current} /> <Seal status={d.current.status} />
+          </span>
+        ) : (
+          <span className="muted">{v("Not set yet.", "Unwritten.")}</span>
+        )}
+      </div>
+      <ol className="claims" aria-label={v("Suggested values", "Petitions")}>
+        {d.claims.map((c, i) => (
+          <li key={i} className="claim">
+            <div className="claim__value">
+              <Value shown={c} />
+            </div>
+            <dl className="claim__facts">
+              <dt>Who</dt>
+              <dd>
+                <span className="row" style={{ ["--gap" as string]: "6px" }}>
+                  <Who c={c} party={party} human={human} />
+                  <AuthorityBadge authority={c.authority} by={c.by} me={human} />
+                </span>
+              </dd>
+              <dt>When</dt>
+              <dd>{c.at ? <RelTime at={c.at} /> : <span className="muted">not recorded</span>}</dd>
+            </dl>
+            {canDecide && (
+              <button type="button" className="btn btn--sm btn--primary claim__rule" disabled={busy} onClick={() => void run({ decision: "accept", claim: i })}>
+                <Icon name="check" size={16} /> {i === latest ? v("Accept", "Grant it") : v("Accept this one", "Grant this one")}
+              </button>
+            )}
+          </li>
+        ))}
+      </ol>
+      {canDecide && (
+        <div className="case__custom">
+          {own === null ? (
+            <span className="row" style={{ ["--gap" as string]: "8px" }}>
+              {!d.secretField && (
+                <button type="button" className="btn btn--sm btn--ghost" disabled={busy} onClick={() => setOwn("")}>
+                  <Icon name="quill" size={16} /> {v("Use my own value…", "Write my own…")}
+                </button>
+              )}
+              <button type="button" className="btn btn--sm btn--ghost" disabled={busy} onClick={() => void run({ decision: "decline" })}>
+                <Icon name="close" size={16} /> {v("Decline", "Turn it down")}
+              </button>
+            </span>
+          ) : (
+            <form
+              className="inline-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (own.trim()) void run({ decision: "accept", value: own.trim() });
+              }}
+            >
+              <label className="label" htmlFor={inputId}>
+                {fieldLabel(d.field)}
+              </label>
+              <input id={inputId} className="input" value={own} onChange={(e) => setOwn(e.target.value)} maxLength={500} autoFocus />
+              <button type="submit" className="btn btn--sm btn--primary" disabled={busy || !own.trim()}>
+                {v("Save", "Make it canon")}
+              </button>
+              <button type="button" className="btn btn--sm btn--ghost" onClick={() => setOwn(null)}>
+                Cancel
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function MergeCase({ d, canDecide }: { d: DisputeView; canDecide: boolean }) {
+  const { v } = useTerms();
+  const titleId = useId();
+  const [busy, setBusy] = useState(false);
+  const targets = d.targets ?? [d.entity];
+  return (
+    <article className="case panel" id={d.slug} aria-labelledby={titleId}>
+      <header className="case__head">
+        <div>
+          <div className="case__kicker">
+            {v("They share the same", "Both bear the same")} {fieldLabel(d.field)}
+            {d.opened && (
+              <>
+                {" "}
+                · <RelTime at={d.opened} />
+              </>
+            )}
+          </div>
+          <h2 className="case__title" id={titleId}>
+            {targets.map((t, i) => (
+              <span key={t.slug}>
+                {i > 0 && <span className="case__field"> · </span>}
+                <EntityLink entity={t} />
+              </span>
+            ))}
+          </h2>
+        </div>
+        <span className="chip chip--proposal">
+          <span aria-hidden>⧉</span> {v("possible duplicate", "one soul?")}
+        </span>
+      </header>
+      {d.evidence && <p className="small">{d.evidence}</p>}
+      {canDecide && (
+        <div className="case__custom">
+          <button
+            type="button"
+            className="btn btn--sm btn--ghost"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              await decide(d, { decision: "decline" }, v);
+              setBusy(false);
+            }}
+          >
+            <Icon name="close" size={16} /> {v("Not the same: decline", "Two souls: decline")}
+          </button>
+          <span className="hint">{v("Same thing? Merge the two notes in Obsidian; this closes on the next nightly update.", "One soul? Merge the entries by hand in Obsidian.")}</span>
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -401,7 +622,7 @@ function RulingDialog({ proposal, human, onClose }: { proposal: Proposal | null;
 
 // ── Asides ─────────────────────────────────────────────────────────────────
 
-function Adjourned() {
+function Adjourned({ asks = 0 }: { asks?: number }) {
   const { t, v } = useTerms();
   return (
     <div className="panel adjourned">
@@ -409,7 +630,7 @@ function Adjourned() {
         <Icon name="council" size={34} />
       </span>
       <h2 className="adjourned__title">{v("No open disputes", "The council is adjourned")}</h2>
-      <p>{v("Nothing needs your decision. All your records agree.", "No disputes wait for your ruling. Every fact in the codex agrees with itself.")}</p>
+      <p>{asks ? v("No disagreements. The suggestions below still wait for you.", "No disputes. The petitions below still await your word.") : v("Nothing needs your decision. All your records agree.", "No disputes wait for your ruling. Every fact in the codex agrees with itself.")}</p>
       <p className="small muted">{v("When sources disagree and the precedence rules can't settle it, the dispute appears here after the nightly update.", "When sources disagree and precedence can't settle it, the case lands here after a sleep.")}</p>
       <a className="btn btn--sm" href={href.page("tavern")}>
         <Icon name="tavern" size={16} /> {v(`Back to ${t("tavern")}`, "Back to the tavern")}
@@ -421,7 +642,7 @@ function Adjourned() {
 function HowItWorks() {
   const { v } = useTerms();
   const rank: [plainTitle: string, plainText: string, codexTitle: string, codexText: string][] = [
-    ["You", "What you write outranks every agent, always.", "Your word", "The human outranks every agent, always."],
+    ["People", "What a person writes outranks every agent, always. Between two people, the one whose domain it is wins; otherwise it's a dispute.", "The players", "A player's word outranks every agent, always. Between players, the one whose domain it is wins; otherwise the council decides."],
     ["Responsible agent", "An agent responsible for this kind of record (its type or tags).", "Lane authority", "An agent whose authority covers the entity's type or tags."],
     ["Confirmation", "When several agents report the same value, an unverified fact becomes confirmed.", "Corroboration", "Several agents reporting the same value turn a rumor into canon."],
     ["Recency", "A newer report from the same source replaces its older one.", "Recency", "A newer report from the same source replaces its older one."],

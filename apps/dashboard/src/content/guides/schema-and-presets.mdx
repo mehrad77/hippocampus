@@ -1,0 +1,170 @@
+---
+title: Types, kinds and presets
+summary: What kinds of notes a vault holds, and what kinds of memories agents send, are themselves notes you can read and edit. Fields, statuses, capabilities, kinds and their data, and presets.
+order: 10
+section: Under the hood
+sigil: codex
+---
+import Aside from "../../components/guides/Aside.astro";
+import Link from "../../components/guides/Link.astro";
+
+Hippocampus doesn't hardcode what your memory is about. A vault for a move abroad, a small business, a degree or a household needs different notes. So the vault describes itself in two folders of ordinary notes:
+
+- **Types**, in `_hippo/schema/types/<type>.md`: the kinds of notes the vault holds, such as `character`, `goal` or `item`.
+- **Kinds**, in `_hippo/schema/kinds/<kind>.md`: the kinds of memories agents send, such as `fact`, `task` or `interaction`.
+
+In each one, the **frontmatter is the definition** and the **body describes it** in words. The curator reads the description and the examples when it decides what a memory is about and how to file it, and the handbook lists them for agents. Edit them in Obsidian like any other note.
+
+## A type note
+
+The vault's own `goal` type:
+
+```markdown
+---
+folder: goals
+capabilities: [goal]
+label: goal
+codex_label: quest
+template: _hippo/templates/goal.md
+---
+Something to get done: an outcome with an owner, a status, and optionally a due date, progress, objectives and a repeat.
+
+## Is
+- Get the residence permit
+- Find an apartment before the term starts
+
+## Is not
+- A one-off fact about it (that's a fact on the goal)
+- A long stretch of life that several goals belong to (that's an `arc`)
+```
+
+The text before the first `##` is the description. The bullets under `## Is` and `## Is not` are examples, shown to the curator so it picks the right type. A short list of clear examples does more than a long one.
+
+| Key | Meaning |
+| --- | --- |
+| `folder` | Where notes of this type live |
+| `capabilities` | Behaviour built into Hippocampus (below) |
+| `fields` | The facts notes of this type usually carry, and how to treat them |
+| `statuses` | For goal types: the type's own status words, each mapped to a core state |
+| `extends` | Another type to start from: its fields, capabilities, statuses and template carry over, and this note wins where they differ |
+| `inheritable` | Notes of this type can be inherited from, like an archetype or a client tier |
+| `template` | The note new entities of this type start from |
+| `label`, `codex_label` | What the dashboard calls it in the plain look and in the codex look |
+
+### Capabilities
+
+Code never checks a type's name, only its capabilities. There are three:
+
+| Capability | Gives a type | Example |
+| --- | --- | --- |
+| `goal` | Status, owner, counterparty, due date, progress, objectives and repeats, and `update_goal`. See <Link guide="goals-and-progress">Goals and progress</Link> | `goal` |
+| `actor` | A lane, authority domains and a host: the type's notes are agents. See <Link guide="party-and-lanes">Humans, agents and lanes</Link> | `party` |
+| `arc` | Groups goals into a longer stretch | `arc` |
+
+A type without capabilities is just a kind of note: people, organizations, places, things, know-how.
+
+### Fields
+
+```yaml
+fields:
+  amount: { kind: number }
+  payee: { kind: ref, target: [faction, character] }
+  iban: { kind: text, secret: true }
+  email: { kind: text, identity_key: true }
+  birthday: { kind: date, recurs: yearly }
+  employer: { kind: ref, succession: true }
+  stakes: { kind: text, human_only: true }
+  tier: { kind: enum, values: [standard, priority] }
+```
+
+`email: text` is short for `email: { kind: text }`.
+
+| Key | Meaning |
+| --- | --- |
+| `kind` | `text` (the default), `number`, `bool`, `date`, `ref` (a link to another note) or `enum` |
+| `values` | The allowed values of an `enum` |
+| `target` | The type, or types, a `ref` points at |
+| `many` | The field holds a list |
+| `secret` | Always stored encrypted. See <Link guide="secrets">Secrets</Link> |
+| `confidential` | Kept out of search, summaries and the chronicle, and masked for anyone without authority |
+| `identity_key` | Identifies one real thing, like an email address or a repository URL. Implies `confidential`. Two notes with the same key become a possible duplicate for you to merge |
+| `human_only` | Only a human sets it; anyone else's value becomes a proposal |
+| `succession` | A newer value succeeds the old one (a new employer) instead of disputing it |
+| `recurs: yearly` | A date that comes back every year, like a birthday; shown at its next anniversary |
+| `domain` | A lane domain whose agents have authority over this field, whatever the note's tags |
+| `default`, `description` | A starting value, and a line of explanation for agents and the curator |
+
+How these change precedence is in <Link guide="precedence-and-disputes">Precedence and disputes</Link>.
+
+## A kind note
+
+The built-in `interaction` kind:
+
+```markdown
+---
+behaviour: interaction
+text: optional
+counts_as_contact: true
+---
+A contact with someone: a call, a meeting, a message.
+
+## Is
+- Called the landlord about the deposit
+- Met the caseworker at the agency
+
+## Is not
+- What was learned from it (file that as its own `fact` or `observation`)
+```
+
+| Key | Meaning |
+| --- | --- |
+| `behaviour` | What the curator does with it (below) |
+| `text` | Whether the memory's text is `required`, `optional`, kept only as a short `gist`, or `forbidden` (data only) |
+| `data` | Typed fields the memory carries, defined like a type's fields; `required: true` makes one mandatory |
+| `counts_as_contact` | Whether it updates `last_contact` on the people or organizations it's about: `true`, `false`, or per `data.channel`, with `*` for the rest |
+| `alias_of` | Another kind's name: this one is a synonym, such as `beat` for `observation` |
+
+| Behaviour | The curator |
+| --- | --- |
+| `observation` | Files what was noticed or learned (the default) |
+| `fact` | Files a specific value: a date, an amount, an address |
+| `decision` | Logs the choice, and why, on the notes it's about |
+| `question` | Opens a question on the note, until a later memory answers it |
+| `task` | Moves goals along, or turns a commitment into a goal |
+| `interaction` | Records a contact, and its contact stats |
+
+A kind that has no text to read, such as an interaction sent as data only, is filed by code without calling a model at all.
+
+`observation`, `fact`, `decision`, `question`, `task` and `interaction` exist in every vault; a note of the same name refines them. A memory with a kind the vault doesn't know is filed as an observation, with a note in the morning review.
+
+## Validation is advice
+
+The schema never blocks a write. A value that doesn't fit its field (a word in a `number` field, a `ref` to a note that doesn't exist), a memory with an unknown kind, or fields in use that their type doesn't declare all show up as **shape notes**: in the morning review and in `hippo validate`, by path and field, never by value. Fix the note, or teach the type the new field.
+
+`extends` chains go at most three levels deep, and a cycle is cut with a warning.
+
+<Aside kind="tip" title="Overrides in the config">
+
+`types:` and `kinds:` in `_hippo/config.yaml` can override a schema note key by key, and `folders.schema` moves the schema folder. Notes are easier to read and to share, so prefer them.
+
+</Aside>
+
+## Presets
+
+A **preset** is a bundle of type and kind notes, templates and a few starter notes for one way of using Hippocampus:
+
+| Preset | Adds, for example |
+| --- | --- |
+| people | Archetypes (stranger, colleague, close friend) people inherit guidelines and contact cadence from; groups; identity keys, birthdays and succession on people; kinds for quick contacts and moments |
+| developer | Repositories and services, with `depends_on` and `used_by`; an incident kind |
+| business | Clients, and deals and invoices as goals; a commitment kind |
+| student | Courses, and assignments as goals; a lecture kind; a timetable as repeating goals |
+| household | Assets, and chores and bills as repeating goals; a purchase kind |
+
+Because a preset is only notes, nothing in it is magic: you can read every definition, change it, or write your own.
+
+<Aside kind="lore" title="Coming soon">
+
+`hippo preset add <name>` will add a preset to an existing vault, merging its notes with yours. Until it ships, copy the notes you want into `_hippo/schema/` by hand.
+
+</Aside>

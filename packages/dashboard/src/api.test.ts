@@ -1,4 +1,4 @@
-import { AuditError, HippoService, VaultVersionError, parseDoc } from "@hippocampus/core";
+import { AuditError, HippoService, VaultVersionError, parseDoc, type MemoryStore } from "@hippocampus/core";
 import { afterAll, describe, expect, it } from "vitest";
 import { SECRET_PLAINTEXT, now, richStore } from "./__fixtures__/vault.ts";
 import { createDashboardApi, type DashboardApiOptions } from "./api.ts";
@@ -19,12 +19,33 @@ afterAll(() => {
 
 const letIn: Guard = () => ({ user: { login: "player" } });
 
+const PROPOSAL_PATH = "disputes/proposal-harbor-cafe-hours.md";
+const PROPOSAL = `---
+type: dispute
+kind: proposal
+entity: "[[harbor-cafe]]"
+field: hours
+status: open
+state: pending
+evidence: Written on the door
+claims:
+  - { value: "8-18", by: job-scout, at: "2026-09-26T12:00:00Z", src: [ep-in3] }
+opened: "2026-09-26T12:00:00Z"
+---
+`;
+
+/** The fixture vault with a second human, `partner`. */
+async function withPartner(store: MemoryStore): Promise<void> {
+  const config = (await store.read("_hippo/config.yaml"))!;
+  await store.write("_hippo/config.yaml", config.replace("humans: [{ id: player }]", "humans: [{ id: player }, { id: partner, domains: [housing] }]"));
+}
+
 function harness(
-  opts: { source?: (full: DashboardSource) => DashboardSource | undefined; setup?: SetupPort; guard?: Guard } & Pick<DashboardApiOptions, "setupKind" | "report"> = {},
+  opts: { source?: (full: DashboardSource) => DashboardSource | undefined; setup?: SetupPort; guard?: Guard; human?: string } & Pick<DashboardApiOptions, "setupKind" | "report"> = {},
 ) {
   const store = richStore();
   const service = new HippoService(store, { now });
-  const full = serviceSource(service, { mode: "local", vault: { kind: "dir", dir: "/vaults/lisbon-arc" } });
+  const full = serviceSource(service, { mode: "local", vault: { kind: "dir", dir: "/vaults/lisbon-arc" } }, { human: opts.human });
   const source = opts.source ? opts.source(full) : full;
   const api = createDashboardApi({ basePath: BASE, source: () => source, setup: opts.setup, guard: opts.guard ?? letIn, setupKind: opts.setupKind, report: opts.report });
   const send = async (method: string, path: string, init: { body?: string; json?: unknown; headers?: Record<string, string> } = {}) => {
@@ -54,11 +75,13 @@ describe("dashboard API: reads", () => {
     expect(r.body).toEqual({
       mode: "local",
       vault: { kind: "dir", dir: "/vaults/lisbon-arc" },
+      name: "lisbon-arc",
       campaign: "lisbon-arc",
       human: "player",
+      humans: ["player"],
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
-      capabilities: { rule: true, quest: true, remember: true, party: true, introductions: true, curator: false, setup: "none" },
+      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, party: true, introductions: true, curator: false, setup: "none" },
     });
   });
 
@@ -123,6 +146,90 @@ describe("dashboard API: actions", () => {
     const raw = (await store.read("goals/residence-permit.md"))!;
     expect(raw).toContain("- [ ] Get health insurance");
     expect(parseDoc(raw).data).toMatchObject({ progress: { done: 3, total: 6 }, updated_by: "player" });
+  });
+
+  it("goal: progress, due date, counterparty and repeat, as the human", async () => {
+    const { post, store } = harness();
+    const r = await post("actions/goal", { goal: "residence-permit", progress: { tick: 1 }, due: "2026-12-01", counterparty: "[[migration-agency]]", repeat: { every: "1y" } });
+    expect(r.status).toBe(200);
+    expect(r.body.goal).toBe("[[residence-permit]]");
+    expect(r.body.changes).toEqual(expect.arrayContaining(["progress 3/6", "due 2026-12-01"]));
+    expect(parseDoc((await store.read("goals/residence-permit.md"))!).data).toMatchObject({
+      progress: { done: 3, total: 6 },
+      due: "2026-12-01",
+      counterparty: "[[migration-agency]]",
+      repeat: { every: "1y" },
+      updated_by: "player",
+    });
+    expect(await post("actions/goal", { goal: "residence-permit", repeat: {} })).toMatchObject({ status: 400, body: { code: "INVALID" } });
+    expect(await post("actions/goal", { goal: "residence-permit", due: "soon" })).toMatchObject({ status: 400, body: { code: "INVALID" } });
+    expect(await post("actions/goal", { goal: "no-such-goal", status: "done" })).toMatchObject({ status: 400, body: { code: "VAULT" } });
+  });
+
+  it("quest: the v1 body still works on a source that only has goal updates", async () => {
+    const { post } = harness({ source: (full) => ({ ...full, quest: undefined }) });
+    const r = await post("actions/quest", { quest: "residence-permit", clock: { name: "Paperwork", tick: 1 }, deadline: "2026-12-24" });
+    expect(r).toMatchObject({ status: 200, body: { quest: "[[residence-permit]]" } });
+    expect(r.body.changes).toEqual(expect.arrayContaining(["progress 3/6", "due 2026-12-24"]));
+  });
+
+  it("goal: a source from before goals gets the v1 update, and refuses what v1 can't say", async () => {
+    const calls: unknown[] = [];
+    const { post } = harness({
+      source: (full) => ({ ...full, goal: undefined, quest: async (ref, update) => (calls.push([ref, update]), { quest: `[[${ref}]]`, changes: ["progress 3/6"] }) }),
+    });
+    expect(await post("actions/goal", { goal: "residence-permit", progress: { tick: 1 }, due: "2026-12-01" })).toMatchObject({ status: 200, body: { goal: "[[residence-permit]]", changes: ["progress 3/6"] } });
+    expect(calls).toEqual([["residence-permit", { clock: { name: "Progress", tick: 1 }, deadline: "2026-12-01" }]]);
+    expect(await post("actions/goal", { goal: "residence-permit", counterparty: "[[migration-agency]]" })).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
+    expect(await post("actions/goal", { goal: "residence-permit", status: "won" })).toMatchObject({ status: 400, body: { code: "VAULT" } });
+  });
+
+  it("proposal: accept applies the value as the human; decline closes it", async () => {
+    const accepting = harness();
+    await accepting.store.write(PROPOSAL_PATH, PROPOSAL);
+    expect((await accepting.get("overview")).body.attention.disputes).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "proposal", state: "pending", field: "hours" })]));
+    const r = await accepting.post("actions/proposal", { dispute: "proposal-harbor-cafe-hours", decision: "accept" });
+    expect(r).toMatchObject({ status: 200, body: { proposal: "proposal-harbor-cafe-hours", decision: "accepted", entity: "harbor-cafe", field: "hours", value: "8-18" } });
+    const fm = parseDoc((await accepting.store.read("locations/harbor-cafe.md"))!).data as { facts: Record<string, Record<string, unknown>> };
+    expect(fm.facts.hours).toMatchObject({ value: "8-18", status: "canon", by: "player" });
+    expect(await accepting.post("actions/proposal", { dispute: "proposal-harbor-cafe-hours", decision: "accept" })).toMatchObject({ status: 400, body: { code: "VAULT" } });
+
+    const declining = harness();
+    await declining.store.write(PROPOSAL_PATH, PROPOSAL);
+    expect(await declining.post("actions/proposal", { dispute: "proposal-harbor-cafe-hours", decision: "decline" })).toMatchObject({ status: 200, body: { decision: "declined" } });
+    expect(parseDoc((await declining.store.read(PROPOSAL_PATH))!).data).toMatchObject({ status: "resolved", state: "declined" });
+    expect(await declining.post("actions/proposal", { dispute: "proposal-harbor-cafe-hours", decision: "maybe" })).toMatchObject({ status: 400, body: { code: "INVALID" } });
+    // A conflict isn't a proposal.
+    expect(await declining.post("actions/proposal", { dispute: "dispute-migration-agency-office-address", decision: "decline" })).toMatchObject({ status: 400, body: { code: "VAULT" } });
+  });
+
+  it("proposal and goal: act as the human the dashboard was started as", async () => {
+    const { post, get, store } = harness({ human: "partner" });
+    await withPartner(store);
+    await store.write(PROPOSAL_PATH, PROPOSAL);
+    expect((await get("session")).body).toMatchObject({ human: "player", humans: ["player", "partner"], actor: { kind: "human", id: "partner" } });
+    await post("actions/proposal", { dispute: "proposal-harbor-cafe-hours", decision: "accept", value: "8-17" });
+    const fm = parseDoc((await store.read("locations/harbor-cafe.md"))!).data as { facts: Record<string, Record<string, unknown>> };
+    expect(fm.facts.hours).toMatchObject({ value: "8-17", by: "partner" });
+    await post("actions/goal", { goal: "residence-permit", progress: { tick: 1 } });
+    expect(parseDoc((await store.read("goals/residence-permit.md"))!).data).toMatchObject({ updated_by: "partner" });
+    const r = await post("actions/remember", { text: "The cafe closes early on Sundays." });
+    expect(r.body.path).toMatch(/^inbox\/partner\//);
+  });
+
+  it("an unknown human refuses to start", async () => {
+    const { get } = harness({ human: "stranger" });
+    expect((await get("session")).body).toMatchObject({ mode: "setup", error: { code: "VAULT" } });
+  });
+
+  it("retract: the fact is retconned by the human", async () => {
+    const { post, store } = harness();
+    const r = await post("actions/retract", { entity: "migration-agency", field: "phone" });
+    expect(r).toMatchObject({ status: 200, body: { entity: "migration-agency", field: "phone" } });
+    const fm = parseDoc((await store.read("factions/migration-agency.md"))!).data as { facts: Record<string, Record<string, unknown>> };
+    expect(fm.facts.phone).toMatchObject({ status: "retconned" });
+    expect(await post("actions/retract", { entity: "migration-agency" })).toMatchObject({ status: 400, body: { code: "INVALID" } });
+    expect(await post("actions/retract", { entity: "migration-agency", field: "no_such_field" })).toMatchObject({ status: 400, body: { code: "VAULT" } });
   });
 
   it("remember: writes an episode to the human's inbox", async () => {
@@ -206,7 +313,7 @@ describe("dashboard API: errors", () => {
     expect((await get("session")).body).toEqual({
       mode: "setup",
       user: { login: "player" },
-      capabilities: { rule: false, quest: false, remember: false, party: false, introductions: false, curator: false, setup: "none" },
+      capabilities: { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, party: false, introductions: false, curator: false, setup: "none" },
     });
     expect(await get("setup/status")).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
   });
@@ -232,8 +339,10 @@ describe("dashboard API: errors", () => {
   });
 
   it("501 when the source lacks a capability", async () => {
-    const { get, post } = harness({ source: (full) => ({ ...full, rule: undefined, addParty: undefined, introduction: undefined }) });
-    expect((await get("session")).body.capabilities).toEqual({ rule: false, quest: true, remember: true, party: false, introductions: false, curator: false, setup: "none" });
+    const { get, post } = harness({ source: (full) => ({ ...full, rule: undefined, addParty: undefined, introduction: undefined, proposal: undefined, retract: undefined }) });
+    expect((await get("session")).body.capabilities).toEqual({ rule: false, goal: true, quest: true, proposal: false, retract: false, remember: true, party: false, introductions: false, curator: false, setup: "none" });
+    expect(await post("actions/proposal", { dispute: "x", decision: "decline" })).toMatchObject({ status: 501 });
+    expect(await post("actions/retract", { entity: "migration-agency", field: "phone" })).toMatchObject({ status: 501 });
     expect(await post("actions/rule", { dispute: "dispute-migration-agency-office-address", claim: 0 })).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
     expect(await post("actions/party", { id: "job-scout", title: "Job Scout" })).toMatchObject({ status: 501 });
     expect(await post("actions/introduction", { agent: "job-scout", decision: "dismiss" })).toMatchObject({ status: 501 });

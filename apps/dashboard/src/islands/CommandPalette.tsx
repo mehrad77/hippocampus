@@ -38,13 +38,13 @@ interface Section {
 // Synonyms carry both vocabularies, so "quest" finds Goals and "goal" finds the Quest board in either look.
 const PAGES: [Page, IconName, string][] = [
   ["tavern", "tavern", "home tavern overview dashboard start"],
-  ["quests", "quest", "goals quests steps objectives progress clocks deadlines tasks"],
-  ["council", "council", "disputes council decisions rulings conflicts"],
+  ["goals", "quest", "goals quests steps objectives progress due dates deadlines repeats tasks"],
+  ["council", "council", "disputes council decisions rulings conflicts proposals suggestions duplicates"],
   ["satchel", "satchel", "inbox satchel notes episodes pending waiting"],
   ["codex", "codex", "records codex entities entries wiki all"],
   ["map", "map", "connections map relationships relations ties graph network"],
   ["chronicle", "chronicle", "timeline chronicle events history journal log"],
-  ["party", "party", "agents party members roles lanes"],
+  ["party", "party", "agents party members roles lanes people humans"],
   ["guides", "guides", "help guides handbook docs how"],
   ["setup", "setup", "setup settings personalization look theme tokens connect health status"],
 ];
@@ -211,7 +211,7 @@ export function CommandPalette() {
         deepItems.push({
           key: `ep:${ep.id}`,
           label: ep.secret || ep.text === null ? v("A hidden note", "A sealed episode") : clip(plainText(ep.text), 90),
-          sub: `${ep.agent} · ${kindLabel(ep.kind, plain)} · ${relTime(ep.at)} · ${v("waiting in the inbox", "waiting in the satchel")}`,
+          sub: `${ep.agent} · ${kindLabel(ep.kind, catalog.data?.kinds, plain ? "plain" : "codex")} · ${relTime(ep.at)} · ${v("waiting in the inbox", "waiting in the satchel")}`,
           icon: ep.secret ? "lock" : "satchel",
           hint: "pending",
           href: href.page("satchel", `#${ep.id}`),

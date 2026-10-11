@@ -26,7 +26,7 @@ import type { Graph } from "./types.ts";
 const node = (slug: string, type: string, degree = 0) => ({ slug, title: slug, type, tags: [], degree });
 
 const GRAPH: Graph = {
-  nodes: [node("residency-agent", "party", 2), node("residence-permit", "quest", 3), node("migration-agency", "faction", 2), node("lisbon", "location", 1), node("player", "character", 0)],
+  nodes: [node("residency-agent", "party", 2), node("residence-permit", "goal", 3), node("migration-agency", "faction", 2), node("lisbon", "location", 1), node("player", "character", 0)],
   edges: [
     { from: "residency-agent", rel: "owns", to: "residence-permit" },
     { from: "residence-permit", rel: "involves", to: "migration-agency" },
@@ -58,8 +58,9 @@ describe("graph shaping", () => {
   });
 
   it("counts types in legend order", () => {
-    expect(typeCounts([...GRAPH.nodes, node("archivist", "party"), node("x", "zeta")])).toEqual([
-      ["quest", 1],
+    expect(typeCounts([...GRAPH.nodes, node("archivist", "party"), node("x", "zeta"), node("lisbon-arc", "arc")])).toEqual([
+      ["arc", 1],
+      ["goal", 1],
       ["party", 2],
       ["character", 1],
       ["faction", 1],

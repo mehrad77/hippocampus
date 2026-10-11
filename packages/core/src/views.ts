@@ -1,11 +1,13 @@
 import { actorProps } from "./actor.ts";
-import { basename, displayName, getSummary, type Entity } from "./entity.ts";
-import { getObjectives, goalProps, goalState, legacyClocks, nextDue, type Clock, type GoalState, type Progress, type Repeat } from "./goal.ts";
+import { basename, displayName, getHumanGuidelines, getSummary, type Entity } from "./entity.ts";
+import { addDuration, getObjectives, goalProps, goalState, legacyClocks, nextDue, type Clock, type GoalState, type Progress, type Repeat } from "./goal.ts";
 import type { Episode } from "./episode.ts";
+import { resolveInheritance } from "./inherit.ts";
 import { humanText, parseDoc } from "./markdown.ts";
 import { CURRENT_VAULT_VERSION, vaultVersionStatus } from "./migrations.ts";
 import { isSecretField } from "./ops.ts";
-import { FactStatus, type DisputeKind, type EpisodeKind, type Fact, type FactValue, type ProposalState } from "./schema.ts";
+import { FactStatus, type Behaviour, type Capability, type DecisionEntry, type DisputeKind, type EpisodeKind, type Fact, type FactValue, type FieldDef, type Guideline, type ProposalState, type QuestionEntry, type Stats } from "./schema.ts";
+import type { ResolvedKind, ResolvedType } from "./schema-registry.ts";
 import { isSecretRef } from "./secrets.ts";
 import { fromLocal, localParts, parseFactKey } from "./text.ts";
 import type { Authority, Dispute, Vault } from "./vault.ts";
@@ -13,7 +15,7 @@ import type { Authority, Dispute, Vault } from "./vault.ts";
 /** Authority as the dashboard shows it: any human is "human", whether or not the domain is theirs. */
 export type ShownAuthority = "human" | "authority" | "none";
 const shownAuthority = (a: Authority): ShownAuthority => (a === "human_domain" ? "human" : a);
-import { parseLinks, unwrapLink } from "./wikilink.ts";
+import { link, parseLinks, unwrapLink } from "./wikilink.ts";
 
 // Read models for humans (the dashboard). Agent-facing views stay in service.ts, sized for context windows;
 // these are complete, structured, and mask every secret in one place.
@@ -45,7 +47,17 @@ export interface FactDetail extends Shown {
   seenBy: string[];
   /** Slug of the open dispute about this field. */
   dispute?: string;
-  was: (Shown & { by?: string; at?: string })[];
+  was: (Shown & { by?: string; at?: string; why?: string })[];
+  /** The field without its scope (`greeting` for `greeting@lang:pt`). */
+  name?: string;
+  /** The context it holds in (`lang:pt`), when the key has one. */
+  scope?: string;
+  validFrom?: string;
+  validUntil?: string;
+  /** The reporter's own confidence, 0–1. */
+  confidence?: number;
+  /** Only a human may set it; an agent's report becomes a proposal. */
+  humanOnly?: boolean;
 }
 
 export interface EntityCard extends Ref {
@@ -158,6 +170,105 @@ export interface ChronicleEntryView {
   touched: string[];
 }
 
+/** One of the vault's humans. */
+export interface HumanView {
+  id: string;
+  domains: string[];
+  github?: string;
+}
+
+/** A field of a type or of a kind's `data:`, as the dashboard needs it (forms, badges). */
+export interface FieldView {
+  kind: FieldDef["kind"];
+  many?: boolean;
+  values?: string[];
+  required?: boolean;
+  humanOnly?: boolean;
+  secret?: boolean;
+  confidential?: boolean;
+  description?: string;
+}
+
+export interface TypeView {
+  name: string;
+  folder: string;
+  description: string;
+  /** Plain-language name (type note `label`), and the codex one (`codex_label`). */
+  label?: string;
+  codexLabel?: string;
+  capabilities: Capability[];
+  /** Status words mapped to core states (goal types). */
+  statuses?: Record<string, string>;
+  inheritable: boolean;
+  /** Fields only a human may set. */
+  humanOnly: string[];
+}
+
+export interface KindView {
+  name: string;
+  behaviour: Behaviour;
+  aliasOf?: string;
+  /** Whether the episode text is required, optional, kept only as a gist, or forbidden. */
+  text: ResolvedKind["text"];
+  gistMax?: number;
+  data: Record<string, FieldView>;
+  description: string;
+}
+
+/** The vault's types and kinds, for labels, forms and status words. */
+export interface SchemaView {
+  types: TypeView[];
+  kinds: KindView[];
+}
+
+/** How often to be in touch, and how late the next contact is. */
+export interface CadenceView {
+  /** `2w`, `1m`, or `none`. */
+  every: string;
+  /** When the next contact is due (the last contact plus `every`). */
+  due?: string;
+  /** Days past `due`, when it is past. */
+  overdueDays?: number;
+}
+
+export interface OverdueContact {
+  ref: string;
+  title: string;
+  last_contact: string;
+  cadence: string;
+  due: string;
+  days_overdue: number;
+  /** The group it's a `member_of`, if any. */
+  group?: string;
+}
+
+/** An overdue contact as the dashboard shows it. */
+export interface OverdueView {
+  ref: Ref;
+  lastContact: string;
+  cadence: string;
+  due: string;
+  daysOverdue: number;
+  group?: Ref;
+}
+
+export interface GuidelineView {
+  rule: string;
+  scope?: string;
+  status: Guideline["status"];
+  by: string;
+  byHuman: boolean;
+  at?: string;
+}
+
+export interface GuidelinesDetail {
+  /** The human's own guidelines: the prose under the note's `## Guidelines` heading (markdown). */
+  human: string;
+  items: GuidelineView[];
+  /** Inherited from `extends:` ancestors and inheritable tags, with the note each comes from. */
+  inherited: (GuidelineView & { source: Ref })[];
+}
+
 export interface PartyMember extends Ref {
   lane?: string;
   authority: string[];
@@ -186,6 +297,8 @@ export interface Attention {
   unknownAgents: string[];
   /** Agents asking to join the party, oldest first. Their text is their own: show it as plain text. */
   introductions: IntroductionView[];
+  /** People whose cadence says contact is overdue, most overdue first. */
+  overdue?: OverdueView[];
 }
 
 export interface IntroductionView {
@@ -213,8 +326,14 @@ export interface ActivityDay {
 }
 
 export interface Overview {
+  /** The vault's name. */
+  name?: string;
+  /** @deprecated Same as `name`. */
   campaign: string;
+  /** The primary human. */
   human: string;
+  humans?: HumanView[];
+  schema?: SchemaView;
   timezone: string;
   now: string;
   today: string;
@@ -226,9 +345,14 @@ export interface Overview {
     facts: Record<FactStatus, number>;
     inbox: number;
     disputes: number;
+    /** Goals by core state. */
+    goals?: Record<string, number>;
+    /** @deprecated Same as `goals`. */
     quests: Record<string, number>;
   };
   attention: Attention;
+  goals?: GoalCard[];
+  /** @deprecated Same as `goals`. */
   quests: GoalCard[];
   upcoming: Upcoming[];
   party: PartyMember[];
@@ -240,9 +364,13 @@ export interface Overview {
 }
 
 export interface Catalog {
+  name?: string;
+  /** @deprecated Same as `name`. */
   campaign: string;
   human: string;
-  types: { name: string; folder: string; description: string; count: number }[];
+  humans?: HumanView[];
+  types: (Partial<TypeView> & { name: string; folder: string; description: string; count: number })[];
+  kinds?: KindView[];
   domains: string[];
   relations: string[];
   entities: EntityCard[];
@@ -257,10 +385,19 @@ export interface EntityDetail {
   facts: FactDetail[];
   relations: { rel: string; dir: "out" | "in"; ref: Ref }[];
   disputes: DisputeView[];
+  goal?: GoalCard;
+  /** @deprecated Same as `goal`. */
   quest?: GoalCard;
   party?: PartyMember;
   mentions: ChronicleEntryView[];
   pending: EpisodeView[];
+  guidelines?: GuidelinesDetail;
+  stats?: Stats;
+  cadence?: CadenceView;
+  decisions?: DecisionEntry[];
+  questions?: QuestionEntry[];
+  /** Notes it inherits from: its `extends:` chain (nearest first), then inheritable notes its tags name. */
+  inherits?: Ref[];
 }
 
 export interface Graph {
@@ -426,8 +563,16 @@ export const questCard = goalCard;
 export function factDetail(ctx: ViewContext, e: Entity, field: string, f: Fact): FactDetail {
   const dispute = ctx.vault.disputes.get(ctx.vault.disputeSlug(e.slug, field));
   const confidential = isConfidentialField(ctx.vault, e, field, f);
+  const { field: name, scope } = parseFactKey(field);
+  const def = ctx.vault.schema.fieldDef(e.fm.type, field);
   return {
     field,
+    name,
+    ...(scope ? { scope } : {}),
+    ...(f.valid_from ? { validFrom: f.valid_from } : {}),
+    ...(f.valid_until ? { validUntil: f.valid_until } : {}),
+    ...(f.confidence !== undefined ? { confidence: f.confidence } : {}),
+    ...(def?.human_only ? { humanOnly: true } : {}),
     ...shown(f.value, { confidential }),
     status: f.status,
     by: f.by ?? ctx.vault.config.human,
@@ -438,7 +583,7 @@ export function factDetail(ctx: ViewContext, e: Entity, field: string, f: Fact):
     src: f.src,
     seenBy: f.seen_by ?? [],
     dispute: dispute?.fm.status === "open" ? dispute.slug : undefined,
-    was: (f.was ?? []).map((w) => ({ ...shown(w.value, { confidential }), by: w.by, at: w.at })),
+    was: (f.was ?? []).map((w) => ({ ...shown(w.value, { confidential }), by: w.by, at: w.at, ...(w.why ? { why: w.why } : {}) })),
   };
 }
 
@@ -591,6 +736,112 @@ export function upcomingDates(vault: Vault, today: string, horizon: string): { w
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 
+// ── Schema, humans, contacts ────────────────────────────────────────────────────
+
+function fieldView(def: FieldDef): FieldView {
+  return {
+    kind: def.kind,
+    ...(def.many ? { many: true } : {}),
+    ...(def.values?.length ? { values: def.values } : {}),
+    ...(def.required ? { required: true } : {}),
+    ...(def.human_only ? { humanOnly: true } : {}),
+    ...(def.secret ? { secret: true } : {}),
+    ...(def.confidential || def.identity_key ? { confidential: true } : {}),
+    ...(def.description ? { description: def.description } : {}),
+  };
+}
+
+export function typeView(t: ResolvedType): TypeView {
+  return {
+    name: t.name,
+    folder: t.folder,
+    description: t.description,
+    ...(t.label ? { label: t.label } : {}),
+    ...(t.codexLabel ? { codexLabel: t.codexLabel } : {}),
+    capabilities: t.capabilities,
+    ...(t.statuses ? { statuses: t.statuses } : {}),
+    inheritable: t.inheritable,
+    humanOnly: Object.entries(t.fields)
+      .filter(([, d]) => d.human_only)
+      .map(([f]) => f),
+  };
+}
+
+export function kindView(k: ResolvedKind): KindView {
+  return {
+    name: k.name,
+    behaviour: k.behaviour,
+    ...(k.aliasOf ? { aliasOf: k.aliasOf } : {}),
+    text: k.text,
+    ...(k.gistMax ? { gistMax: k.gistMax } : {}),
+    data: Object.fromEntries(Object.entries(k.data).map(([name, d]) => [name, fieldView(d)])),
+    description: k.description,
+  };
+}
+
+export function schemaView(vault: Vault): SchemaView {
+  return { types: vault.schema.types().map(typeView), kinds: vault.schema.kinds().map(kindView) };
+}
+
+export function humansView(vault: Vault): HumanView[] {
+  return vault.config.humans.map((h) => ({ id: h.id, domains: h.domains, ...(h.github ? { github: h.github } : {}) }));
+}
+
+/** The effective cadence of `e` (own, else inherited or from its groups) and how overdue contact is on `today`. */
+export function cadenceOf(vault: Vault, e: Entity, today: string): CadenceView | undefined {
+  const every = resolveInheritance(vault, e).cadence;
+  if (!every) return undefined;
+  const last = e.fm.stats?.last_contact;
+  const due = every !== "none" && last ? addDuration(last, every) : undefined;
+  const late = due ? daysBetween(due, today) : 0;
+  return { every, ...(due ? { due } : {}), ...(late > 0 ? { overdueDays: late } : {}) };
+}
+
+/**
+ * Up to `cap` overdue contacts, most overdue first, spread across groups: each group's most overdue
+ * comes before anyone's second, so one big group doesn't fill the list.
+ */
+export function overdueContacts(vault: Vault, today: string, cap: number): OverdueContact[] {
+  const all: OverdueContact[] = [];
+  for (const e of vault.entities.values()) {
+    if (vault.schema.has(e.fm.type, "actor") || !e.fm.stats?.last_contact) continue;
+    const c = cadenceOf(vault, e, today);
+    if (!c?.overdueDays || !c.due) continue;
+    const group = e.fm.relations.filter((r) => r.rel === "member_of").map((r) => vault.resolve(r.target)?.slug).find(Boolean);
+    all.push({ ref: link(e.slug), title: displayName(e), last_contact: e.fm.stats.last_contact, cadence: c.every, due: c.due, days_overdue: c.overdueDays, ...(group ? { group: link(group) } : {}) });
+  }
+  all.sort((a, b) => b.days_overdue - a.days_overdue || a.ref.localeCompare(b.ref));
+  const picked: OverdueContact[] = [];
+  const rounds = new Map<string, number>();
+  for (const o of all) rounds.set(o.group ?? o.ref, 0);
+  // Round r takes the r-th most overdue of each group, in overall order.
+  for (let round = 0; picked.length < cap && picked.length < all.length; round++) {
+    for (const o of all) {
+      if (picked.length >= cap) break;
+      const key = o.group ?? o.ref;
+      if (picked.includes(o) || rounds.get(key)! > round) continue;
+      picked.push(o);
+      rounds.set(key, rounds.get(key)! + 1);
+    }
+  }
+  return picked.sort((a, b) => b.days_overdue - a.days_overdue || a.ref.localeCompare(b.ref));
+}
+
+function overdueView(vault: Vault, o: OverdueContact): OverdueView {
+  return {
+    ref: refFor(vault, o.ref),
+    lastContact: o.last_contact,
+    cadence: o.cadence,
+    due: o.due,
+    daysOverdue: o.days_overdue,
+    ...(o.group ? { group: refFor(vault, o.group) } : {}),
+  };
+}
+
+function guidelineView(vault: Vault, g: Guideline): GuidelineView {
+  return { rule: g.rule, ...(g.scope ? { scope: g.scope } : {}), status: g.status, by: g.by ?? vault.config.human, byHuman: vault.isHuman(g.by), ...(g.at ? { at: g.at } : {}) };
+}
+
 // ── Party ────────────────────────────────────────────────────────────────────────
 
 const actorFields = ({ lane, authority, host }: ReturnType<typeof actorProps>) => ({ lane, authority, host });
@@ -670,17 +921,28 @@ export async function overview(vault: Vault): Promise<Overview> {
   const from7 = addDays(ctx.today, -6);
   const horizon = addDays(ctx.today, 90);
   const unknown = unknownAgents(vault, chronicle30d);
+  const goals = vault.withCapability("goal").map((q) => goalCard(ctx, q));
   return {
+    name: config.name,
     campaign: config.campaign,
     human: config.human,
+    humans: humansView(vault),
+    schema: schemaView(vault),
     timezone: config.timezone,
     now: ctx.now,
     today: ctx.today,
     lastSleep,
     version: { vault: config.version, tool: CURRENT_VAULT_VERSION, status: vaultVersionStatus(config) },
-    counts: { entities: vault.entities.size, byType, facts, inbox: vault.episodes.length, disputes: vault.openDisputes().length, quests: questCounts },
-    attention: { ...findings(ctx), waiting: inbox.filter((e) => e.waitedThroughSleep), unknownAgents: unknown, introductions: introductions(vault) },
-    quests: vault.withCapability("goal").map((q) => goalCard(ctx, q)),
+    counts: { entities: vault.entities.size, byType, facts, inbox: vault.episodes.length, disputes: vault.openDisputes().length, goals: questCounts, quests: questCounts },
+    attention: {
+      ...findings(ctx),
+      waiting: inbox.filter((e) => e.waitedThroughSleep),
+      unknownAgents: unknown,
+      introductions: introductions(vault),
+      overdue: overdueContacts(vault, ctx.today, 20).map((o) => overdueView(vault, o)),
+    },
+    goals,
+    quests: goals,
     upcoming: upcomingDates(vault, ctx.today, horizon).map((u) => ({ what: u.what, date: u.date, daysLeft: daysBetween(ctx.today, u.date), ref: refOf(vault.entities.get(u.slug)!) })),
     party: partyMembers(ctx, chronicle30d),
     inbox: [...inbox].reverse().slice(0, 200),
@@ -699,9 +961,12 @@ export function catalog(vault: Vault): Catalog {
   const ctx = viewContext(vault);
   const entities = [...vault.entities.values()].map((e) => entityCard(ctx, e)).sort((a, b) => a.title.localeCompare(b.title));
   return {
+    name: vault.config.name,
     campaign: vault.config.campaign,
     human: vault.config.human,
-    types: vault.schema.types().map((t) => ({ name: t.name, folder: t.folder, description: t.description, count: entities.filter((e) => e.type === t.name).length })),
+    humans: humansView(vault),
+    types: vault.schema.types().map((t) => ({ ...typeView(t), count: entities.filter((e) => e.type === t.name).length })),
+    kinds: vault.schema.kinds().map(kindView),
     domains: vault.config.domains,
     relations: vault.config.relations,
     entities,
@@ -717,6 +982,13 @@ export async function entityDetail(vault: Vault, e: Entity): Promise<EntityDetai
     ...(ctx.rel.out.get(e.slug) ?? []).map((r) => ({ rel: r.rel, dir: "out" as const, ref: refOf(vault.entities.get(r.slug)!) })),
     ...(ctx.rel.in.get(e.slug) ?? []).map((r) => ({ rel: r.rel, dir: "in" as const, ref: refOf(vault.entities.get(r.slug)!) })),
   ];
+  const inheritance = resolveInheritance(vault, e);
+  const inherited = inheritance.guidelines.filter((g) => g.source !== e.slug);
+  const human = getHumanGuidelines(e);
+  const own = e.fm.guidelines ?? [];
+  const cadence = cadenceOf(vault, e, ctx.today);
+  const inherits = [...inheritance.chain, ...inheritance.mixins].map(refOf);
+  const goal = vault.schema.has(e.fm.type, "goal") ? goalCard(ctx, e) : undefined;
   const aboutMe = (ep: Episode) => ep.about.some((a) => vault.resolve(a)?.slug === e.slug) || (isParty && ep.agent === e.slug);
   return {
     card: entityCard(ctx, e),
@@ -726,10 +998,25 @@ export async function entityDetail(vault: Vault, e: Entity): Promise<EntityDetai
     facts: Object.entries(e.fm.facts).map(([field, f]) => factDetail(ctx, e, field, f)),
     relations,
     disputes: [...vault.disputes.values()].filter((d) => vault.resolve(d.fm.entity)?.slug === e.slug).map((d) => disputeView(ctx, d)),
-    quest: vault.schema.has(e.fm.type, "goal") ? goalCard(ctx, e) : undefined,
+    goal,
+    quest: goal,
     party: isParty ? partyMembers(ctx, chronicle.filter((c) => c.day >= addDays(ctx.today, -29))).find((p) => p.slug === e.slug) : undefined,
     mentions: chronicle.filter((c) => c.touched.includes(e.slug) || (isParty && c.agent === e.slug)).reverse().slice(0, 50),
     pending: vault.episodes.filter(aboutMe).map((ep) => episodeView(ep, lastSleep)),
+    ...(human || own.length || inherited.length
+      ? {
+          guidelines: {
+            human,
+            items: own.map((g) => guidelineView(vault, g)),
+            inherited: inherited.map((g) => ({ ...guidelineView(vault, g), source: refFor(vault, g.source) })),
+          },
+        }
+      : {}),
+    ...(e.fm.stats ? { stats: e.fm.stats } : {}),
+    ...(cadence ? { cadence } : {}),
+    ...(e.fm.decisions?.length ? { decisions: e.fm.decisions } : {}),
+    ...(e.fm.questions?.length ? { questions: e.fm.questions } : {}),
+    ...(inherits.length ? { inherits } : {}),
   };
 }
 

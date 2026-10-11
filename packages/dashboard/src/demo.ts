@@ -3,22 +3,28 @@ import {
   MemoryStore,
   REVIEW_PATH,
   Vault,
+  addGuideline,
   addRelation,
   applyFact,
-  applyQuestUpdate,
+  applyGoalUpdate,
   applyRuling,
+  applyStats,
   createEpisode,
   createIntroduction,
   generateKeyPair,
+  logDecision,
+  openQuestion,
+  proposeMerge,
   renderDoc,
   renderHandbook,
   type Entity,
+  type EpisodeData,
   type EpisodeKind,
-  type QuestUpdate,
+  type GoalUpdate,
   type VaultStore,
 } from "@hippocampus/core";
 
-// The demo campaign: the fictional `example-relocation` seed plus three weeks of party activity,
+// The demo: the fictional `example-relocation` seed plus three weeks of agents' activity,
 // replayed through the same ops the curator uses. It lives only in memory (never as vault files in
 // this repo), so screenshots, `astro dev` and tests get a lively vault without any real data.
 
@@ -34,8 +40,17 @@ interface Step {
   create?: { type: string; title: string; slug: string; tags?: string[]; aliases?: string[] }[];
   facts?: Fact[];
   rel?: [from: string, rel: string, to: string][];
-  quest?: [quest: string, update: QuestUpdate][];
+  goal?: [goal: string, update: GoalUpdate][];
   secret?: boolean;
+  /** Structured data (an interaction's channel and who it was with). */
+  data?: EpisodeData;
+  about?: string[];
+  /** A decision logged on an entity. */
+  decision?: [entity: string, entry: { what: string; why?: string; alternatives?: string[] }];
+  /** An open question on an entity. */
+  question?: [entity: string, q: string];
+  /** A guideline for dealing with an entity. */
+  guideline?: [entity: string, rule: string, scope?: string];
 }
 
 /** Consolidated history, oldest first. Dates inside facts are relative to now so deadlines stay ahead. */
@@ -43,7 +58,8 @@ function script(on: (days: number) => string): Step[] {
   return [
     { ago: 80, at: "10:05", agent: "campus-agent", kind: "fact", text: "The registrar answers at registrar@harbor-university.example.", facts: [["harbor-university", "registrar_email", "registrar@harbor-university.example"]] },
     { ago: 76, at: "16:20", agent: "residency-agent", kind: "fact", text: "The Migration Agency phone line is +351 210 000 000, weekdays 9–16.", facts: [["migration-agency", "phone", "+351 210 000 000"]] },
-    { ago: 21, at: "09:12", agent: "game-master", kind: "beat", text: "Chapter II opens: the paperwork gauntlet. Four quests, one deadline that matters." },
+    // `beat` is an alias of observation, kept for vaults from before kinds were notes.
+    { ago: 21, at: "09:12", agent: "game-master", kind: "beat", text: "Chapter II opens: the paperwork. Four goals, one deadline that matters." },
     {
       ago: 20,
       at: "11:40",
@@ -51,7 +67,7 @@ function script(on: (days: number) => string): Step[] {
       kind: "fact",
       text: "Booked the residence-permit appointment at the Migration Agency.",
       facts: [["migration-agency", "appointment_date", on(12)]],
-      quest: [["residence-permit", { deadline: on(45), clock: { name: "Paperwork", segments: 6, filled: 1, deadline: on(18) } }]],
+      goal: [["residence-permit", { due: on(45), progress: { total: 6, done: 1 } }]],
     },
     {
       ago: 19,
@@ -76,7 +92,7 @@ function script(on: (days: number) => string): Step[] {
       create: [{ type: "location", title: "Alfama flat", slug: "alfama-flat", tags: ["housing"], aliases: ["the Alfama flat"] }],
       facts: [["alfama-flat", "monthly_rent", "1,050 EUR"]],
       rel: [["alfama-flat", "located_in", "lisbon"], ["apartment-hunt", "involves", "alfama-flat"]],
-      quest: [["apartment-hunt", { complete: ["Shortlist listings"], clock: { name: "Lease signing", segments: 4, filled: 1, deadline: on(9) } }]],
+      goal: [["apartment-hunt", { complete: ["Shortlist listings"], due: on(9), progress: { total: 4, done: 1 } }]],
     },
     {
       ago: 17,
@@ -114,7 +130,7 @@ function script(on: (days: number) => string): Step[] {
       create: [{ type: "faction", title: "Acme Health", slug: "acme-health", tags: ["insurance"] }],
       facts: [["acme-health", "policy_start", on(-14)]],
       rel: [["residence-permit", "involves", "acme-health"]],
-      quest: [["residence-permit", { complete: ["Health insurance"], clock: { name: "Paperwork", tick: 1 } }]],
+      goal: [["residence-permit", { complete: ["Health insurance"], progress: { tick: 1 } }]],
     },
     {
       ago: 13,
@@ -142,7 +158,7 @@ function script(on: (days: number) => string): Step[] {
         ["language-center", "placement_level", "B1"],
         ["language-center", "placement_test_date", on(-11)],
       ],
-      quest: [["university-enrollment", { complete: ["Language placement test"] }]],
+      goal: [["university-enrollment", { complete: ["Language placement test"] }]],
     },
     {
       ago: 10,
@@ -150,10 +166,19 @@ function script(on: (days: number) => string): Step[] {
       agent: "player",
       kind: "decision",
       text: "Rent budget is 1,100 EUR a month, all in. Move into the Alfama flat as soon as the lease allows.",
+      decision: ["apartment-hunt", { what: "Take the Alfama flat, up to 1,100 EUR a month all in", why: "Close to the agency and the university", alternatives: ["Keep looking in Belém"] }],
       facts: [
         ["player", "rent_budget", "1,100 EUR"],
         ["alfama-flat", "move_in_date", on(25)],
       ],
+    },
+    {
+      ago: 9.5,
+      at: "08:15",
+      agent: "partner",
+      kind: "fact",
+      text: "The deposit for the Alfama flat is two months' rent.",
+      facts: [["alfama-flat", "deposit", "2,100 EUR"]],
     },
     {
       ago: 9,
@@ -167,8 +192,39 @@ function script(on: (days: number) => string): Step[] {
       ago: 8,
       at: "16:35",
       agent: "game-master",
-      kind: "beat",
-      text: "Halfway through the gauntlet: the insurance is sealed, the flat is in sight, the agency keeps moving its counter.",
+      kind: "observation",
+      text: "Halfway there: the insurance is done, the flat is in sight, the agency keeps moving its counter.",
+    },
+    {
+      ago: 8,
+      at: "18:10",
+      agent: "home-finder",
+      kind: "interaction",
+      text: "Called the landlord about the deposit and the move-in date.",
+      create: [{ type: "character", title: "Landlord", slug: "landlord", tags: ["housing"], aliases: ["the landlord"] }],
+      rel: [["landlord", "owns", "alfama-flat"]],
+      data: { channel: "call", with: "[[landlord]]" },
+      about: ["[[landlord]]"],
+      facts: [["landlord", "email", "landlord@example.test"]],
+      guideline: ["landlord", "Write to the landlord in Portuguese; calls only on weekdays", "lang:pt"],
+    },
+    {
+      ago: 7.5,
+      at: "09:00",
+      agent: "home-finder",
+      kind: "task",
+      text: "Rent is due on the first of each month, paid to the landlord by transfer.",
+      create: [{ type: "goal", title: "Pay rent", slug: "pay-rent", tags: ["housing", "finance"] }],
+      goal: [["pay-rent", { owner: "[[home-finder]]", counterparty: "[[landlord]]", due: on(4), repeat: { every: "1m" } }]],
+    },
+    {
+      ago: 3.5,
+      at: "12:20",
+      agent: "job-scout",
+      kind: "observation",
+      text: "The owner of the Alfama flat also lists a studio near the cafe.",
+      create: [{ type: "character", title: "Flat owner", slug: "flat-owner", tags: ["housing"] }],
+      facts: [["flat-owner", "email", "landlord@example.test"]],
     },
     {
       ago: 7,
@@ -176,7 +232,7 @@ function script(on: (days: number) => string): Step[] {
       agent: "campus-agent",
       kind: "observation",
       text: "The student portal locks new accounts until the tuition payment clears.",
-      quest: [["university-enrollment", { status: "blocked", add: ["Pay first-term tuition"] }]],
+      goal: [["university-enrollment", { status: "blocked", add: ["Pay first-term tuition"] }]],
       rel: [["university-enrollment", "requires", "student-portal"]],
     },
     {
@@ -186,7 +242,7 @@ function script(on: (days: number) => string): Step[] {
       kind: "fact",
       text: "Landlord confirmed: move-in is possible a week later than planned. Address proof letter promised at signing.",
       facts: [["alfama-flat", "move_in_date", on(32)]],
-      quest: [["apartment-hunt", { clock: { name: "Lease signing", tick: 1 } }]],
+      goal: [["apartment-hunt", { progress: { tick: 1 } }]],
     },
     {
       ago: 5,
@@ -204,7 +260,7 @@ function script(on: (days: number) => string): Step[] {
       text: "Harbor Cafe is hiring part-time baristas; walk-ins welcome on weekday mornings.",
       create: [{ type: "location", title: "Harbor Cafe", slug: "harbor-cafe", tags: [] }],
       facts: [["harbor-cafe", "hiring", "part-time baristas"]],
-      quest: [["paid-work", { status: "dormant" }]],
+      goal: [["paid-work", { status: "dormant" }]],
     },
     {
       ago: 3,
@@ -213,6 +269,16 @@ function script(on: (days: number) => string): Step[] {
       kind: "observation",
       text: "Someone at the cafe said the university career fair is next month.",
       facts: [["harbor-university", "career_fair_date", on(30)]],
+      question: ["harbor-university", "Do international students need to register for the career fair in advance?"],
+    },
+    {
+      ago: 2.5,
+      at: "17:30",
+      agent: "home-finder",
+      kind: "observation",
+      text: "The landlord seems to care most about a long lease and quiet tenants.",
+      // Only a human sets `stakes`: this becomes a proposal for the player.
+      facts: [["landlord", "stakes", "A long lease and quiet tenants"]],
     },
     {
       ago: 2,
@@ -220,18 +286,32 @@ function script(on: (days: number) => string): Step[] {
       agent: "residency-agent",
       kind: "task",
       text: "Address proof requested from the landlord; online application drafted on the permit portal.",
-      quest: [["residence-permit", { complete: ["Address proof"], clock: { name: "Paperwork", tick: 1 } }]],
+      goal: [["residence-permit", { complete: ["Address proof"], progress: { tick: 1 } }]],
       rel: [["residence-permit", "requires", "alfama-flat"]],
     },
     {
       ago: 1.4,
       at: "20:05",
       agent: "game-master",
-      kind: "beat",
-      text: "Previously on the Lisbon Arc: two disputes wait for the player's ruling, and the paperwork clock is half full.",
+      kind: "observation",
+      text: "This week: two disputes and a proposal wait for the player, and the paperwork is half done.",
     },
   ];
 }
+
+/** Two humans: the player, and a partner whose word on money outranks the player's. */
+const DEMO_HUMANS = `humans:
+  - { id: player }
+  - { id: partner, domains: [finance] }
+`;
+
+/** Fields the demo shows off: an identity key (kept confidential) and one only a human sets. */
+const DEMO_TYPES = `types:
+  character:
+    fields:
+      email: { kind: text, identity_key: true, description: How to reach them; identifies the person }
+      stakes: { kind: text, human_only: true, description: What matters most to them }
+`;
 
 /** Still in the inbox: written after (or held back from) the last sleep. */
 function pending(): { hoursAgo: number; agent: string; kind: EpisodeKind; text: string; about?: string[]; secret?: boolean; confidence?: number }[] {
@@ -291,7 +371,7 @@ export async function buildDemoStore(seed: VaultStore | Record<string, string>, 
   const config = (await store.read("_hippo/config.yaml")) ?? "";
   // A throwaway key: the demo's secret is really encrypted, and nobody can read it back.
   const { recipient } = await generateKeyPair();
-  await store.write("_hippo/config.yaml", config.replace(/recipient:\s*null/, `recipient: ${recipient}`));
+  await store.write("_hippo/config.yaml", `${config.replace(/recipient:\s*null/, `recipient: ${recipient}`).replace(/^humans:\n(?: {2}- .*\n)+/m, DEMO_HUMANS)}\n${DEMO_TYPES}`);
 
   let clock = now;
   const vault = await Vault.load(store, { now: () => clock });
@@ -306,7 +386,7 @@ export async function buildDemoStore(seed: VaultStore | Record<string, string>, 
   for (const step of script(on)) {
     const at = instant(now, step.ago, step.at, tz);
     clock = new Date(at);
-    const ep = createEpisode(vault.config.folders.inbox, { agent: step.agent, kind: step.kind, text: step.text, at, secret: step.secret }, clock);
+    const ep = createEpisode(vault.config.folders.inbox, { agent: step.agent, kind: step.kind, text: step.text, at, secret: step.secret, data: step.data, about: step.about }, clock);
     const prov = { by: step.agent, at, src: [ep.id] };
     const touched = new Set<string>();
     for (const c of step.create ?? []) touched.add(vault.createEntity({ ...c, by: step.agent }).slug);
@@ -318,14 +398,36 @@ export async function buildDemoStore(seed: VaultStore | Record<string, string>, 
       addRelation(vault, get(from), rel, get(to), prov);
       touched.add(from).add(to);
     }
-    for (const [slug, update] of step.quest ?? []) {
-      applyQuestUpdate(vault, get(slug), update, step.agent);
+    for (const [slug, update] of step.goal ?? []) {
+      applyGoalUpdate(vault, get(slug), update, step.agent);
       touched.add(slug);
     }
+    if (step.decision) {
+      logDecision(vault, get(step.decision[0]), step.decision[1], prov);
+      touched.add(step.decision[0]);
+    }
+    if (step.question) {
+      openQuestion(vault, get(step.question[0]), step.question[1], prov);
+      touched.add(step.question[0]);
+    }
+    if (step.guideline) {
+      const [slug, rule, scope] = step.guideline;
+      addGuideline(vault, get(slug), { rule, scope }, prov);
+      touched.add(slug);
+    }
+    const kind = vault.schema.kind(step.kind).def;
+    if (kind.behaviour === "interaction") applyStats(vault, ep, kind, [...touched].map(get));
     if (step.agent === "game-master") touched.add("lisbon-arc");
     // Secret-bearing episodes reach the chronicle redacted, as the curator writes them.
     await vault.appendChronicle(ep, [...touched], step.secret ? step.text.replace(/X\d+/g, "[redacted]") : step.text);
   }
+
+  // The landlord wants a call every week (the last one was eight days ago), and the same address
+  // turned up on a second note: the player decides whether they are one person.
+  const landlord = get("landlord");
+  landlord.fm.cadence = "1w";
+  vault.markDirty(landlord);
+  proposeMerge(vault, landlord, get("flat-owner"), "email");
 
   // The player already settled one dispute (the agency counter moved back to Alfama).
   clock = new Date(now.getTime() - 26 * 3600_000);

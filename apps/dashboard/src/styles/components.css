@@ -399,8 +399,9 @@ button.chip {
   --c: var(--t-faction);
 }
 
+.typed--goal,
 .typed--quest {
-  --c: var(--t-quest);
+  --c: var(--t-goal);
 }
 
 .typed--location {
@@ -423,8 +424,9 @@ button.chip {
   --c: var(--t-lore);
 }
 
+.typed--arc,
 .typed--campaign {
-  --c: var(--t-campaign);
+  --c: var(--t-arc);
 }
 
 .elink {
@@ -862,40 +864,100 @@ a.stat:hover {
   background: var(--surface-sunk);
 }
 
-/* ── Clocks ───────────────────────────────────────────────────────────── */
+/* ── Progress ─────────────────────────────────────────────────────────── */
 
-.clock {
-  flex: none;
-  overflow: visible;
+.progress {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: nowrap;
 }
 
-.clock__rim {
-  fill: var(--surface-sunk);
-  stroke: var(--rule-strong);
-  stroke-width: 1.5;
+.progress__track {
+  display: inline-flex;
+  align-items: stretch;
+  height: 12px;
+  width: 160px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  background: var(--surface-sunk);
+  overflow: hidden;
 }
 
-.clock__seg {
-  fill: var(--surface-2);
-  stroke: var(--surface);
-  stroke-width: 2;
-  transition: fill 140ms ease;
+.progress--sm .progress__track {
+  height: 8px;
+  width: 96px;
 }
 
-.clock__seg--on {
-  fill: var(--accent);
+.progress__track--cells {
+  width: auto;
+  gap: 2px;
+  padding: 1px;
 }
 
-.clock--live .clock__seg {
+.progress__cell {
+  width: 14px;
+  background: var(--surface-2);
+  border-radius: 2px;
+  transition: background 140ms ease;
+}
+
+.progress--sm .progress__cell {
+  width: 8px;
+}
+
+.progress__cell--on,
+.progress__fill {
+  background: var(--accent);
+}
+
+.progress--live .progress__cell {
   cursor: pointer;
 }
 
-.clock--live .clock__seg:hover {
-  fill: color-mix(in oklab, var(--accent) 45%, var(--surface-2));
+.progress--live .progress__cell:hover {
+  background: color-mix(in oklab, var(--accent) 45%, var(--surface-2));
 }
 
-.clock--live .clock__seg--on:hover {
-  fill: var(--accent-hover);
+.progress--live .progress__cell--on:hover {
+  background: var(--accent-hover);
+}
+
+.progress--live .progress__track:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.progress__step {
+  min-width: 28px;
+  padding-inline: 6px;
+}
+
+.progress__count {
+  color: var(--ink-3);
+  font-size: 0.85rem;
+}
+
+/* ── Confidential values and proposals ─────────────────────────────────── */
+
+.conf {
+  color: var(--t-confidential);
+  font-weight: 600;
+}
+
+.chip--confidential {
+  --c: var(--t-confidential);
+  color: var(--t-confidential);
+  border-color: color-mix(in oklab, var(--t-confidential) 50%, transparent);
+}
+
+.chip--proposal {
+  color: var(--t-proposal);
+  border-color: color-mix(in oklab, var(--t-proposal) 50%, transparent);
+}
+
+.chip--human-only {
+  color: var(--ink-2);
 }
 
 .door {

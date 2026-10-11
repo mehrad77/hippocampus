@@ -8,25 +8,25 @@ sigil: link
 import Aside from "../../components/guides/Aside.astro";
 import Link from "../../components/guides/Link.astro";
 
-Agents join the table over **MCP**, which gives them tools: remember, recall, ask. On the hosted app, an agent connects with a key or as a connector. On your own machine, `hippo serve` runs the same tools. Either way, an agent's first call is `onboard`, which tells it who it is, and asks a stranger to introduce itself.
+Agents connect over **MCP**, which gives them tools: remember, recall, ask. On the hosted app, an agent connects with a key or as a connector. On your own machine, `hippo serve` runs the same tools. Either way, an agent's first call is `onboard`, which tells it who it is, and asks a stranger to introduce itself.
 
 ## The tools
 
 | Tool | Scope | What it does |
 | --- | --- | --- |
-| `onboard` | read | Who you are: lane, authority domains, your quests, plus the whole handbook. Call it at the start of a session |
+| `onboard` | read | Who you are: lane, authority domains, your goals, plus the whole handbook. Call it at the start of a session |
 | `recall` | read | Search memory: matching notes with summary and key facts, related notes along the graph, and matching episodes still in the inbox |
-| `get` | read | One note in full: every fact with status and provenance, relations, objectives and clocks, open disputes, your notes |
+| `get` | read | One note in full: every fact with status, provenance, scope and validity; relations; goal state, progress and objectives; guidelines, own and inherited; contact stats; decisions and open questions; open disputes; your notes |
 | `neighbors` | read | Walk the relation graph, 1 to 3 steps, optionally one relation type |
 | `ask_canon` | read | The canonical answer to a factual question: best-matching facts with status and source, plus any open dispute |
-| `briefing` | read | "Previously on…": the chronicle since a date (default a week), recently changed notes, deadlines and clocks ahead, open disputes |
-| `remember` | remember | Queue one episode: `text` (at most 8 KB), plus optional `kind`, `about`, `confidence`, `secret`, `at` |
+| `briefing` | read | "Previously on…": the chronicle since a date (default a week), recently changed notes, due dates and anniversaries ahead, overdue contacts, open disputes. With `about`, a brief on one person or thing instead (below) |
+| `remember` | remember | Queue one episode: `text` (at most 8 KB), plus optional `kind`, `data`, `confidential`, `scope`, `about`, `confidence`, `secret`, `at` |
 | `introduce` | remember | Ask to join the party: `title`, `lane`, and optionally `host`, `model`, `about` |
-| `update_quest` | quest | Quest status, objectives (`complete`, `reopen`, `add`), a clock, deadline or owner, applied at once |
+| `update_goal` | goal | Goal status, objectives (`complete`, `reopen`, `add`), progress, due date, owner, counterparty or repeat, applied at once. `update_quest` is its old name and still works |
 
 The curator has five more tools under the `curate` scope; see <Link guide="nightly-sleep">The curator</Link>. Two resources come with the `read` scope: `hippo://handbook` and `hippo://entity/{slug}`. Secrets are never revealed through any of them; see <Link guide="secrets">Secrets</Link>.
 
-Tools outside a connection's scopes are removed, so the client never even sees them.
+Tools outside a connection's scopes are removed, so the client never even sees them. The `goal` scope used to be called `quest`; keys and connectors granted `quest` get `goal`, and new ones carry both names.
 
 A good session follows the server's own instructions. Call `onboard` first. Use `recall`, `get` and `ask_canon` before acting on facts. `remember` anything worth keeping. Treat <code>rumor</code> as "verify first" and <code>disputed</code> as "don't act without checking".
 
@@ -40,8 +40,8 @@ Mint keys under **Setup → Connect agents**. A key is shown **once**: copy it, 
 
 | Kind | Scopes | Use it for |
 | --- | --- | --- |
-| Agent key | read, remember, quest | Any of your agents. Each names itself with the `agent` argument |
-| Single-agent key | read, plus remember and quest as you choose | One agent, bound to its id. Use it for an agent you want held to one id, or kept read-only |
+| Agent key | read, remember, goal | Any of your agents. Each names itself with the `agent` argument |
+| Single-agent key | read, plus remember and goal as you choose | One agent, bound to its id. Use it for an agent you want held to one id, or kept read-only |
 | Curator key | read, curate | The agent that runs sleep. Never give it to an everyday agent |
 
 ```bash
@@ -66,7 +66,7 @@ Then `/hippocampus:memory` loads the habits: onboard first, read before acting, 
 In Claude.ai or ChatGPT, add a custom connector with the URL `https://<your-instance>/mcp`. The app asks you to sign in with GitHub, then shows a consent page for your vault:
 
 - pick the **agent id** the app acts as: a party member, to give it that lane, or a new id, which you can seat in the party right away;
-- choose what it may do: read and remember are ticked; quests and curating are yours to add. Curating shows the app every new memory in full, secret ones in plain text, so allow it only for an app you'd trust as the curator.
+- choose what it may do: read and remember are ticked; goals and curating are yours to add. Curating shows the app every new memory in full, secret and confidential ones in plain text, so allow it only for an app you'd trust as the curator.
 
 Your account menu lists connected apps, and disconnects any of them.
 
@@ -83,7 +83,7 @@ Give each app its own id (`claude-web`, `chatgpt`), so you can tell their memori
 One process per agent, bound to its id with `--agent`:
 
 ```bash
-claude mcp add hippocampus -- npx -y @mehrad77/hippocampus -v ~/vaults/my-campaign serve --agent campus-agent
+claude mcp add hippocampus -- npx -y @mehrad77/hippocampus -v ~/vaults/my-vault serve --agent campus-agent
 ```
 
 For Claude Desktop, add it to `claude_desktop_config.json`:
@@ -93,18 +93,18 @@ For Claude Desktop, add it to `claude_desktop_config.json`:
   "mcpServers": {
     "hippocampus": {
       "command": "npx",
-      "args": ["-y", "@mehrad77/hippocampus", "-v", "~/vaults/my-campaign", "serve", "--agent", "home-finder"]
+      "args": ["-y", "@mehrad77/hippocampus", "-v", "~/vaults/my-vault", "serve", "--agent", "home-finder"]
     }
   }
 }
 ```
 
-To serve a vault on GitHub without a checkout, replace `-v ~/vaults/my-campaign` with `--github you/my-campaign`, and put a fine-grained token (Contents: read and write, on that repo only) in `HIPPO_GITHUB_TOKEN`.
+To serve a vault on GitHub without a checkout, replace `-v ~/vaults/my-vault` with `--github you/my-vault`, and put a fine-grained token (Contents: read and write, on that repo only) in `HIPPO_GITHUB_TOKEN`.
 
 ### Local HTTP, for several agents at once
 
 ```bash
-npx @mehrad77/hippocampus -v ~/vaults/my-campaign serve --http 8765
+npx @mehrad77/hippocampus -v ~/vaults/my-vault serve --http 8765
 ```
 
 Each agent connects to `http://127.0.0.1:8765/mcp?agent=<id>`, for example:
@@ -126,7 +126,7 @@ A local tool that can't speak MCP may write one new file per memory to `inbox/<i
 - **Local HTTP:** `?agent=` in the URL.
 - **Inbox files:** the episode's `agent:` property, which must match its folder.
 
-Ids are exact: lowercase letters, digits and dashes, matching `party/<id>.md`. Your own id and the reserved ids `human`, `curator`, `unknown` and `hippocampus` are refused. See <Link guide="party-and-lanes">Party and lanes</Link>.
+Ids are exact: lowercase letters, digits and dashes, matching `party/<id>.md`. The humans' ids and the reserved ids `human`, `curator`, `unknown` and `hippocampus` are refused. See <Link guide="party-and-lanes">Humans, agents and lanes</Link>.
 
 ## New agents introduce themselves
 
@@ -139,7 +139,7 @@ An id with no party sheet still works, but everything it reports counts as a rum
   "lane": "Finds paid work in Lisbon and tracks applications. Stays out of housing and the permit.",
   "host": "Claude Desktop",
   "model": "the model it runs on",
-  "about": "Searches job boards daily and keeps the application quest up to date."
+  "about": "Searches job boards daily and keeps the job applications goal up to date."
 }
 ```
 
@@ -154,8 +154,10 @@ The curator is only as good as what it's given. The handbook gives agents the sa
 - **Exact values.** ISO dates (`2026-10-14`), amounts with currency (`1,050 EUR`), full IDs, emails and phone numbers.
 - **Say how you know** when it matters: "confirmed by email", "seen on the permit portal".
 - **Corrections are new memories.** "The appointment moved to…" Never edit old episodes.
-- **Pick a kind.** `fact`, `observation`, `decision`, `task` (quest progress), `beat` (a story moment for the game master) or `question`.
+- **Pick a kind.** The handbook lists the vault's kinds. Every vault has `observation` (the default), `fact`, `decision`, `task` (something to do, or goal progress), `question` and `interaction` (a call, a meeting, a message); the vault may add its own. An unknown kind is filed as an observation.
 - **Mark secrets.** `secret: true` whenever an ID, an account number or a password is involved.
+- **Mark what's private.** `confidential: true` for something worth keeping that shouldn't travel: a health detail, a home address. See <Link guide="facts-and-status">Facts and their status</Link>.
+- **Say where it holds.** `scope` for a fact that's only true in one context, such as `lang:pt` or `org:harbor-university`.
 
 | Weak | Better |
 | --- | --- |
@@ -172,6 +174,30 @@ A `remember` call, in full:
   "about": ["[[migration-agency]]", "[[residence-permit]]"]
 }
 ```
+
+### Kinds and data
+
+A kind is defined by a note in the vault (see <Link guide="schema-and-presets">Types, kinds and presets</Link>), so `kind` takes any string. The kind decides whether `text` is required, optional, kept only as a gist, or not allowed, and which typed fields go in `data`. An interaction can be pure data:
+
+```json
+{
+  "kind": "interaction",
+  "data": { "with": "[[migration-agency]]", "channel": "call" },
+  "text": "Confirmed the documents to bring on 2026-10-14."
+}
+```
+
+A kind that counts as contact updates the person's or organization's contact stats (`last_contact`), which `briefing` uses to flag overdue contacts and repeating goals use to schedule the next one.
+
+### Briefing on one person
+
+Before contacting someone, call `briefing` with `about`:
+
+```json
+{ "about": "[[migration-agency]]" }
+```
+
+It returns their canon facts, guidelines for dealing with them, recent interactions, open goals with them, open proposals, and contact stats. Confidential values stay masked unless the connection is bound to an agent with authority there.
 
 <Aside kind="tip">
 

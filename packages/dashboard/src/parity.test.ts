@@ -74,19 +74,29 @@ describe("MCP source parity", () => {
 
   it("identifies as the token's agent", async () => {
     const { remote } = await linked({ agent: "Residency-Agent", scopes: ["read"] });
-    expect(await remote.info()).toEqual({ mode: "mcp", vault: { kind: "mcp", url: MCP_URL }, campaign: "lisbon-arc", human: "player", actor: { kind: "agent", id: "residency-agent" } });
+    expect(await remote.info()).toEqual({
+      mode: "mcp",
+      vault: { kind: "mcp", url: MCP_URL },
+      name: "lisbon-arc",
+      campaign: "lisbon-arc",
+      human: "player",
+      humans: ["player"],
+      actor: { kind: "agent", id: "residency-agent" },
+    });
   });
 
   it("offers only what the agent's scopes allow, and never the human's actions", async () => {
     const caps = async (opts: { agent?: string; scopes?: Scope[] }) => capabilities((await linked(opts)).remote, "none");
-    const none = { rule: false, quest: false, remember: false, party: false, introductions: false, curator: false, setup: "none" };
-    expect(await caps({ agent: "residency-agent" })).toEqual({ ...none, quest: true, remember: true });
+    const none = { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, party: false, introductions: false, curator: false, setup: "none" };
+    expect(await caps({ agent: "residency-agent" })).toEqual({ ...none, goal: true, quest: true, remember: true });
     expect(await caps({ agent: "residency-agent", scopes: ["read"] })).toEqual(none);
     expect(await caps({ agent: "residency-agent", scopes: ["read", "remember"] })).toEqual({ ...none, remember: true });
-    expect(await caps({ agent: "residency-agent", scopes: ["read", "quest"] })).toEqual({ ...none, quest: true });
+    expect(await caps({ agent: "residency-agent", scopes: ["read", "goal"] })).toEqual({ ...none, goal: true, quest: true });
+    // Keys from before goals carry `quest`.
+    expect(await caps({ agent: "residency-agent", scopes: ["read", "quest"] })).toEqual({ ...none, goal: true, quest: true });
     // Unbound, every write would need an agent id the dashboard can't choose.
     expect(await caps({})).toEqual(none);
-    expect(capabilities((await linked()).local, "none")).toEqual({ rule: true, quest: true, remember: true, party: true, introductions: true, curator: false, setup: "none" });
+    expect(capabilities((await linked()).local, "none")).toEqual({ rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, party: true, introductions: true, curator: false, setup: "none" });
   });
 
   it("files writes under the agent", async () => {
@@ -101,16 +111,48 @@ describe("MCP source parity", () => {
     });
     expect(await store.read("goals/residence-permit.md")).toContain("updated_by: residency-agent");
 
+    expect(await remote.goal!("residence-permit", { progress: { tick: 1 }, counterparty: "[[migration-agency]]" })).toEqual({
+      goal: "[[residence-permit]]",
+      changes: expect.arrayContaining(["progress 4/6"]),
+    });
+    expect(await store.read("goals/residence-permit.md")).toContain("counterparty: \"[[migration-agency]]\"");
+
     const err = await remote.quest!("no-such-quest", { status: "done" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(HttpError);
     expect(err).toMatchObject({ status: 400, code: "VAULT", message: 'no goal "no-such-quest"' });
+  });
+
+  it("uses update_quest on a server from before goals", async () => {
+    const store = richStore();
+    const service = new HippoService(store, { now });
+    const server = createHippoServer({ service, agent: "residency-agent" });
+    const client = new Client({ name: "parity", version: "0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(a), client.connect(b)]);
+    // An old server: no update_goal, and whoami without `humans` or `name`.
+    const listTools = client.listTools.bind(client);
+    client.listTools = async (...args) => {
+      const r = await listTools(...args);
+      return { ...r, tools: r.tools.filter((t) => t.name !== "update_goal") };
+    };
+    const readResource = client.readResource.bind(client);
+    client.readResource = async (...args) => {
+      const r = await readResource(...args);
+      if (args[0].uri !== "hippo://dashboard/whoami") return r;
+      const { humans: _h, name: _n, ...old } = JSON.parse((r.contents[0] as { text: string }).text);
+      return { ...r, contents: [{ ...r.contents[0]!, text: JSON.stringify(old) }] };
+    };
+    const remote = await mcpSource(client);
+    expect(await remote.info()).toMatchObject({ name: "lisbon-arc", humans: ["player"] });
+    expect(await remote.goal!("residence-permit", { progress: { tick: 1 }, due: "2026-12-01" })).toEqual({ goal: "[[residence-permit]]", changes: expect.arrayContaining(["progress 3/6"]) });
+    await expect(remote.goal!("residence-permit", { repeat: { every: "1m" } })).rejects.toMatchObject({ status: 501 });
   });
 
   it("serves the API over MCP", async () => {
     const { remote } = await linked({ agent: "residency-agent", scopes: ["read", "remember"] });
     const api = createDashboardApi({ basePath: "/dashboard/api", source: () => remote, guard: () => ({}) });
     const get = async (path: string) => (await api(new Request(`http://127.0.0.1:4100/dashboard/api/${path}`))).json();
-    expect(await get("session")).toMatchObject({ mode: "mcp", actor: { kind: "agent", id: "residency-agent" }, capabilities: { rule: false, quest: false, remember: true, party: false } });
+    expect(await get("session")).toMatchObject({ mode: "mcp", actor: { kind: "agent", id: "residency-agent" }, capabilities: { rule: false, goal: false, quest: false, remember: true, party: false } });
     expect(await get("entity?ref=passport")).toMatchObject({ card: { slug: "passport" } });
     const rule = await api(
       new Request("http://127.0.0.1:4100/dashboard/api/actions/rule", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ dispute: "dispute-migration-agency-office-address", claim: 0 }) }),

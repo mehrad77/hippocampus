@@ -368,12 +368,14 @@ describe("VaultRuntime: dashboard", () => {
     expect(session.body).toEqual({
       mode: "worker",
       vault: { kind: "github", repo: "player/vault", branch: "main", url: "https://github.test/player/vault" },
+      name: "lisbon-arc",
       campaign: "lisbon-arc",
       human: "player",
+      humans: ["player"],
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
       account: { status: "approved", admin: false },
-      capabilities: { rule: true, quest: true, remember: true, party: true, introductions: true, curator: true, setup: "hosted" },
+      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, party: true, introductions: true, curator: true, setup: "hosted" },
     });
 
     const r = await api("POST", "actions/remember", { text: "My residence card arrives next week." });

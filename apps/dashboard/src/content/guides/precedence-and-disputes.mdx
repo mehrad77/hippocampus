@@ -1,6 +1,6 @@
 ---
 title: Precedence and disputes
-summary: Whose word wins when reports disagree, how a dispute opens, and how you rule, from the Council or from Obsidian.
+summary: Whose word wins when reports disagree, between agents and between several humans. How a dispute opens, how you rule, and how proposals and possible duplicates wait for you.
 order: 3
 section: Basics
 sigil: council
@@ -10,11 +10,13 @@ import Seal from "../../components/guides/Seal.astro";
 import Aside from "../../components/guides/Aside.astro";
 import Link from "../../components/guides/Link.astro";
 
-When two reports disagree, Hippocampus doesn't ask a model who is right. A small, pure function, the Archivist's rules in `reconcile.ts`, compares the new report with the current value and decides. The order of precedence is fixed:
+When two reports disagree, Hippocampus doesn't ask a model who is right. A small, pure function, the rules in `reconcile.ts`, compares the new report with the current value and decides. The order of precedence is fixed:
 
 <Ladder />
 
-Authority is worked out per note, at the moment of the decision. An agent has authority over a note when one of its `authority` domains matches the note's tags or type. <Link guide="party-and-lanes">Party and lanes</Link> covers how that works. Below, "authority" means an agent with authority over *this* note. "Without authority" means everyone else, including agents with no party sheet.
+In full, from the top: **a human with the domain** > **any other human** > **lane authority** > **corroboration** > **recency**. A memory can belong to several humans (see <Link guide="party-and-lanes">Humans, agents and lanes</Link>). A human whose `domains` cover the note, or the field, outranks the other humans there; elsewhere the humans are equals.
+
+Authority is worked out per note, at the moment of the decision. An agent has authority over a note when one of its `authority` domains matches the note's tags or type, or the domain a type gives that field. Below, "authority" means an agent with authority over *this* note. "Without authority" means everyone else, including agents with no sheet in `party/`.
 
 ## The precedence table
 
@@ -30,6 +32,15 @@ Rows are what the field holds now. Columns are who sends the new report.
 | Differs, same source sends a newer report | replaced | replaced (self-correction) | replaced (self-correction) |
 | Field is disputed | replaced, dispute resolved | claim added to the dispute | claim added to the dispute |
 
+"You" stands for any human. When the current value is another human's:
+
+| Current value is held by another human, new report from a human | Result |
+| --- | --- |
+| Same human | replaced |
+| The new reporter has the domain, the holder doesn't | replaced |
+| The holder has the domain, the new reporter doesn't | kept |
+| Neither has the domain, or both do | dispute |
+
 A self-correction becomes canon if the source has authority. Otherwise the fact keeps the status it had. A replaced value is never lost: it moves to the fact's `was` list.
 
 <Aside kind="lore" title="Agents can't overrule you, but they can object">
@@ -38,7 +49,13 @@ If an agent reports something that contradicts a value you wrote, it doesn't rep
 
 </Aside>
 
-Secret fields are the one exception. Ciphertext can't be compared, so they skip this table and the latest report replaces the stored value. See <Link guide="secrets">Secrets</Link>.
+A few fields follow their own rules, set in their type (see <Link guide="schema-and-presets">Types, kinds and presets</Link>):
+
+- **Succession** fields (an employer, a city) move on: a newer report closes the old value instead of disputing it, as long as the reporter ranks at least as high and the old value isn't a human's.
+- **Human-only** fields are only ever set by a human. Anyone else's report becomes a **proposal** (below), and the fact stays as it was.
+- Facts with different **scopes** (`greeting` and `greeting@lang:pt`) are never compared.
+
+Secret fields are the last exception. Ciphertext can't be compared, so they skip this table and the latest report replaces the stored value. See <Link guide="secrets">Secrets</Link>.
 
 ## Worked examples from the Lisbon arc
 
@@ -48,7 +65,9 @@ Secret fields are the one exception. Ciphertext can't be compared, so they skip 
 
 **A source corrects itself.** The residency agent books an appointment, then reports that it moved. Same source, newer report: the new date replaces the old one, which moves to `was`.
 
-**An agent contradicts you.** You wrote a rent budget of 1,100 EUR on your own character note. If an agent reports 1,200 EUR, it can't overwrite you, so a dispute opens and waits for your ruling.
+**An agent contradicts you.** You wrote a rent budget of 1,100 EUR on your own note. If an agent reports 1,200 EUR, it can't overwrite you, so a dispute opens and waits for your ruling.
+
+**Two humans.** Two people share a vault, and only one of them has `finance` among their domains. When they report different rent budgets on a note tagged `finance`, the one with the domain wins. On an untagged note, neither does, so a dispute opens for them to settle.
 
 ## How a dispute opens
 
@@ -83,7 +102,7 @@ Open the dashboard's <Link page="council">Council</Link>. Each dispute shows its
 
 Your ruling **applies immediately**, as canon by you:
 
-- the fact becomes canon, with `by` set to your human id;
+- the fact becomes canon, with `by` set to your human id (when several humans share the vault, the one the dashboard acts as);
 - its sources are merged from every claim, and the previous value moves to `was`;
 - the dispute is marked `resolved`, with a timestamp;
 - `HANDBOOK.md` is regenerated.
@@ -105,6 +124,14 @@ The next sleep applies rulings **first**, before it reads any new episode. The r
 You can also just tell Hippocampus. A memory you scribe yourself is filed under your human id, so it carries your authority. If the curator files it under the same field, it settles the dispute at the next sleep. A ruling is the precise way. A memory is the natural way when you have news anyway.
 
 </Aside>
+
+## Proposals and possible duplicates
+
+Two other kinds of note wait in `disputes/` beside disputes, and the Council lists them too.
+
+**Proposals.** When an agent reports a value for a `human_only` field, nothing changes on the note. Instead a proposal opens with the agent's value and, if it gave one, its evidence. In the Council you **accept** it (the value, or one you type, becomes canon by you) or **decline** it. A value you declined isn't proposed again, and one you already hold closes the proposal by itself.
+
+**Possible duplicates.** When two notes share an identity key, such as the same email address under two names, the curator doesn't merge them. It opens a merge proposal that names both notes. Merge them by hand in Obsidian, or **decline** it, and that pair won't be raised again.
 
 ## After the ruling
 

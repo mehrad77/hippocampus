@@ -23,24 +23,46 @@ describe("demo campaign", () => {
     expect((await Vault.load(store, { now: () => NOW })).warnings).toEqual([]);
     const o = await svc.overview();
     expect(o.warnings).toEqual([]);
-    expect(o).toMatchObject({ campaign: "lisbon-arc", human: "player", today: "2026-09-27", version: { status: "current" } });
+    expect(o).toMatchObject({ name: "lisbon-arc", campaign: "lisbon-arc", human: "player", today: "2026-09-27", version: { status: "current" } });
+    expect(o.humans?.map((h) => h.id)).toEqual(["player", "partner"]);
     expect(o.lastSleep).toBe("2026-09-27T04:00:00.000Z");
   });
 
   it("has something for every part of the dashboard", async () => {
     const o = await svc.overview();
-    expect(o.attention.disputes.length).toBeGreaterThanOrEqual(2);
-    expect(o.attention.disputes.every((d) => d.status === "open" && d.claims.length >= 2)).toBe(true);
+    const conflicts = o.attention.disputes.filter((d) => d.kind === "conflict");
+    expect(conflicts.length).toBeGreaterThanOrEqual(2);
+    expect(conflicts.every((d) => d.status === "open" && d.claims.length >= 2)).toBe(true);
+    // A proposal for a field only a human sets, and a possible duplicate.
+    expect(o.attention.disputes.find((d) => d.kind === "proposal")).toMatchObject({ field: "stakes", state: "pending", entity: { slug: "landlord" } });
+    expect(o.attention.disputes.find((d) => d.kind === "merge")?.targets?.map((t) => t.slug).sort()).toEqual(["flat-owner", "landlord"]);
+    // A contact past its cadence.
+    expect(o.attention.overdue).toEqual([expect.objectContaining({ ref: expect.objectContaining({ slug: "landlord" }), cadence: "1w", daysOverdue: 1 })]);
     expect(o.attention.rumors.length).toBeGreaterThan(0);
     expect(o.attention.stale.length).toBeGreaterThan(0);
     expect(o.attention.unknownAgents).toEqual(["calendar-bot"]);
     // An introduced agent isn't a stranger: it waits for the player's approval instead.
     expect(o.attention.introductions).toEqual([expect.objectContaining({ agent: "transit-scout", title: "Transit Scout", host: "Claude Desktop" })]);
     expect(o.inbox.some((e) => e.agent === "transit-scout")).toBe(true);
-    expect(Object.keys(o.counts.quests).sort()).toEqual(expect.arrayContaining(["active", "blocked", "dormant"]));
-    expect(o.quests.some((q) => q.clocks.length > 0 && q.objectives.some((x) => x.done))).toBe(true);
+    expect(Object.keys(o.counts.goals ?? {}).sort()).toEqual(expect.arrayContaining(["active", "blocked", "dormant"]));
+    expect(o.goals?.some((g) => g.progress && g.progress.done > 0 && g.objectives.some((x) => x.done))).toBe(true);
+    expect(o.goals?.find((g) => g.slug === "pay-rent")).toMatchObject({ repeat: { every: "1m" }, counterparty: { slug: "landlord" }, owner: { slug: "home-finder" } });
+    // Kinds come from the registry; `beat` is an alias kept for older agents.
+    expect(o.schema?.kinds.find((k) => k.name === "beat")).toMatchObject({ aliasOf: "observation" });
+    expect(o.schema?.kinds.find((k) => k.name === "interaction")).toMatchObject({ behaviour: "interaction" });
     expect(o.upcoming.length).toBeGreaterThan(0);
     expect(o.party.length).toBeGreaterThanOrEqual(5);
+
+    // The landlord's sheet: a confidential identity key, a scoped guideline, contact stats, cadence.
+    const landlord = await svc.entityDetail("landlord");
+    expect(landlord.facts.find((f) => f.field === "email")).toMatchObject({ value: null, confidential: true });
+    expect(landlord.guidelines?.items[0]).toMatchObject({ scope: "lang:pt", by: "home-finder", byHuman: false });
+    expect(landlord.stats?.counts).toMatchObject({ interaction: 1, "interaction/call": 1 });
+    expect(landlord.cadence).toMatchObject({ every: "1w", overdueDays: 1 });
+    expect((await svc.entityDetail("apartment-hunt")).decisions?.[0]).toMatchObject({ by: "player" });
+    expect((await svc.entityDetail("harbor-university")).questions?.[0]).toMatchObject({ status: "open" });
+    // A fact set by the second human.
+    expect((await svc.entityDetail("alfama-flat")).facts.find((f) => f.field === "deposit")).toMatchObject({ by: "partner", byHuman: true, status: "canon" });
 
     // A sealed secret fact, shown masked.
     const passport = await svc.entityDetail("passport");
@@ -65,7 +87,9 @@ describe("demo campaign", () => {
     const o = await svc.overview();
     const views: unknown[] = [o, await svc.catalog(), await svc.graph(), await svc.chronicle(), await svc.search("passport"), await svc.search("residence card")];
     for (const ref of [...o.party.map((p) => p.slug), "passport", "residence-permit", "migration-agency", "player"]) views.push(await svc.entityDetail(ref));
+    views.push(await svc.entityDetail("landlord"), await svc.entityDetail("flat-owner"));
     const json = JSON.stringify(views);
+    expect(json).not.toContain("landlord@example.test");
     expect(json).not.toContain(PASSPORT);
     expect(json).not.toContain(SECRET_EPISODE);
     expect(json).not.toContain("secret://");
