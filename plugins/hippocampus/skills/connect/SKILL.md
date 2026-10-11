@@ -18,7 +18,7 @@ Ask the person for their Hippocampus address (like `https://hippocampus.example.
 
 ## 3a. Device sign-in
 
-1. `curl -s -X POST <address>/connect/device -d client_name="<your app's name>" -d agent=<an id for you, like claude-code>`. Add `-d access=curate` only if they asked you to be the nightly curator.
+1. `curl -s -X POST <address>/connect/device -d client_name="<your app's name>"`. Add `-d access=curate` only if they asked you to be the nightly curator. The key is for your app: you and any other agent in it name yourselves on each call (see the memory skill).
 2. Show the person the `user_code` and the `verification_uri_complete` link. Ask them to open it, check the code matches, choose the vault, and approve.
 3. Every `interval` seconds: `curl -s -X POST <address>/connect/token -d grant_type=urn:ietf:params:oauth:grant-type:device_code -d device_code=<device_code>`. Keep going on `authorization_pending`; slow down on `slow_down`; stop on `access_denied` or `expired_token` and tell them.
 4. The answer has `access_token` (the key), `mcp_url`, `server_name` and `claude_code`, a ready `claude mcp add` line. Tell the person you're about to run it (the key will be in this session's history), then run it. Never print the key again, and never write it into a file in a repository.
@@ -27,10 +27,10 @@ Ask the person for their Hippocampus address (like `https://hippocampus.example.
 ## 3b. By hand
 
 1. They open `<address>/dashboard/setup/` and sign in with GitHub.
-2. **Connected apps → Connect an app**: pick the app, what it may do, and its name.
+2. **Connected apps → Connect an app**: pick the app. That's all it asks.
 3. They paste the snippet it shows into that app. The key is shown once; never ask them to paste it into this chat.
 
 ## Rules
 
-- One agent id per agent; an id another connection uses is refused.
+- One key per app; one agent id per agent, the same every session (`<platform>-<role>`). An id another connection uses is refused.
 - The curator sees secrets: suggest a separate bot that only curates (see `/hippocampus:sleep-setup`).

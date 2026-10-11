@@ -435,6 +435,8 @@ export class VaultRuntime {
         vault: { id: this.meta.vaultId, name: this.meta.fullName },
         agent: grant.agent,
         scopes: grant.scopes,
+        // A shared connection's reads name their agent; only a name it holds sees confidential details.
+        ...(!grant.agent && grant.credential ? { holds: (agent: string) => this.claims.holds(agent, grant.credential!) } : {}),
         relay: grant.scopes.includes("curate") ? this.relay : undefined,
         jsonSchemaValidator: this.d.jsonSchemaValidator,
       });
@@ -474,7 +476,7 @@ export class VaultRuntime {
       const full: DashboardSource =
         status === "older" && config
           ? awaitingUpgrade(config, { mode: "worker", vault }, human, upgradeVault)
-          : { ...serviceSource(this.service(), { mode: "worker", vault }, { curator: this.curator, ...(human ? { human } : {}) }), upgradeVault };
+          : { ...serviceSource(this.service(), { mode: "worker", vault }, { curator: this.curator, ...(human ? { human } : {}) }), upgradeVault, ...this.names() };
       // Viewers only read; only the owner upgrades the vault or runs the curator's controls.
       const { upgradeVault: _upgrade, curator: _curator, ...shared } = full;
       const source = role === "viewer" ? readOnlySource(full) : role === "member" ? shared : full;
@@ -489,6 +491,20 @@ export class VaultRuntime {
     } catch (err) {
       return errorResponse(err, this.report("vault/dashboard", started));
     }
+  }
+
+  /** Agent names and the connections holding them, for the Agents page: who holds what, and handing a name over. */
+  private names(): Pick<DashboardSource, "nameHolders" | "handOver"> {
+    return {
+      nameHolders: async () => (await this.party().catch(() => [])).map((p) => ({ agent: p.id, state: this.claims.state(p.id) })),
+      handOver: async (agent) => {
+        const id = agent.trim().toLowerCase();
+        if (!(await this.party()).some((p) => p.id === id)) throw new HttpError(400, `"${id}" isn't one of this vault's agents`, "VAULT");
+        this.claims.handOver(id);
+        void logEvent({ route: "vault/hand-over", status: 200, ms: 0, vault: this.meta.vaultId }, this.d.log).catch(() => undefined);
+        return { agent: id };
+      },
+    };
   }
 
   /**

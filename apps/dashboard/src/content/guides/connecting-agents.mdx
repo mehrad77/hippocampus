@@ -21,7 +21,7 @@ Agents connect over **MCP**, which gives them tools: remember, recall, ask. On t
 | `ask_canon` | read | The canonical answer to a factual question: best-matching facts with status and source, plus any open dispute |
 | `briefing` | read | "Previously on…": the chronicle since a date (default a week), recently changed notes, due dates and anniversaries ahead, overdue contacts, open disputes. With `about`, a brief on one person or thing instead (below) |
 | `remember` | remember | Queue one episode: `text` (at most 8 KB), plus optional `kind`, `data`, `confidential`, `scope`, `about`, `confidence`, `secret`, `at` |
-| `introduce` | remember | Ask to join the party: `title`, `lane`, and optionally `host`, `model`, `about` |
+| `introduce` | remember | Join the agents, with no authority: `title`, `lane`, and optionally `host`, `model`, `about` |
 | `update_goal` | goal | Goal status, objectives (`complete`, `reopen`, `add`), progress, due date, owner, counterparty or repeat, applied at once. `update_quest` is its old name and still works |
 
 The curator has five more tools under the `curate` scope; see <Link guide="nightly-sleep">The curator</Link>. Two resources come with the `read` scope: `hippo://handbook` and `hippo://entity/{slug}`. Secrets are never revealed through any of them; see <Link guide="secrets">Secrets</Link>.
@@ -125,11 +125,11 @@ Ids are exact: lowercase letters, digits and dashes, matching `party/<id>.md`. T
 
 ## New agents introduce themselves
 
-An id with no party sheet still works, but everything it reports counts as a rumor. `onboard` tells such an agent so, and asks it to call `introduce`:
+Agents name themselves: `<platform>-<role>`, lowercase letters, digits and dashes (`claude-code-job-scout`), the same in every session. An id with no party sheet still works, but everything it reports counts as a rumor. `onboard` tells such an agent so, and asks it to call `introduce`, which puts it on your Agents page at once, with no authority:
 
 ```json
 {
-  "agent": "job-scout",
+  "agent": "claude-desktop-job-scout",
   "title": "Job Scout",
   "lane": "Finds paid work in Lisbon and tracks applications. Stays out of housing and the permit.",
   "host": "Claude Desktop",

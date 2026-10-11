@@ -1,3 +1,4 @@
+import { actorProps } from "./actor.ts";
 import { CONFIG_PATH, CURATOR_RULES_PATH, parseConfig } from "./config.ts";
 import { basename, parseEntity, type Entity } from "./entity.ts";
 import { parseEpisode } from "./episode.ts";
@@ -5,7 +6,7 @@ import { GOAL_KEYS, LEGACY_GOAL_KEYS } from "./goal.ts";
 import { HANDBOOK_PATH } from "./handbook.ts";
 import { isIntroductionPath } from "./introduction.ts";
 import { getRegion, humanText, parseDoc } from "./markdown.ts";
-import { AGENT_ID, RESERVED_AGENT_IDS } from "./ops.ts";
+import { AGENT_ID, RESERVED_AGENT_IDS, SELF_CARD_FIELDS } from "./ops.ts";
 import { DisputeFrontmatter, type HippoConfig } from "./schema.ts";
 import { loadSchema, schemaFolder, type SchemaRegistry } from "./schema-registry.ts";
 import { isSecretRef, secretFieldOf, secretPath } from "./secrets.ts";
@@ -158,13 +159,33 @@ function curatorPath(path: string, op: Op, l: Layout): string | undefined {
   return "outside the curator's folders";
 }
 
+/** An agent's own party card: a note of an actor type named after it. What it may write there is `auditOwnCard`'s. */
+const ownCard = (path: string, id: string, l: Layout) => l.schema.has(l.typeOf(path), "actor") && basename(path) === id && path.endsWith(".md");
+
 function agentPath(path: string, op: Op, id: string, can: (scope: string) => boolean, l: Layout): string | undefined {
   if (op === "add" && can("remember") && dirname(path) === `${l.inbox}/${id}` && path.endsWith(".md")) return undefined;
+  // It introduced itself: its card, checked field by field below.
+  if (op !== "remove" && can("remember") && ownCard(path, id, l)) return undefined;
   // A new introduction replaces the agent's earlier one; it was never a memory, so nothing is lost.
   if (op === "remove" && can("remember") && dirname(path) === `${l.inbox}/${id}` && isIntroductionPath(path)) return undefined;
   // The scope's wire name is still `quest` (`goal` arrives alongside); it allows editing notes of a goal type.
   if (op !== "remove" && (can("quest") || can("goal")) && (path === HANDBOOK_PATH || (op === "modify" && l.schema.has(l.typeOf(path), "goal")))) return undefined;
   return op === "add" ? "agents only add episodes to their own inbox folder" : `agents may not ${op} this file`;
+}
+
+/**
+ * Whether `agent`'s card in `store` makes it responsible for anything. Such a name is worth guarding:
+ * whoever writes as it writes canon there, and may read confidential details.
+ */
+export async function hasAuthority(store: VaultStore, agent: string): Promise<boolean> {
+  const schema = await loadSchema(store, parseConfig(await store.read(CONFIG_PATH)));
+  for (const { type, folder } of schema.folders()) {
+    if (!schema.has(type, "actor")) continue;
+    const raw = await store.read(`${folder}/${agent}.md`);
+    const card = raw === undefined ? undefined : parseNote(`${folder}/${agent}.md`, raw);
+    if (card && actorProps(card).authority.length) return true;
+  }
+  return false;
 }
 
 function parseNote(path: string, raw: string): Entity | undefined {
@@ -263,12 +284,33 @@ export async function auditChanges(i: { before: VaultStore; changes: Change[]; a
   }
   const humanEpisodes = new Set(removed.filter((r) => isHumanId(config, r.agent)).map((r) => r.id));
 
+  /**
+   * An agent writes its own card when it introduces itself: what it says about itself (its lane, host
+   * and model, filled in only where blank), never what it may do. Authority, facts, relations, names and
+   * the human's prose stay the human's.
+   */
+  function auditOwnCard(path: string, b: Entity | undefined, a: Entity): void {
+    const fm = (e: Entity) => e.fm as Record<string, unknown>;
+    if (!l.schema.has(a.fm.type, "actor")) return flag(path, "agent card of another type");
+    if (!b) {
+      const authority = fm(a).authority;
+      if ((Array.isArray(authority) && authority.length) || (authority !== undefined && !Array.isArray(authority))) flag(path, "an agent can't give itself authority");
+      if (Object.keys(a.fm.facts).length || a.fm.relations.length) flag(path, "a new agent card holds no facts or relations");
+      return;
+    }
+    const rest = (e: Entity) => JSON.stringify(Object.entries(fm(e)).filter(([k, v]) => !(SELF_CARD_FIELDS as readonly string[]).includes(k) && v !== undefined).sort(([x], [y]) => x.localeCompare(y)));
+    if (rest(a) !== rest(b)) flag(path, "agents may only fill in their card's lane, host and model");
+    for (const k of SELF_CARD_FIELDS) if (fm(b)[k] !== undefined && fm(b)[k] !== "" && fm(a)[k] !== fm(b)[k]) flag(path, "agents may not overwrite their card");
+    if (squash(humanText(b.body)) !== squash(humanText(a.body))) flag(path, "human prose changed");
+  }
+
   async function auditNote(path: string, oldRaw: string | undefined, raw: string): Promise<void> {
     const a = parseNote(path, raw);
     if (!a) return flag(path, "unreadable note");
     const b = oldRaw === undefined ? undefined : parseNote(path, oldRaw);
     if (oldRaw !== undefined && !b) return flag(path, "overwrites an unreadable note");
     if (actor.kind === "curator" && (l.schema.has(a.fm.type, "actor") || l.schema.has(b?.fm.type, "actor"))) flag(path, "party note");
+    if (actor.kind === "agent" && ownCard(path, actor.id, l)) return auditOwnCard(path, b, a);
     if (b) {
       if (actor.kind === "agent") {
         if (!l.schema.has(b.fm.type, "goal")) flag(path, "agents may only edit goal notes");

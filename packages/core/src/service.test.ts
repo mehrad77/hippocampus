@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { managedStore } from "./__fixtures__/managed.ts";
 import { fixtureStore } from "./__fixtures__/vault.ts";
-import { applyFact, applyRulings } from "./ops.ts";
+import { SELF_SEATED_LIMIT, applyFact, applyRulings } from "./ops.ts";
 import { parseDoc } from "./markdown.ts";
+import { createIntroduction, renderIntroduction } from "./introduction.ts";
 import { HippoService } from "./service.ts";
 import { Vault, VaultError } from "./vault.ts";
 import { decryptSecret, generateKeyPair } from "./secrets.ts";
@@ -226,46 +227,66 @@ describe("HippoService", () => {
     expect(await svc.onboard("player")).toContain('"player" is the human, not an agent');
   });
 
-  it("introduce files one pending introduction per agent; approving seats it with the human's choices", async () => {
+  it("an agent seats itself with no authority; introducing again only fills in blanks; the human gives authority", async () => {
     const store = fixtureStore();
     const svc = new HippoService(store, { now });
-    const first = await svc.introduce("Job-Scout", { title: "Job Scout", lane: "Finds part-time work", model: "local-model" });
-    expect(first).toMatchObject({ status: "pending", agent: "job-scout", path: expect.stringMatching(/^inbox\/job-scout\/_introduction-\w+\.md$/) });
-    const second = await svc.introduce("job-scout", { title: "Job  Scout\n", lane: "Finds part-time work in Lisbon", host: "Claude Desktop", about: "I watch job boards.\nI never apply on my own." });
-    expect(await store.list("inbox/job-scout")).toEqual([second.path]);
-    expect(await svc.onboard("job-scout")).toContain("Your introduction is waiting for player's approval");
-    const v = await svc.vault();
-    expect(v.episodes).toEqual([]);
-    expect(v.warnings).toEqual([]);
-    expect((await svc.overview()).attention.introductions).toEqual([
-      { agent: "job-scout", title: "Job Scout", lane: "Finds part-time work in Lisbon", host: "Claude Desktop", at: "2026-09-27T12:00:00.000Z", about: "I watch job boards.\nI never apply on my own." },
-    ]);
-
-    expect(await svc.approveIntroduction("job-scout", { authority: ["career"], title: "Scout" })).toEqual({ slug: "job-scout", path: "party/job-scout.md" });
-    expect(parseDoc((await store.read("party/job-scout.md"))!).data).toMatchObject({ type: "party", title: "Scout", lane: "Finds part-time work in Lisbon", authority: ["career"], host: "Claude Desktop", updated_by: "player" });
-    expect(await store.list("inbox/job-scout")).toEqual([]);
-    expect(await store.read("HANDBOOK.md")).toContain("| `job-scout` | Scout | Finds part-time work in Lisbon | career |");
+    const first = await svc.introduce("Job-Scout", { title: "Job Scout", lane: "Finds part-time work", model: "local-model", about: "I watch job boards." });
+    expect(first).toMatchObject({ status: "seated", agent: "job-scout", path: "party/job-scout.md" });
+    const card = () => store.read("party/job-scout.md").then((raw) => parseDoc(raw!));
+    expect((await card()).data).toMatchObject({ type: "party", title: "Job Scout", lane: "Finds part-time work", model: "local-model" });
+    expect((await card()).data.authority ?? []).toEqual([]);
+    expect((await card()).body).toContain("## About\n\nI watch job boards.");
+    expect(await svc.onboard("job-scout")).toContain("# You are Job Scout (`job-scout`)");
+    // Nothing waits for the human: no introduction, and it isn't an unknown agent.
     expect((await svc.overview()).attention.introductions).toEqual([]);
-    expect(await svc.introduce("job-scout", { title: "Again" })).toMatchObject({ status: "member", path: "party/job-scout.md", message: "already in the party as Scout (party/job-scout.md)" });
     expect(await store.list("inbox/job-scout")).toEqual([]);
+
+    const again = await svc.introduce("job-scout", { title: "Scout", lane: "Something else", host: "Claude Desktop" });
+    expect(again).toMatchObject({ status: "member", path: "party/job-scout.md" });
+    expect(again.message).toContain("filled in your host");
+    expect((await card()).data).toMatchObject({ title: "Job Scout", lane: "Finds part-time work", host: "Claude Desktop" });
+
+    expect(await svc.setAuthority("job-scout", ["Career"], { via: "@player" })).toEqual({ agent: "job-scout", authority: ["career"] });
+    expect((await card()).data.authority).toEqual(["career"]);
+    expect(await store.read("HANDBOOK.md")).toContain("| `job-scout` | Job Scout | Finds part-time work | career |");
+    // Introducing can't take it away.
+    await svc.introduce("job-scout", { title: "Job Scout", model: "another-model" });
+    expect((await card()).data).toMatchObject({ authority: ["career"], model: "local-model" });
+    await expect(svc.setAuthority("job-scout", ["magic"])).rejects.toThrow(/unknown domain magic/);
+    await expect(svc.setAuthority("nobody-here", ["career"])).rejects.toThrow(/isn't one of this vault's agents/);
   });
 
-  it("dismisses introductions and refuses bad ones", async () => {
+  it("caps how many agents seat themselves", async () => {
+    const svc = new HippoService(fixtureStore(), { now });
+    const seated = (await svc.vault()).withCapability("actor").length;
+    for (let i = seated; i < SELF_SEATED_LIMIT; i++) await svc.introduce(`bot-${i}`, { title: `Bot ${i}` });
+    await expect(svc.introduce("one-too-many", { title: "Too many" })).rejects.toThrow(`the vault already has ${SELF_SEATED_LIMIT} agents`);
+    // One already in is still welcome.
+    expect(await svc.introduce("bot-10", { title: "Bot 10", host: "Grok bot" })).toMatchObject({ status: "member" });
+  });
+
+  it("refuses bad ids, and still settles introductions filed before agents seated themselves", async () => {
     const store = fixtureStore();
     const svc = new HippoService(store, { now });
     await expect(svc.introduce("player", { title: "Me" })).rejects.toThrow(/is the human/);
     await expect(svc.introduce("curator", { title: "Curator" })).rejects.toThrow(/reserved/);
     await expect(svc.introduce("job-scout", { title: " " })).rejects.toThrow(/title is required/);
     await expect(svc.introduce("job-scout", { title: "x".repeat(121) })).rejects.toThrow(/title can be at most 120/);
+    await expect(svc.introduce("migration-agency", { title: "Agency" })).rejects.toThrow(/already a note/);
+    const legacy = (agent: string) => {
+      const intro = createIntroduction("inbox", agent, { title: "Job Scout", lane: "Finds part-time work" }, now());
+      return store.write(intro.path, renderIntroduction(intro)).then(() => intro.path);
+    };
     await expect(svc.approveIntroduction("job-scout")).rejects.toThrow(/no pending introduction from "job-scout"/);
-    await svc.introduce("job-scout", { title: "Job Scout" });
+    await legacy("job-scout");
     await expect(svc.approveIntroduction("job-scout", { authority: ["magic"] })).rejects.toThrow(/unknown domain magic/);
     expect(await svc.dismissIntroduction("job-scout")).toEqual({ agent: "job-scout", removed: [expect.stringMatching(/^inbox\/job-scout\/_introduction-/)] });
+    await legacy("job-scout");
+    expect(await svc.approveIntroduction("job-scout", { authority: ["career"] })).toEqual({ slug: "job-scout", path: "party/job-scout.md" });
     expect(await store.list("inbox")).toEqual([]);
-    await expect(svc.dismissIntroduction("job-scout")).rejects.toThrow(/no pending introduction/);
-    // Adding the agent by hand settles its introduction too.
-    await svc.introduce("job-scout", { title: "Job Scout" });
-    await svc.addPartyMember({ id: "job-scout", title: "Job Scout" });
+    // An old introduction is settled by the agent seating itself.
+    await legacy("campus-scout");
+    await svc.introduce("campus-scout", { title: "Campus Scout" });
     expect(await store.list("inbox")).toEqual([]);
   });
 
@@ -277,7 +298,7 @@ describe("HippoService", () => {
     await svc.updateQuest("residency-agent", "residence-permit", { complete: ["health insurance"] });
     await svc.updateQuest("residency-agent", "residence-permit", { reopen: ["health insurance"] }, { asHuman: true });
     await svc.introduce("job-scout", { title: "Job Scout" });
-    await svc.approveIntroduction("job-scout");
+    await svc.setAuthority("job-scout", ["career"]);
     await svc.addPartyMember({ id: "archivist", title: "Archivist" });
     expect(messages.map((m) => m.split("\n\n"))).toEqual([
       [expect.stringMatching(/^remember\(residency-agent\): ep-\w+$/), "Hippo-Actor: agent:residency-agent"],
@@ -285,7 +306,7 @@ describe("HippoService", () => {
       ["goal(residence-permit): ✓ Get health insurance", "Hippo-Actor: agent:residency-agent"],
       ["goal(residence-permit): ○ Get health insurance", "Hippo-Actor: human"],
       ["introduce(job-scout): Job Scout", "Hippo-Actor: agent:job-scout"],
-      ["party(player): approve job-scout", "Hippo-Actor: human"],
+      ["party(player): job-scout responsible for career", "Hippo-Actor: human"],
       ["party(player): add archivist", "Hippo-Actor: human"],
     ]);
   });
