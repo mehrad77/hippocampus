@@ -73,6 +73,7 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 - `VaultStore.apply()` for atomic batches, and `StoreConflictError` when a batch collides with a concurrent change.
 
 ### Changed
+- **Signing in from ChatGPT and claude.ai:** a connector given `/mcp/<vault id>` used to fail (the OAuth `resource` it sent was refused). The address now works, with its own protected-resource metadata and challenge, and starts the consent page on that vault; the dashboard shows the plain `/mcp` address. The consent page asks only for the vault: an app connected this way has no fixed agent or scopes (read, remember, goals), and its agents name themselves on each call, like a shared key. Earlier grants keep their agent.
 - Quests are goals (`goals/`) and campaigns are arcs (`arcs/`). `update_quest`, the `quest` scope and `/actions/quest` keep working as aliases, and keys store both scopes so a rollback keeps access.
 - The curator's prompts are neutral and quote each type's description and examples; the Handbook drops the campaign framing and lists the vault's own types and kinds.
 - `hippo migrate` commits exactly the paths it changed in a git vault, as `Hippo-Actor: migration`; the hosted app never migrates on its own: an older vault answers `VAULT_UPGRADE_NEEDED` to agents until its owner clicks Upgrade on the dashboard, which makes the same audited commit.

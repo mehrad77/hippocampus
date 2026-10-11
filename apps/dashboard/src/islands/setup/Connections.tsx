@@ -256,8 +256,8 @@ export function ConnectDialog({ open, onClose, status, onConnected }: { open: bo
           <details className="sz-details">
             <summary>Claude.ai or ChatGPT (sign-in, beta)</summary>
             <div className="stack sz-tight">
-              <p className="small">These apps sign in with your account instead of a key. Add a custom connector with this address; the app asks you to sign in, then which vault and agent it is. Sign-in is still in beta: if it fails, connect another app with a key.</p>
-              <CopyLine value={status.mcpUrl} label="This vault's MCP address" />
+              <p className="small">These apps sign in with your account instead of a key. Add a custom connector with this address; the app asks you to sign in and which vault it is. Its agents then name themselves. Sign-in is still in beta: if it fails, connect another app with a key.</p>
+              <CopyLine value={`${status.publicUrl}/mcp`} label="MCP address for sign-in" />
             </div>
           </details>
         </div>

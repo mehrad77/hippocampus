@@ -81,20 +81,9 @@ Then `/hippocampus:memory` loads the habits: onboard first, read before acting, 
 
 ### Sign-in apps: Claude.ai, ChatGPT (beta)
 
-Signing in from these apps is still in beta; if it fails, connect another app with a key. In Claude.ai or ChatGPT, add a custom connector with the URL `https://<your-instance>/mcp`. The app asks you to sign in with GitHub, then shows a consent page:
-
-- pick the **vault** it connects to, if you have more than one;
-
-- pick the **agent id** the app acts as: a party member, to give it that lane, or a new id, which you can seat in the party right away;
-- choose what it may do: read and remember are ticked; goals and curating are yours to add. Curating shows the app every new memory in full, secret and confidential ones in plain text, so allow it only for an app you'd trust as the curator.
+Signing in from these apps is still in beta; if it fails, connect another app with a key. In Claude.ai or ChatGPT, add a custom connector with the URL `https://<your-instance>/mcp`. The app asks you to sign in with GitHub, then shows a consent page. The only choice is the **vault** it connects to, if you have more than one. The app can read, remember and update goals, and its agents name themselves on each call (see <Link guide="party-and-lanes">Humans, agents and lanes</Link>); nothing else is asked. (The address `https://<your-instance>/mcp/<vault id>` works too, and starts the page on that vault.)
 
 The **Connected apps** panel on the Setup page lists them, and disconnects any of them.
-
-<Aside kind="tip">
-
-Give each app its own id (`claude-web`, `chatgpt`), so you can tell their memories apart and trust them separately.
-
-</Aside>
 
 ## On your own machine
 

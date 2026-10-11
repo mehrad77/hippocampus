@@ -21,7 +21,7 @@ async function register(h: HostedHarness, clientName = "Claude"): Promise<string
 }
 
 /** An MCP client starting OAuth: registered, and its authorize URL. */
-async function client(h: HostedHarness, opts: { clientName?: string; scope?: string } = {}) {
+async function client(h: HostedHarness, opts: { clientName?: string; scope?: string; resource?: string } = {}) {
   const clientId = await register(h, opts.clientName);
   const verifier = `${crypto.randomUUID()}${crypto.randomUUID()}`;
   const params = new URLSearchParams({
@@ -32,42 +32,42 @@ async function client(h: HostedHarness, opts: { clientName?: string; scope?: str
     state: "client-state",
     code_challenge: await s256(verifier),
     code_challenge_method: "S256",
-    resource: `${ORIGIN}/mcp`,
+    resource: opts.resource ?? `${ORIGIN}/mcp`,
   });
-  return { clientId, verifier, authorizeUrl: `${ORIGIN}/authorize?${params}` };
+  return { clientId, verifier, resource: opts.resource ?? `${ORIGIN}/mcp`, authorizeUrl: `${ORIGIN}/authorize?${params}` };
 }
 
 /** Up to the consent page, in a signed-in browser. */
-async function consent(h: HostedHarness, visit: Visit, opts: { clientName?: string; scope?: string } = {}) {
+async function consent(h: HostedHarness, visit: Visit, opts: { clientName?: string; scope?: string; resource?: string } = {}) {
   const c = await client(h, opts);
   const res = await visit(c.authorizeUrl);
   const page = await res.text();
   const field = (name: string) => new RegExp(`name="${name}" value="([^"]*)"`).exec(page)?.[1];
   const submit = (fields: Record<string, string | string[]>, using = visit, headers: Record<string, string> = { origin: ORIGIN }) => {
     const form = new URLSearchParams({ handle: field("handle") ?? "", account: field("account") ?? "", vault: field("vault") ?? "" });
-    for (const [k, v] of Object.entries(fields)) for (const x of [v].flat()) form.append(k, x);
+    for (const [k, v] of Object.entries(fields)) for (const x of [v].flat()) (k === "vault" ? form.set(k, x) : form.append(k, x));
     return using(`${ORIGIN}/authorize`, { method: "POST", body: form, headers });
   };
   return { ...c, res, page, submit };
 }
 
 /** The client trades its code for tokens. */
-async function exchange(h: HostedHarness, flow: { clientId: string; verifier: string }, approved: Response) {
+async function exchange(h: HostedHarness, flow: { clientId: string; verifier: string; resource?: string }, approved: Response) {
   const back = new URL(approved.headers.get("location")!);
   expect(`${back.origin}${back.pathname}`).toBe(CLIENT_REDIRECT);
   expect(back.searchParams.get("state")).toBe("client-state");
   const res = await h.send(
     new Request(`${ORIGIN}/oauth/token`, {
       method: "POST",
-      body: new URLSearchParams({ grant_type: "authorization_code", code: back.searchParams.get("code")!, redirect_uri: CLIENT_REDIRECT, client_id: flow.clientId, code_verifier: flow.verifier, resource: `${ORIGIN}/mcp` }),
+      body: new URLSearchParams({ grant_type: "authorization_code", code: back.searchParams.get("code")!, redirect_uri: CLIENT_REDIRECT, client_id: flow.clientId, code_verifier: flow.verifier, resource: flow.resource ?? `${ORIGIN}/mcp` }),
     }),
   );
   expect(res.status).toBe(200);
   return (await res.json()) as { access_token: string; refresh_token: string; scope: string };
 }
 
-/** Consent as `agent` with `scope`, and the tokens that come of it. */
-async function connect(h: HostedHarness, visit: Visit, fields: Record<string, string | string[]>, opts: { clientName?: string } = {}) {
+/** Approve the consent page, and the tokens that come of it. */
+async function connect(h: HostedHarness, visit: Visit, fields: Record<string, string | string[]> = {}, opts: { clientName?: string; resource?: string } = {}) {
   const flow = await consent(h, visit, opts);
   const approved = await flow.submit({ decision: "approve", ...fields });
   expect(approved.status).toBe(302);
@@ -113,13 +113,9 @@ describe("connecting an app over OAuth", () => {
     expect(noVault.page).toContain("/dashboard/setup/");
   });
 
-  it("asks which agent and what it may do, with curate off and explained", async () => {
+  it("asks only which vault, and says the app's agents name themselves", async () => {
     const h = await hostedApp();
-    const { visit, vault } = await h.readyAccount(PLAYER);
-    h.vaults.parties.set(vault, [
-      { id: "home-finder", title: "Home finder" },
-      { id: "campus-agent", title: "Campus <agent>" },
-    ]);
+    const { visit } = await h.readyAccount(PLAYER);
     const flow = await consent(h, visit, { clientName: `<script>alert("hi")</script>`, scope: "read remember quest curate" });
     expect(flow.res.status).toBe(200);
     expect(flow.res.headers.get("x-frame-options")).toBe("DENY");
@@ -131,65 +127,44 @@ describe("connecting an app over OAuth", () => {
     expect(page).toContain("&#60;script&#62;");
     expect(page).toContain("claude.example");
     expect(page).toContain("player/vault");
-    expect(page).toContain('<option value="home-finder">Home finder (home-finder)</option>');
-    expect(page).toContain("Campus &#60;agent&#62;");
-    const checked = [...page.matchAll(/<input type="checkbox" name="scope" value="(\w+)"( checked)?>/g)].map((m) => [m[1], !!m[2]]);
-    // Whatever the app asked for, only read and remember start ticked.
-    expect(checked).toEqual([
-      ["read", true],
-      ["remember", true],
-      ["goal", false],
-      ["curate", false],
-    ]);
-    expect(page).toMatch(/secret memories in plain text, and confidential details/);
-    // Goals under their current name; `quest` is accepted when posted, never offered.
-    expect(page).toContain("Update goals: objectives, status, progress");
-    expect(page).toContain("(it sees confidential details)");
-    expect(page).not.toMatch(/value="quest"/);
+    // No agent, scope or name to choose: the app is named after itself, and its agents name themselves.
+    for (const field of ['name="agent"', 'name="new_agent"', 'name="scope"', 'name="add_to_party"', 'name="label"']) expect(page).not.toContain(field);
+    expect(page).toContain("Each agent in the app names itself");
   });
 
-  it("grants the chosen agent and scopes for the account's vault", async () => {
+  it("grants the shared set for the account's vault, with no agent and no party change", async () => {
     const h = await hostedApp();
     const { visit, vault } = await h.readyAccount(PLAYER);
-    h.vaults.parties.set(vault, [{ id: "home-finder", title: "Home finder" }]);
-    const tokens = await connect(h, visit, { agent: "home-finder", scope: ["read", "remember"] });
-    expect(tokens.scope).toBe("read remember");
+    const tokens = await connect(h, visit);
+    // Goals also under their old name, so a rolled-back Worker (which knows only `quest`) keeps them.
+    expect(tokens.scope.split(" ").sort()).toEqual(["goal", "quest", "read", "remember"]);
     const res = await h.callMcp(tokens.access_token);
-    expect(await res.json()).toMatchObject({ vault, grant: { agent: "home-finder", scopes: ["read", "remember"], via: "oauth" } });
+    const seen = (await res.json()) as { vault: string; grant: Record<string, unknown> };
+    expect(seen.vault).toBe(vault);
+    expect(seen.grant).toEqual({ scopes: ["read", "remember", "goal", "quest"], via: "oauth", credential: expect.stringMatching(/^oauth:/) });
     const [grant] = (await h.app.oauth.listUserGrants("account-4242")).items;
-    expect(grant!.metadata).toEqual({ label: "Claude", vaultId: vault, agent: "home-finder" });
+    expect(grant!.metadata).toEqual({ label: "Claude", vaultId: vault });
     expect(h.vaults.to(vault, "addParty")).toEqual([]);
   });
 
-  it("can add a new agent to the party as it connects", async () => {
+  it("ignores an agent, scopes or party posted by hand", async () => {
     const h = await hostedApp();
     const { visit, vault } = await h.readyAccount(PLAYER);
-    const flow = await consent(h, visit, { clientName: "Claude Desktop" });
-    // An empty party: the new id is suggested and adding it is ticked.
-    expect(flow.page).toContain('name="new_agent" value="claude-desktop"');
-    expect(flow.page).toMatch(/name="add_to_party" value="1" checked/);
-    const approved = await flow.submit({ decision: "approve", new_agent: "claude-desktop", new_title: "Claude Desktop", add_to_party: "1", scope: ["read", "remember"] });
-    expect(approved.status).toBe(302);
-    expect(h.vaults.to(vault, "addParty")).toEqual([expect.objectContaining({ input: { id: "claude-desktop", title: "Claude Desktop" }, via: "@player" })]);
-    const tokens = await exchange(h, flow, approved);
-    expect(await (await h.callMcp(tokens.access_token)).json()).toMatchObject({ grant: { agent: "claude-desktop" } });
-    // Already in the party: it isn't added twice.
-    await connect(h, visit, { new_agent: "claude-desktop", add_to_party: "1", scope: "read" });
-    expect(h.vaults.to(vault, "addParty")).toHaveLength(1);
+    const tokens = await connect(h, visit, { new_agent: "claude-ai", agent: "home-finder", add_to_party: "1", scope: ["read", "curate"] });
+    const seen = (await (await h.callMcp(tokens.access_token)).json()) as { grant: Record<string, unknown> };
+    expect(seen.grant.agent).toBeUndefined();
+    expect(seen.grant.scopes).toEqual(["read", "remember", "goal", "quest"]);
+    expect(h.vaults.to(vault, "addParty")).toEqual([]);
   });
 
-  it("checks the agent id and scopes before approving, so the form can be fixed", async () => {
+  it("still serves a grant made when apps were bound to one agent", async () => {
     const h = await hostedApp();
-    const { visit, vault } = await h.readyAccount(PLAYER);
-    const flow = await consent(h, visit);
-    expect((await flow.submit({ decision: "approve", new_agent: "Not An Id!", scope: "read" })).status).toBe(400);
-    expect((await flow.submit({ decision: "approve", new_agent: "curator", scope: "read" })).status).toBe(400);
-    expect((await flow.submit({ decision: "approve", new_agent: "claude-ai", scope: "remember" })).status).toBe(400);
-    const refused = await flow.submit({ decision: "approve", new_agent: "player", add_to_party: "1", scope: "read" });
-    expect(refused.status).toBe(400);
-    expect(await refused.text()).toContain("human");
-    expect(h.vaults.parties.get(vault) ?? []).toEqual([]);
-    expect((await flow.submit({ decision: "approve", new_agent: "claude-ai", scope: "read" })).status).toBe(302);
+    const { vault } = await h.readyAccount(PLAYER);
+    const flow = await client(h);
+    const request = await h.app.oauth.parseAuthRequest(new Request(flow.authorizeUrl));
+    const { redirectTo } = await h.app.oauth.completeAuthorization({ request, userId: "account-4242", metadata: { vaultId: vault }, scope: ["read", "remember"], props: { kind: "oauth", vaultId: vault, accountId: PLAYER.id, agent: "claude-ai" } });
+    const { access_token } = await exchange(h, flow, new Response(null, { status: 302, headers: { location: redirectTo } }));
+    expect(await (await h.callMcp(access_token)).json()).toMatchObject({ vault, grant: { agent: "claude-ai", scopes: ["read", "remember"] } });
   });
 
   it("lets the person deny", async () => {
@@ -208,7 +183,7 @@ describe("connecting an app over OAuth", () => {
     const { visit } = await h.readyAccount(PLAYER);
     const gm = await h.readyAccount(GM);
     const flow = await consent(h, visit);
-    const fields = { decision: "approve", new_agent: "attacker", scope: ["read", "remember", "quest"] };
+    const fields = { decision: "approve" };
     expect((await flow.submit(fields, visit, { origin: "https://evil.test" })).status).toBe(403);
     expect((await flow.submit(fields, visit, {})).status).toBe(403);
     // Another account's browser: the page was shown to someone else.
@@ -226,24 +201,15 @@ describe("connecting an app over OAuth", () => {
     expect((await flow.submit(fields)).status).toBe(302);
   });
 
-  it("grants the goal scope under its old name too, and reads a posted quest as goal", async () => {
-    const h = await hostedApp();
-    const { visit } = await h.readyAccount(PLAYER);
-    const goal = await connect(h, visit, { new_agent: "claude-ai", scope: ["read", "goal"] });
-    expect(await (await h.callMcp(goal.access_token)).json()).toMatchObject({ grant: { scopes: ["read", "goal", "quest"] } });
-    const old = await connect(h, visit, { new_agent: "claude-ai", scope: ["read", "quest"] });
-    expect(await (await h.callMcp(old.access_token)).json()).toMatchObject({ grant: { scopes: ["read", "goal", "quest"] } });
-  });
-
   it("honours scopes narrowed on refresh", async () => {
     const h = await hostedApp();
     const { visit } = await h.readyAccount(PLAYER);
-    const first = await connect(h, visit, { new_agent: "claude-ai", scope: ["read", "remember", "quest"] });
+    const first = await connect(h, visit);
     const refreshed = await h.send(
       new Request(`${ORIGIN}/oauth/token`, { method: "POST", body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: first.refresh_token, client_id: first.clientId, scope: "read" }) }),
     );
     const { access_token } = (await refreshed.json()) as { access_token: string };
-    expect(await (await h.callMcp(access_token)).json()).toMatchObject({ grant: { agent: "claude-ai", scopes: ["read"] } });
+    expect(await (await h.callMcp(access_token)).json()).toMatchObject({ grant: { scopes: ["read"] } });
   });
 });
 
@@ -266,7 +232,7 @@ describe("OAuth grants at the MCP endpoint", () => {
   it("stop at a disconnected vault, and end with the account", async () => {
     const h = await hostedApp();
     const { visit, vault } = await h.readyAccount(PLAYER);
-    const { access_token } = await connect(h, visit, { new_agent: "claude-ai", scope: "read" });
+    const { access_token } = await connect(h, visit);
     expect((await h.callMcp(access_token)).status).toBe(200);
     const repo = { id: PLAYER.repo, full_name: "player/vault" };
     await h.deliver("repository", { action: "publicized", repository: repo });
@@ -285,10 +251,92 @@ describe("OAuth grants at the MCP endpoint", () => {
     const h = await hostedApp();
     const player = await h.readyAccount(PLAYER);
     const gm = await h.readyAccount(GM);
-    const mine = await connect(h, player.visit, { new_agent: "claude-ai", scope: "read" });
-    const theirs = await connect(h, gm.visit, { new_agent: "claude-ai", scope: ["read", "curate"] });
-    expect(await (await h.callMcp(mine.access_token)).json()).toMatchObject({ vault: player.vault, grant: { scopes: ["read"] } });
-    expect(await (await h.callMcp(theirs.access_token)).json()).toMatchObject({ vault: gm.vault, grant: { scopes: ["read", "curate"] } });
+    const mine = await connect(h, player.visit);
+    const theirs = await connect(h, gm.visit);
+    expect(await (await h.callMcp(mine.access_token)).json()).toMatchObject({ vault: player.vault });
+    expect(await (await h.callMcp(theirs.access_token)).json()).toMatchObject({ vault: gm.vault });
+  });
+});
+
+describe("connecting at a vault's address", () => {
+  it("accepts the address as the resource, and the token works there", async () => {
+    const h = await hostedApp();
+    const { visit, vault } = await h.readyAccount(PLAYER);
+    const resource = `${ORIGIN}/mcp/${vault}`;
+    const tokens = await connect(h, visit, {}, { resource });
+    const res = await h.callMcp(tokens.access_token, undefined, {}, `/mcp/${vault}`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ vault, grant: { via: "oauth" } });
+    // Plain /mcp follows the grant's vault.
+    expect(await (await h.callMcp(tokens.access_token)).json()).toMatchObject({ vault });
+  });
+
+  it("starts at the vault the address named", async () => {
+    const h = await hostedApp();
+    const player = await h.readyAccount(PLAYER);
+    const harbor = await h.addVault(player.visit, PLAYER, { name: "harbor-notes", id: 9101 });
+    // Signed in, the person's current vault is the first; the address names the second.
+    for (const [named, other] of [[harbor, player.vault], [player.vault, harbor]] as const) {
+      const flow = await consent(h, player.visit, { resource: `${ORIGIN}/mcp/${named}` });
+      expect(flow.res.status).toBe(200);
+      expect(flow.page).toContain(`<option value="${named}" selected>`);
+      expect(flow.page).not.toContain(`<option value="${other}" selected>`);
+      const tokens = await exchange(h, flow, await flow.submit({ decision: "approve", vault: named }));
+      expect(await (await h.callMcp(tokens.access_token)).json()).toMatchObject({ vault: named });
+    }
+  });
+
+  it("keeps the vault through sign-in", async () => {
+    const h = await hostedApp();
+    const { vault } = await h.readyAccount(PLAYER);
+    const { authorizeUrl } = await client(h, { resource: `${ORIGIN}/mcp/${vault}` });
+    const fresh = h.browser();
+    const toLogin = await fresh(authorizeUrl);
+    const login = new URL(toLogin.headers.get("location")!, ORIGIN);
+    const toGitHub = await fresh(login.href);
+    const back = await fresh(h.github.signIn(toGitHub.headers.get("location")!, "player"));
+    expect(await (await fresh(`${ORIGIN}${back.headers.get("location")}`)).text()).toContain("Connect Claude to your vault?");
+  });
+
+  it("still refuses a resource that isn't ours", async () => {
+    const h = await hostedApp();
+    await h.readyAccount(PLAYER);
+    const { authorizeUrl } = await client(h, { resource: "https://elsewhere.test/mcp" });
+    const res = await h.browser()(authorizeUrl);
+    // Straight back to the client with invalid_target, before any sign-in.
+    expect(new URL(res.headers.get("location") ?? "https://none.test").searchParams.get("error")).toBe("invalid_target");
+  });
+
+  it("describes itself at the address, at the root and at /mcp", async () => {
+    const h = await hostedApp();
+    const { vault } = await h.readyAccount(PLAYER);
+    const meta = async (path: string) => h.send(new Request(`${ORIGIN}/.well-known/oauth-protected-resource${path}`));
+    const at = await meta(`/mcp/${vault}`);
+    expect(at.status).toBe(200);
+    expect(at.headers.get("access-control-allow-origin")).toBe("*");
+    expect(await at.json()).toMatchObject({ resource: `${ORIGIN}/mcp/${vault}`, authorization_servers: [ORIGIN] });
+    expect(await (await meta("")).json()).toMatchObject({ resource: `${ORIGIN}/mcp`, authorization_servers: [ORIGIN] });
+    expect(await (await meta("/mcp")).json()).toMatchObject({ resource: `${ORIGIN}/mcp` });
+    expect((await meta("/mcp/not-a-vault")).status).toBe(404);
+    expect((await h.send(new Request(`${ORIGIN}/.well-known/oauth-protected-resource/mcp/${vault}`, { method: "OPTIONS" }))).status).toBe(204);
+  });
+
+  it("answers an unauthenticated address with metadata for that address", async () => {
+    const h = await hostedApp();
+    const { vault } = await h.readyAccount(PLAYER);
+    const res = await h.send(new Request(`${ORIGIN}/mcp/${vault}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }));
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toContain(`resource_metadata="${ORIGIN}/.well-known/oauth-protected-resource/mcp/${vault}"`);
+    const plain = await h.send(new Request(`${ORIGIN}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }));
+    expect(plain.headers.get("www-authenticate")).toContain(`resource_metadata="${ORIGIN}/.well-known/oauth-protected-resource/mcp"`);
+  });
+
+  it("names itself on every call, like a shared key", async () => {
+    const h = await hostedApp();
+    const { visit, vault } = await h.readyAccount(PLAYER);
+    const { access_token } = await connect(h, visit, {}, { resource: `${ORIGIN}/mcp/${vault}` });
+    const seen = (await (await h.callMcp(access_token)).json()) as { grant: Record<string, unknown> };
+    expect(seen.grant.agent).toBeUndefined();
   });
 });
 
@@ -297,11 +345,11 @@ describe("connected apps", () => {
     const h = await hostedApp();
     const player = await h.readyAccount(PLAYER);
     const gm = await h.readyAccount(GM);
-    const { access_token } = await connect(h, player.visit, { new_agent: "claude-ai", scope: ["read", "remember"] }, { clientName: "Claude" });
-    await connect(h, gm.visit, { new_agent: "chatgpt", scope: "read" }, { clientName: "ChatGPT" });
+    const { access_token } = await connect(h, player.visit, {}, { clientName: "Claude" });
+    await connect(h, gm.visit, {}, { clientName: "ChatGPT" });
     const list = async (visit: Visit) => ((await (await h.api(visit, "account/apps")).json()) as { apps: HostedConnectedApp[] }).apps;
     const apps = await list(player.visit);
-    expect(apps).toEqual([{ id: expect.any(String), client: "Claude", scopes: ["read", "remember"], agent: "claude-ai", vault: expect.stringMatching(/^[0-9A-Z]{26}$/), created: expect.any(String) }]);
+    expect(apps).toEqual([{ id: expect.any(String), client: "Claude", scopes: ["read", "remember", "goal", "quest"], vault: expect.stringMatching(/^[0-9A-Z]{26}$/), created: expect.any(String) }]);
     const [theirs] = await list(gm.visit);
     expect((await h.post(player.visit, "account/apps/revoke", { id: theirs!.id })).status).toBe(404);
     expect((await h.post(player.visit, "account/apps/revoke", { id: "../x" })).status).toBe(400);
