@@ -153,7 +153,7 @@ const showAll = (v: FactValue | FactValue[]) => (Array.isArray(v) ? v.map(show).
 
 /**
  * A deterministic one-line account of an episode's data, for kinds that keep no text:
- * `call with [[ana]] · went well`. Channel (else the kind), `with`, then the other fields in order.
+ * `call with [[migration-agency]] · went well`. Channel (else the kind), `with`, then the other fields in order.
  */
 export function dataLine(kind: ResolvedKind, data: EpisodeData | undefined): string {
   const d = data ?? {};
