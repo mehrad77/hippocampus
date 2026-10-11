@@ -43,6 +43,12 @@
   //   GITHUB_APP_PRIVATE_KEY      the app's private key as PKCS#8: GitHub hands out PKCS#1, so convert it with
   //                               `openssl pkcs8 -topk8 -nocrypt -in app.private-key.pem -out app.pkcs8.pem`
   //   HIPPO_EMBED_*               optional, for semantic recall (see `ai` below)
+  //   GITLAB_CLIENT_ID, GITLAB_CLIENT_SECRET, HIPPO_TOKEN_KEY   optional, all three together, to let people keep
+  //                               their vault in a GitLab project. HIPPO_TOKEN_KEY seals stored GitLab tokens:
+  //                               `openssl rand -base64 32`. GITLAB_URL is optional (default https://gitlab.com).
+  // The GitLab OAuth application (GitLab: User Settings → Applications, or Admin → Applications for everyone):
+  //   Redirect URI                <HIPPO_PUBLIC_URL>/oauth/gitlab/callback
+  //   Scopes                      api (GitLab has no narrower scope that can commit), and tick "Confidential"
   // The GitHub App (github-app.manifest.json has the same settings, for creating it from a manifest):
   //   Callback URL                <HIPPO_PUBLIC_URL>/oauth/github/callback, and tick "Request user authorization
   //                               (OAuth) during installation" (sign-in and the install redirect both come back there)
@@ -59,6 +65,9 @@
     "binding": "ASSETS",
     "run_worker_first": ["/dashboard", "/dashboard/*", "!/dashboard/_astro/*"]
   },
+  // GitLab sends no webhooks for "made public", "deleted" or "access revoked", so each GitLab vault's project is
+  // checked every few hours instead (hosted/gitlab-health.ts). Does nothing without GitLab vaults.
+  "triggers": { "crons": ["17 */6 * * *"] },
   // Semantic recall (optional): uncomment and set HIPPO_EMBED_PROVIDER=workers-ai, or point
   // HIPPO_EMBED_PROVIDER/BASE_URL/MODEL/API_KEY at any OpenAI-compatible embeddings API.
   // "ai": { "binding": "AI" },

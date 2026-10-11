@@ -4,6 +4,7 @@ import { createDashboardApi, errorResponse, json, serviceSource, type DashboardS
 import { HippoIndex, doSql, type DurableSqlLike, type SqlStorageLike } from "@hippocampus/index";
 import { createHippoServer, type Scope } from "@hippocampus/mcp";
 import { GitHubStore, SnapshotCache, SqliteBlobCache, type BlobCache } from "@hippocampus/store-github";
+import { GitLabStore } from "@hippocampus/store-gitlab";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { jsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/types.js";
 import { ScribeQueue } from "../scribe.ts";
@@ -25,7 +26,12 @@ export interface VaultMeta {
   fullName: string;
   branch: string;
   repoId: number;
+  /** The GitHub App installation; 0 (or absent) for GitLab vaults. */
   installationId: number;
+  /** Where the repo lives; absent means GitHub. */
+  provider?: "github" | "gitlab";
+  /** The account whose GitLab connection the vault uses. GitLab vaults only. */
+  accountId?: number;
   /** An admin's overrides of the hosted limits for this vault; absent means the defaults. */
   quotas?: Partial<Quotas>;
 }
@@ -58,10 +64,22 @@ export interface TokenMinter {
   installationToken(installationId: number, narrow?: Narrowing): Promise<InstallationToken>;
 }
 
+/** GitLab, as far as a vault needs it. */
+export interface GitLabDeps {
+  /** The REST root, `https://gitlab.com/api/v4`. */
+  apiUrl: string;
+  /** GitLab's web origin, for links to the project. */
+  webUrl: string;
+  /** A token function for the account's connection; it refreshes itself. */
+  tokenFor(accountId: number): (opts?: { refresh?: boolean }) => Promise<string>;
+}
+
 export interface VaultRuntimeDeps {
   storage: RuntimeStorage;
   meta: VaultMeta;
   app: TokenMinter;
+  /** Present when the instance has GitLab set up; GitLab vaults can't be served without it. */
+  gitlab?: GitLabDeps;
   apiUrl?: string;
   /** GitHub's web origin, for links to the repo. */
   webUrl?: string;
@@ -186,8 +204,11 @@ export class VaultRuntime {
     this.blobs = new SqliteBlobCache(d.storage.sql, { now });
     this.counter = new DailyCounter(d.storage.sql, this.clock);
     const { installationId, repoId } = d.meta;
-    this.token = storedToken(d.storage.sql, () => d.app.installationToken(installationId, { repositoryIds: [repoId], permissions: RUNTIME_PERMISSIONS }), now);
-    this.writer = new ScribeQueue(this.github());
+    if (d.meta.provider === "gitlab") {
+      if (!d.gitlab || !d.meta.accountId) throw new Error("This vault is on GitLab, but GitLab isn't set up on this instance");
+      this.token = d.gitlab.tokenFor(d.meta.accountId);
+    } else this.token = storedToken(d.storage.sql, () => d.app.installationToken(installationId, { repositoryIds: [repoId], permissions: RUNTIME_PERMISSIONS }), now);
+    this.writer = new ScribeQueue(this.reads());
     this.relay = new SleepRelay({
       open: async (at) => {
         const store = this.store(CURATOR);
@@ -199,24 +220,27 @@ export class VaultRuntime {
   }
 
   /** Reads pinned to the branch head when first used; caches shared with every other store of this vault. */
-  private github(): GitHubStore {
-    return new GitHubStore({
-      repo: this.meta.fullName,
+  private reads(): GitHubStore | GitLabStore {
+    const shared = {
       branch: this.meta.branch,
       token: this.token,
-      apiUrl: this.d.apiUrl,
       fetch: this.d.fetch,
       cache: this.blobs,
       // Episodes can hold secrets in plain text until sleep encrypts them: they stay out of storage at rest.
-      persist: (path) => !path.startsWith("inbox/"),
+      persist: (path: string) => !path.startsWith("inbox/"),
       transientCache: this.transient,
       snapshots: this.snapshots,
-    });
+    };
+    if (this.meta.provider === "gitlab") {
+      // By id, not path: the id survives renames and transfers.
+      return new GitLabStore({ ...shared, project: this.meta.repoId, apiUrl: this.d.gitlab!.apiUrl, hint: { auth: "Connect GitLab again from the setup page." } });
+    }
+    return new GitHubStore({ ...shared, repo: this.meta.fullName, apiUrl: this.d.apiUrl });
   }
 
   /** A store for one request or relay step: its writes are audited as `principal` and committed one at a time. */
   store(principal: Principal): SizeGuarded {
-    return sizeGuard(new AuditedStore({ reads: this.github(), writer: this.writer, principal, quotas: this.quotas }), this.quotas);
+    return sizeGuard(new AuditedStore({ reads: this.reads(), writer: this.writer, principal, quotas: this.quotas }), this.quotas);
   }
 
   private readonly searcher: SearcherFactory = async (vault) => (await this.openIndex()).searcher(vault);
@@ -303,8 +327,9 @@ export class VaultRuntime {
     try {
       await this.keepAlarm();
       const repo = this.meta.fullName;
-      const url = `${(this.d.webUrl ?? "https://github.com").replace(/\/$/, "")}/${repo}`;
-      const source = serviceSource(this.service(), { mode: "worker", vault: { kind: "github", repo, branch: this.meta.branch, url } }, { curator: this.curator });
+      const gitlab = this.meta.provider === "gitlab";
+      const url = `${(gitlab ? this.d.gitlab!.webUrl : (this.d.webUrl ?? "https://github.com")).replace(/\/$/, "")}/${repo}`;
+      const source = serviceSource(this.service(), { mode: "worker", vault: { kind: gitlab ? "gitlab" : "github", repo, branch: this.meta.branch, url } }, { curator: this.curator });
       const api = createDashboardApi({
         basePath: DASHBOARD_API,
         source: () => source,
@@ -356,16 +381,20 @@ type HostState = { meta: VaultMeta; disconnected?: string } | undefined;
 function checkMeta(m: VaultMeta): VaultMeta {
   const id = (n: unknown) => typeof n === "number" && Number.isSafeInteger(n) && n > 0;
   if (typeof m?.vaultId !== "string" || !m.vaultId) throw new Error("configure: vaultId is required");
-  if (typeof m.fullName !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(m.fullName)) throw new Error("configure: fullName must look like owner/name");
+  if (m.provider !== undefined && m.provider !== "github" && m.provider !== "gitlab") throw new Error("configure: provider must be github or gitlab");
+  const gitlab = m.provider === "gitlab";
+  // GitLab projects can sit in subgroups: group/subgroup/name.
+  if (typeof m.fullName !== "string" || !(gitlab ? /^[\w.-]+(\/[\w.-]+)+$/ : /^[\w.-]+\/[\w.-]+$/).test(m.fullName)) throw new Error("configure: fullName must look like owner/name");
   if (typeof m.branch !== "string" || !m.branch.trim()) throw new Error("configure: branch is required");
-  if (!id(m.repoId) || !id(m.installationId)) throw new Error("configure: repoId and installationId must be positive integers");
+  if (!id(m.repoId) || (gitlab ? !id(m.accountId) : !id(m.installationId))) throw new Error(gitlab ? "configure: repoId and accountId must be positive integers" : "configure: repoId and installationId must be positive integers");
   const quotas = quotaOverrides(m.quotas);
   return {
     vaultId: m.vaultId,
     fullName: m.fullName,
     branch: m.branch.trim(),
     repoId: m.repoId,
-    installationId: m.installationId,
+    installationId: gitlab ? 0 : m.installationId,
+    ...(gitlab ? { provider: "gitlab" as const, accountId: m.accountId } : {}),
     ...(Object.keys(quotas).length ? { quotas } : {}),
   };
 }
@@ -405,7 +434,7 @@ export class HostedVault {
   private unavailable(): { status: number; body: { error: string; code: string; reason?: string } } {
     const state = this.state();
     if (!state) return { status: 503, body: { error: "This vault isn't set up yet.", code: "VAULT_NOT_CONFIGURED" } };
-    return { status: 503, body: { error: "This vault is disconnected from its GitHub repo.", code: "VAULT_DISCONNECTED", reason: state.disconnected } };
+    return { status: 503, body: { error: `This vault is disconnected from its ${state.meta.provider === "gitlab" ? "GitLab project" : "GitHub repo"}.`, code: "VAULT_DISCONNECTED", reason: state.disconnected } };
   }
 
   private require(): VaultRuntime {

@@ -190,6 +190,9 @@ importers:
       '@hippocampus/store-github':
         specifier: workspace:*
         version: link:../../packages/store-github
+      '@hippocampus/store-gitlab':
+        specifier: workspace:*
+        version: link:../../packages/store-gitlab
       '@hippocampus/template':
         specifier: workspace:*
         version: link:../../packages/template
