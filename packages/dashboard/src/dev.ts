@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
-import { HippoService } from "@hippocampus/core";
+import { HippoService, generateKeyPair } from "@hippocampus/core";
 import { FsStore } from "@hippocampus/core/node";
 import { createDashboardApi } from "./api.ts";
 import { demoSetup } from "./demo-setup.ts";
@@ -30,6 +30,7 @@ export function devMiddleware(opts: { basePath: string; vaultDir?: string; hoste
     if (request.method !== "GET" && request.headers.get("origin") !== `http://${host}`) throw new HttpError(403, "Cross-origin request refused", "ORIGIN");
     return {};
   };
+  let demoKey: { identity: string; recipient: string } | undefined;
   let app: Promise<(request: Request) => Promise<Response | undefined>> | undefined;
   const build = async () => {
     let source: DashboardSource;
@@ -37,9 +38,9 @@ export function devMiddleware(opts: { basePath: string; vaultDir?: string; hoste
     if (opts.vaultDir) {
       source = serviceSource(new HippoService(new FsStore(opts.vaultDir)), { mode: "local", vault: { kind: "dir", dir: opts.vaultDir } });
     } else {
-      const store = await buildDemoStore(new FsStore(SEED), { template: new FsStore(TEMPLATE) });
-      // The pretend hosted app is a vault whose owner skipped the secrets key at setup, so its Setup page can show how to add one.
-      if (hosted) await store.write("_hippo/config.yaml", (await store.read("_hippo/config.yaml"))!.replace(/(recipient:\s*)age1\S+/, "$1null"));
+      // The pretend hosted app keeps its demo key (served at __demo/key), so revealing and rotating secrets can be walked.
+      demoKey = hosted ? await generateKeyPair() : undefined;
+      const store = await buildDemoStore(new FsStore(SEED), { template: new FsStore(TEMPLATE), recipient: demoKey?.recipient });
       const service = new HippoService(store);
       source = serviceSource(service, { mode: "demo", vault: { kind: "memory" } });
       const o = await service.overview();
@@ -47,7 +48,7 @@ export function devMiddleware(opts: { basePath: string; vaultDir?: string; hoste
     }
     const api = createDashboardApi({ basePath: opts.basePath, source: () => source, setup, guard });
     if (!hosted) return api;
-    const demo = hostedDemo({ base: site, source });
+    const demo = hostedDemo({ base: site, source, demoKey: demoKey?.identity });
     return async (request: Request) => {
       try {
         guard(request);

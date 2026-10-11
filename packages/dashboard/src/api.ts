@@ -1,6 +1,6 @@
 import { GoalState, type GoalUpdate, type QuestUpdate } from "@hippocampus/core";
 import { z } from "zod";
-import { HttpError, errorResponse, json, readJson, type ErrorReport, type Guard, type GuardResult } from "./http.ts";
+import { HttpError, MAX_BODY, MAX_ROTATE_BODY, errorResponse, json, readJson, type ErrorReport, type Guard, type GuardResult } from "./http.ts";
 import type { SetupPort } from "./setup.ts";
 import { capabilities, type DashboardSource, type SessionInfo, type SetupKind } from "./source.ts";
 
@@ -117,6 +117,7 @@ const PartyBody = z.object({
 
 const DomainBody = z.object({ ids: z.array(text(60)).min(1).max(20) });
 const SecretsBody = z.object({ recipient: text(100), replace: z.boolean().optional() });
+const RotateBody = z.object({ recipient: text(100), files: z.array(z.object({ path: text(300), armored: z.string().min(1).max(64 * 1024) })).max(5000) });
 
 const AuthorityBody = z.object({ agent: text(63), domains: z.array(text(60)).max(20) });
 
@@ -147,7 +148,7 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
       const method = request.method;
       if (method !== "GET" && method !== "POST") throw new HttpError(405, "Method not allowed", "METHOD");
       const who = await opts.guard(request);
-      const body = method === "POST" ? await readJson(request) : undefined;
+      const body = method === "POST" ? await readJson(request, path === "actions/rotate-secrets" ? MAX_ROTATE_BODY : MAX_BODY) : undefined;
 
       if (path === "setup" || path.startsWith("setup/")) {
         if (!setup) throw new HttpError(501, "Setup is not available here", "UNSUPPORTED");
@@ -177,6 +178,9 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
             return json(200, await need(source.curator, "the curator's status").status());
           case "names":
             return json(200, { names: await need(source.nameHolders, "which names connections hold").call(source) });
+          case "secrets":
+            // Ciphertext for the owner's browser to open with their key; the key itself never comes here.
+            return json(200, await need(source.secretFiles, "revealing secrets").call(source));
           case "search": {
             const q = text(200).parse(url.searchParams.get("q") ?? "");
             const limit = z.coerce.number().int().min(1).max(20).optional().parse(url.searchParams.get("limit") ?? undefined);
@@ -219,6 +223,10 @@ export function createDashboardApi(opts: DashboardApiOptions): (request: Request
           case "actions/secrets": {
             const { recipient, replace } = SecretsBody.parse(body);
             return json(200, await need(source.setSecretsRecipient, "setting the secrets key").call(source, recipient, via, replace));
+          }
+          case "actions/rotate-secrets": {
+            const { recipient, files } = RotateBody.parse(body);
+            return json(200, await need(source.rotateSecrets, "rotating the secrets key").call(source, recipient, files, via));
           }
           case "actions/hand-over":
             return json(200, await need(source.handOver, "handing names over").call(source, HandOverBody.parse(body).agent, via));

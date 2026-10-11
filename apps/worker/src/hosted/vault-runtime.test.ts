@@ -476,7 +476,7 @@ describe("VaultRuntime: dashboard", () => {
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
       account: { status: "approved", admin: false },
-      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, secrets: true, authority: true, names: true, handOver: true, introductions: true, curator: true, upgrade: true, setup: "hosted" },
+      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, secrets: true, reveal: true, authority: true, names: true, handOver: true, introductions: true, curator: true, upgrade: true, setup: "hosted" },
     });
 
     const r = await api("POST", "actions/remember", { text: "My residence card arrives next week." });
@@ -530,7 +530,7 @@ describe("VaultRuntime: dashboard humans", () => {
     };
     const member = await session(user("member", "flatmate"));
     expect(member.body.actor).toEqual({ kind: "human", id: "flatmate" });
-    expect(member.body.capabilities).toMatchObject({ remember: true, domains: true, secrets: false, upgrade: false, curator: false });
+    expect(member.body.capabilities).toMatchObject({ remember: true, domains: true, secrets: false, reveal: false, upgrade: false, curator: false });
     // Their human was taken out of the config: no seat, no fallback to the primary human.
     expect(await session(user("member", "nobody"))).toMatchObject({ status: 403, body: { code: "NO_HUMAN" } });
     expect(await session(user("member"))).toMatchObject({ status: 403 });
@@ -540,10 +540,15 @@ describe("VaultRuntime: dashboard humans", () => {
     // The secrets key decides who can read the vault's secrets: a member can't set or replace it.
     expect((await post("actions/secrets", { recipient: `age1${"q".repeat(58)}`, replace: true }, user("member", "flatmate"))).status).toBe(501);
     expect(repo.files()["_hippo/config.yaml"]).not.toContain("age1qqqq");
+    // Nor read the ciphertext, or rotate it: the key, and so the secrets, are the owner's.
+    const read = await runtime.dashboard(new Request(`${ORIGIN}/dashboard/api/secrets`), user("member", "flatmate"));
+    expect(read.status).toBe(501);
+    expect((await post("actions/rotate-secrets", { recipient: `age1${"q".repeat(58)}`, files: [] }, user("member", "flatmate"))).status).toBe(501);
     expect(repo.files()["_hippo/config.yaml"]).toMatch(/^domains: \[.*side-project\]$/m);
 
     const viewer = await session(user("viewer", "flatmate"));
-    expect(viewer.body.capabilities).toMatchObject({ remember: false, rule: false, goal: false, party: false, domains: false, secrets: false });
+    expect(viewer.body.capabilities).toMatchObject({ remember: false, rule: false, goal: false, party: false, domains: false, secrets: false, reveal: false });
+    expect((await runtime.dashboard(new Request(`${ORIGIN}/dashboard/api/secrets`), user("viewer", "flatmate"))).status).toBe(501);
     const write = await runtime.dashboard(new Request(`${ORIGIN}/dashboard/api/actions/remember`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: "x" }) }), user("viewer", "flatmate"));
     expect(write.status).toBe(501);
     expect((await post("actions/domain", { ids: ["garden"] }, user("viewer", "flatmate"))).status).toBe(501);

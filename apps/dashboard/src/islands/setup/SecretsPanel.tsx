@@ -8,6 +8,7 @@ import { Panel } from "../../ui/Parts.tsx";
 import { ConfirmDialog, ErrorCallout, Facts, Field, ToneTag, useAction } from "./common.tsx";
 import { identityFileName, identityFileText } from "./hosted.ts";
 import { truncateKey } from "./model.ts";
+import { RotateKey } from "./RotateKey.tsx";
 
 // What the server accepts as a public key (core's AGE_RECIPIENT). Checked here too, so a pasted private key is never sent.
 const PUBLIC_KEY = /^age1[02-9ac-hj-np-z]{58}$/;
@@ -16,7 +17,7 @@ const PUBLIC_KEY = /^age1[02-9ac-hj-np-z]{58}$/;
  * The secrets key on an existing vault: make one in this browser (only the public half goes to the vault) or paste
  * a public key you already have. Without a key, agents' secret facts are held back instead of stored.
  */
-export function SecretsPanel({ vaultName }: { vaultName: string }) {
+export function SecretsPanel({ vaultName, canRotate = false }: { vaultName: string; canRotate?: boolean }) {
   const { v } = useTerms();
   const overview = useResource<Overview>("/overview");
   const action = useAction();
@@ -75,11 +76,12 @@ export function SecretsPanel({ vaultName }: { vaultName: string }) {
         {ok ? (
           <>
             <p className="small">
-              {v("Secret facts (passport numbers, account ids, passwords) are encrypted to this vault's key before they're stored.", "Secret facts are sealed to this vault's key before they're stored.")} Lost the key file? Nobody can recover it, but you can replace the key and have your agents send the secrets again.
+              {v("Secret facts (passport numbers, account ids, passwords) are encrypted to this vault's key before they're stored.", "Secret facts are sealed to this vault's key before they're stored.")} {canRotate ? "Read one on its record's page with Reveal and your key file. If the key file leaked, rotate: every secret moves to a new key. Lost it? Nobody can recover it, but you can replace the key." : "Lost the key file? Nobody can recover it, but you can replace the key and have your agents send the secrets again."}
             </p>
             <div className="row">
+              {canRotate && <RotateKey vaultName={vaultName} onDone={() => void overview.reload()} />}
               <button type="button" className="btn btn--sm" onClick={() => setAsking(true)}>
-                <Icon name="key" /> Replace the key…
+                <Icon name="key" /> Lost the key? Replace it…
               </button>
             </div>
           </>
@@ -168,7 +170,7 @@ export function SecretsPanel({ vaultName }: { vaultName: string }) {
           setReplacing(true);
         }}
       >
-        <p>This is for a key file you lost, or one that leaked. The new key can't open anything the old one locked.</p>
+        <p>This is for a key file you lost. The new key can't open anything the old one locked. (Still have the old file, and it leaked? Rotate instead: it moves every secret to the new key.)</p>
         <ul className="sz-howto">
           <li>Secrets already saved (passport, ID and account numbers) stay locked to the old key. With the old key file you can still read them; without it, they're gone.</li>
           <li>Secrets saved from now on are locked to the new key.</li>

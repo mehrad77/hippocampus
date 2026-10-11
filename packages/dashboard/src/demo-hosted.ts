@@ -11,6 +11,7 @@ import { capabilities, readOnlySource, type CuratorStatus, type DashboardSource,
 //
 //   signed out → waitlisted → (asks; approved a few seconds later) → installed → vault ready → keys
 //
+// `GET <base>/api/__demo/key` downloads the demo vault's key file, for walking Reveal and Rotate.
 // `GET <base>/api/__demo/stage?to=<stage>` jumps straight to a stage: signed-out, waitlisted,
 // requested, approved, installed, ready. Add `&provider=gitlab` for the GitLab path: `installed`
 // then means GitLab is connected, and `ready` is a vault on GitLab. `ready` gives two vaults (one on
@@ -23,6 +24,8 @@ export interface HostedDemoOptions {
   base: string;
   /** The demo campaign, served once the pretend vault is ready. */
   source: DashboardSource;
+  /** The demo vault's private key, offered at `__demo/key` as a key file to walk revealing and rotating secrets. Demo only. */
+  demoKey?: string;
   /** How long a waitlist request waits before the demo approves it (ms). */
   approveAfter?: number;
   /** How long `init` pretends to take (ms). */
@@ -250,7 +253,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     const v = pick(request);
     if (v?.status !== "ready") return { mode: "setup", user: { login: LOGIN }, account, capabilities: { ...capabilities(undefined, "hosted"), setup: "hosted" } };
     const info = await source.info();
-    const { setSecretsRecipient: _key, ...member } = source;
+    const { setSecretsRecipient: _key, secretFiles: _files, rotateSecrets: _rotate, ...member } = source;
     // Only the owner sets the secrets key: it decides who can read the vault's secrets.
     const shared = v.role === "viewer" ? readOnlySource(source) : (v.role ?? "owner") === "owner" ? source : member;
     return { ...info, mode: "worker", vault: { kind: v.provider === "gitlab" ? "gitlab" : "github", repo: v.fullName, branch: v.branch, ...(v.url ? { url: v.url } : {}) }, user: { login: LOGIN }, account, capabilities: { ...capabilities(shared, "hosted"), curator: (v.role ?? "owner") === "owner" } };
@@ -563,6 +566,10 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       if (!STAGES.includes(to)) throw new HttpError(400, `to: one of ${STAGES.join(", ")}`, "INVALID");
       toStage(to, url.searchParams.get("provider") ?? undefined);
       return redirect(to === "signed-out" ? `${base}/welcome/` : `${base}/setup/`);
+    }
+    if (sub === "key") {
+      if (!opts.demoKey) throw new HttpError(404, "The demo has no key", "NOT_FOUND");
+      return new Response(`${opts.demoKey}\n`, { headers: { "content-type": "text/plain; charset=utf-8", "content-disposition": 'attachment; filename="hippocampus-demo.agekey"', ...securityHeaders() } });
     }
     if (sub === "install") {
       if (!state.signedIn) return redirect(`${base}/auth/login?return=${encodeURIComponent(`${base}/setup/#repo`)}`);

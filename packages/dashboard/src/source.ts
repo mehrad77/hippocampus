@@ -1,4 +1,4 @@
-import type { Catalog, ChroniclePage, EntityDetail, EpisodeData, EpisodeKind, GoalUpdate, Graph, NewPartyMember, Overview, ProposalDecision, QuestUpdate, SearchResult, Shown } from "@hippocampus/core";
+import type { Catalog, ChroniclePage, EntityDetail, EpisodeData, EpisodeKind, GoalUpdate, Graph, NewPartyMember, Overview, ProposalDecision, QuestUpdate, SearchResult, SecretFile, Shown } from "@hippocampus/core";
 
 /** Where the dashboard's data comes from. `setup` means no vault yet: only Session Zero works. */
 export type Mode = "local" | "github" | "mcp" | "worker" | "demo" | "setup";
@@ -117,6 +117,10 @@ export interface DashboardSource {
   addDomains?(ids: string[], via?: string): Promise<{ added: string[] }>;
   /** Set the vault's secrets recipient (an age public key; the private key never comes here). `changed` is false when it already was that one. A different recipient already set is refused unless `replace`. */
   setSecretsRecipient?(recipient: string, via?: string, replace?: boolean): Promise<{ changed: boolean }>;
+  /** Every secret's ciphertext, for the owner's browser to open with their key. Owner only: strip it for anyone else. */
+  secretFiles?(): Promise<{ recipient?: string; files: SecretFile[] }>;
+  /** Swap in every secret re-encrypted (in the owner's browser) to `recipient`, with the recipient, in one commit. */
+  rotateSecrets?(recipient: string, files: { path: string; armored: string }[], via?: string): Promise<{ rotated: number }>;
   /** Set what an agent is responsible for (its authority domains). */
   setAuthority?(agent: string, domains: string[], via?: string): Promise<{ agent: string; authority: string[] }>;
   /** Hosted: where each agent's name stands (agent-claims.ts): held by a connection, free, or released when its app was disconnected. */
@@ -172,6 +176,8 @@ export interface Capabilities {
   domains: boolean;
   /** Set the secrets recipient (`POST actions/secrets`). */
   secrets: boolean;
+  /** Open secrets in the browser and rotate the key (`GET secrets`, `POST actions/rotate-secrets`). */
+  reveal: boolean;
   /** Set what an agent is responsible for (`POST actions/authority`). */
   authority: boolean;
   /** Which names connections hold (`GET names`), and handing one over (`POST actions/hand-over`): hosted only. */
@@ -201,7 +207,7 @@ export interface SessionInfo extends Partial<Omit<SourceInfo, "mode">> {
 
 /** A source with every write taken out: what a viewer of a shared vault gets. */
 export function readOnlySource(source: DashboardSource): DashboardSource {
-  const { rule: _r, goal: _g, quest: _q, proposal: _p, retract: _x, remember: _m, rememberFields: _f, addParty: _a, addDomains: _d, setSecretsRecipient: _k, setAuthority: _s, handOver: _h, introduction: _i, curator: _c, upgradeVault: _u, ...reads } = source;
+  const { rule: _r, goal: _g, quest: _q, proposal: _p, retract: _x, remember: _m, rememberFields: _f, addParty: _a, addDomains: _d, setSecretsRecipient: _k, secretFiles: _sf, rotateSecrets: _rs, setAuthority: _s, handOver: _h, introduction: _i, curator: _c, upgradeVault: _u, ...reads } = source;
   return reads;
 }
 
@@ -218,6 +224,7 @@ export function capabilities(source: DashboardSource | undefined, setup: SetupKi
     party: !!source?.addParty,
     domains: !!source?.addDomains,
     secrets: !!source?.setSecretsRecipient,
+    reveal: !!source?.secretFiles && !!source.rotateSecrets,
     authority: !!source?.setAuthority,
     names: !!source?.nameHolders,
     handOver: !!source?.handOver,

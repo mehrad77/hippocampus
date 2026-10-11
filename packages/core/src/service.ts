@@ -10,6 +10,7 @@ import { resolveInheritance, type InheritedGuideline } from "./inherit.ts";
 import { humanText } from "./markdown.ts";
 import { addPartyMember, applyRuling, assertAgentId, declineProposal, seatSelf, setAuthority, isSecretField, questToGoalUpdate, retractFact, type NewPartyMember, type QuestUpdate } from "./ops.ts";
 import { miniSearcher, type SearcherFactory } from "./search.ts";
+import { AGE_ARMOR, isSecretRef, secretPath } from "./secrets.ts";
 import type { DecisionEntry, DisputeKind, FactStatus, FactValue, Guideline, ProposalState, QuestionEntry, Stats } from "./schema.ts";
 import { StoreConflictError, bufferedStore, type VaultStore } from "./store.ts";
 import { fold, isoDate, localParts, parseFactKey, truncate } from "./text.ts";
@@ -258,6 +259,16 @@ function brief(vault: Vault, e: Entity, opts: ReadAs & { limit?: number } = {}):
 // Above the class: the agent-facing shapes (`FactView`, `EntityView`, `PersonBrief`, …) and their builders.
 
 /** The operations agents perform on memory. Transport-agnostic: used by the MCP server and CLI. */
+/** One secret's ciphertext file, and the fact or proposal (`proposal`: the dispute's slug) it holds, if any. */
+export interface SecretFile {
+  path: string;
+  entity?: string;
+  field?: string;
+  proposal?: string;
+  /** Armored age ciphertext. */
+  armored: string;
+}
+
 export class HippoService {
   constructor(
     readonly store: VaultStore,
@@ -765,6 +776,54 @@ export class HippoService {
       vault.writeFile(HANDBOOK_PATH, renderHandbook(after));
       const message = signed(`config(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): set the secrets recipient`);
       return { message, result: { changed: true, message } };
+    });
+  }
+
+  /**
+   * Every secret's ciphertext, for the owner's browser to open with their key (reveal) or move to a new one (rotate).
+   * Ciphertext only, never a value: decrypting needs the private key, which never reaches the server. Not a read
+   * model (those live in views.ts and mask secrets); the dashboard serves it to the vault's owner alone. Each file
+   * says which fact or proposal it holds, so the browser finds the one to open without a `secret://` ref.
+   */
+  async secretFiles(): Promise<{ recipient?: string; files: SecretFile[] }> {
+    const vault = await this.vault();
+    const folder = vault.config.folders.secrets;
+    const holders = new Map<string, Omit<SecretFile, "path" | "armored">>();
+    for (const e of vault.entities.values()) for (const [field, f] of Object.entries(e.fm.facts)) if (isSecretRef(f.value)) holders.set(secretPath(folder, f.value), { entity: e.slug, field });
+    for (const d of vault.disputes.values())
+      for (const c of d.fm.claims) if (isSecretRef(c.value)) holders.set(secretPath(folder, c.value), { entity: unwrapLink(d.fm.entity), field: d.fm.field, proposal: d.slug });
+    const paths = (await vault.store.list(folder)).filter((p) => p.endsWith(".age"));
+    const files = await Promise.all(paths.map(async (path) => ({ path, ...holders.get(path), armored: (await vault.store.read(path)) ?? "" })));
+    return { ...(vault.config.secrets.recipient ? { recipient: vault.config.secrets.recipient } : {}), files };
+  }
+
+  /**
+   * Move every secret to a new key: the owner's browser decrypted each file with the old key and encrypted it to
+   * `recipient`, and this swaps them in with the recipient in one commit. All or nothing: `files` must be exactly the
+   * secrets there are now, so none is left locked to the old (perhaps compromised) key.
+   */
+  async rotateSecrets(recipient: string, files: { path: string; armored: string }[], opts: { via?: string } = {}): Promise<{ rotated: number; message: string }> {
+    return this.mutate<{ rotated: number; message: string }>(async (vault) => {
+      const folder = vault.config.folders.secrets;
+      for (const f of files) {
+        if (!f.path.startsWith(`${folder}/`) || !f.path.endsWith(".age") || f.path.split("/").some((part) => part === ".." || part === "." || part === ""))
+          throw new VaultError(`${f.path} isn't a secret's file`);
+        if (!f.armored.trimStart().startsWith(AGE_ARMOR)) throw new VaultError(`${f.path}: not age ciphertext`);
+      }
+      const given = files.map((f) => f.path).sort();
+      if (new Set(given).size !== given.length) throw new VaultError("a secret's file is listed twice");
+      const now = (await vault.store.list(folder)).filter((p) => p.endsWith(".age")).sort();
+      if (given.join("\n") !== now.join("\n")) throw new VaultError("the vault's secrets changed since they were loaded (a sleep may have stored a new one); start the rotation again");
+      const raw = await vault.store.read(CONFIG_PATH);
+      if (raw === undefined) throw new VaultError(`no ${CONFIG_PATH}; is this a vault?`);
+      const next = setRecipient(raw, recipient, { replace: true });
+      if (next === raw) throw new VaultError("that is the vault's current key: rotating moves the secrets to a new one");
+      const after = await Vault.load(bufferedStore(vault.store, [{ path: CONFIG_PATH, content: next }]).store, this.opts);
+      vault.writeFile(CONFIG_PATH, next);
+      vault.writeFile(HANDBOOK_PATH, renderHandbook(after));
+      for (const f of files) vault.writeFile(f.path, f.armored.endsWith("\n") ? f.armored : `${f.armored}\n`);
+      const message = signed(`config(${vault.config.human}${opts.via ? ` via ${opts.via}` : ""}): rotate the secrets key (${files.length} secret${files.length === 1 ? "" : "s"})`);
+      return { message, result: { rotated: files.length, message } };
     });
   }
 

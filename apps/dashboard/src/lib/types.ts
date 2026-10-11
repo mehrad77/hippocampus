@@ -42,6 +42,7 @@ export type {
   DecisionEntry,
   QuestionEntry,
   Stats,
+  SecretFile,
 } from "@hippocampus/core";
 export type {
   AgentConnect,

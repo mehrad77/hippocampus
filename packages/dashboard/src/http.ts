@@ -14,6 +14,8 @@ export class HttpError extends Error {
 }
 
 export const MAX_BODY = 64 * 1024;
+/** Rotating the secrets key sends every secret re-encrypted at once; ciphertext is a few hundred bytes each. */
+export const MAX_ROTATE_BODY = 1024 * 1024;
 
 /** Headers for every dashboard response, HTML or JSON. The page CSP itself comes from the Astro build (script and style hashes). */
 export function securityHeaders(): Record<string, string> {
@@ -53,11 +55,11 @@ export function errorResponse(err: unknown, report: ErrorReport = console.error)
  * Parse a JSON POST body. Requiring `application/json` makes every cross-site write a CORS
  * preflight, which this API never answers, so other sites can't post here with your cookies.
  */
-export async function readJson(request: Request): Promise<unknown> {
+export async function readJson(request: Request, max = MAX_BODY): Promise<unknown> {
   if (!/^application\/json\b/i.test(request.headers.get("content-type") ?? "")) throw new HttpError(415, "Send JSON (content-type: application/json)", "UNSUPPORTED_MEDIA_TYPE");
-  if (Number(request.headers.get("content-length") ?? 0) > MAX_BODY) throw new HttpError(413, "Request body too large", "TOO_LARGE");
+  if (Number(request.headers.get("content-length") ?? 0) > max) throw new HttpError(413, "Request body too large", "TOO_LARGE");
   const text = await request.text();
-  if (text.length > MAX_BODY) throw new HttpError(413, "Request body too large", "TOO_LARGE");
+  if (text.length > max) throw new HttpError(413, "Request body too large", "TOO_LARGE");
   if (!text.trim()) return {};
   try {
     return JSON.parse(text) as unknown;
