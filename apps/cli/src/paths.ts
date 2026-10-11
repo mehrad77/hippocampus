@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type Env = Record<string, string | undefined>;
@@ -12,12 +12,20 @@ export const expandHome = (p: string) => (p === "~" || p.startsWith("~/") ? join
 const here = () => dirname(fileURLToPath(import.meta.url));
 
 /**
- * Where `vault-template/` and `seeds/` live: next to the published package (dist/..),
- * or at the repo root when running from source.
+ * Where `vault-template/` and `seeds/` may live, best first, for a module in `dir`. From source
+ * (`apps/cli/src`) the repo root comes first: `pnpm build` leaves a gitignored copy in `apps/cli/`
+ * that goes stale and would otherwise shadow the real one.
  */
+export function assetCandidates(dir: string): string[] {
+  const pkg = resolve(dir, "..");
+  const repo = resolve(dir, "../../..");
+  return basename(dir) === "src" ? [repo, pkg] : [pkg, repo];
+}
+
+/** Next to the published package (dist/..), or at the repo root when running from source. */
 export function assetRoot(): string {
-  const candidates = [resolve(here(), ".."), resolve(here(), "../../..")];
-  return candidates.find((dir) => existsSync(join(dir, "vault-template"))) ?? candidates[1]!;
+  const candidates = assetCandidates(here());
+  return candidates.find((dir) => existsSync(join(dir, "vault-template"))) ?? candidates[0]!;
 }
 
 /** The published package's version (stamped at release), for pinning scheduled runs. */

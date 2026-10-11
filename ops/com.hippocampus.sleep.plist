@@ -16,7 +16,7 @@
   <array>
     <string>npx</string>
     <string>-y</string>
-    <string>@mehrad77/hippocampus@0.1</string>
+    <string>@mehrad77/hippocampus@0</string>
     <string>--vault</string>
     <string>/PATH/TO/vault</string>
     <string>sleep</string>

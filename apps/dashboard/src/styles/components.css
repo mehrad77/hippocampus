@@ -1,3 +1,10 @@
+/*
+ * Shared components every page builds on (loaded with base.css by both layouts): layout helpers,
+ * panels, buttons, forms, seals and chips, stat tiles, lists and tables, dialogs, toasts, feedback
+ * states, tabs, progress, confidential values and proposals, charts, and personalization controls.
+ * Tokens only (see tokens.css); status always pairs a glyph and a word with its color.
+ */
+
 /* ── Layout helpers ───────────────────────────────────────────────────── */
 
 .stack {

@@ -19,6 +19,18 @@ import { link, parseLinks, unwrapLink } from "./wikilink.ts";
 
 // Read models for humans (the dashboard). Agent-facing views stay in service.ts, sized for context windows;
 // these are complete, structured, and mask every secret in one place.
+//
+// In file order:
+// - Shapes: `Shown`, `FactDetail`, cards (`EntityCard`, `GoalCard`), disputes, episodes, chronicle entries,
+//   schema (`TypeView`, `KindView`, `SchemaView`), contacts and cadence, guidelines, party, then the
+//   page models `Overview`, `Catalog`, `EntityDetail`, `Graph`, `ChroniclePage`, `SearchResult`.
+// - Shared helpers: `shown` (the one place secrets and confidential values are masked), `viewContext`,
+//   `relationIndex`, and the card builders `entityCard`, `goalCard`, `factDetail`, `disputeView`, `episodeView`.
+// - Chronicle: `parseChronicleDay`, `chronicleDays`, `readChronicle`, `lastSleepAt`.
+// - Findings for the morning review: `findings`, `upcomingDates`.
+// - Schema, humans, contacts: `schemaView`, `humansView`, `cadenceOf`, `overdueContacts`.
+// - Party: `introductions`.
+// - Views, one per dashboard page: `overview`, `catalog`, `entityDetail`, `graph`, `chroniclePage`.
 
 export const REVIEW_PATH = "_hippo/review.md";
 

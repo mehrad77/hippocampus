@@ -124,7 +124,7 @@ The **curator panel** on the Setup page shows the open run (who holds it, its pr
 For a vault on your machine, `hippo sleep` runs the same steps with a model you configure, and wraps them in git: it pulls first (`git pull --rebase --autostash`), then stages only the paths it changed, never your unrelated edits, commits and pushes.
 
 ```bash
-HIPPO_LLM_PROVIDER=lmstudio HIPPO_LLM_MODEL=google/gemma-4-26b-a4b-qat npx @mehrad77/hippocampus@0.1 -v ~/vaults/my-vault sleep
+HIPPO_LLM_PROVIDER=lmstudio HIPPO_LLM_MODEL=google/gemma-4-26b-a4b-qat npx @mehrad77/hippocampus@0 -v ~/vaults/my-vault sleep
 ```
 
 With `--github you/my-vault`, pull and push collapse into one commit through the GitHub API, with no clone needed. `hippo serve` also offers the curator tools locally, so an agent can curate a local vault the same way.
@@ -164,10 +164,10 @@ npx @mehrad77/hippocampus -v ~/vaults/my-vault sleep --dry-run --limit 3
 **Linux and elsewhere.** A cron line works:
 
 ```bash
-30 3 * * * cd ~/vaults/my-vault && HIPPO_LLM_PROVIDER=ollama HIPPO_LLM_MODEL=<model> npx -y @mehrad77/hippocampus@0.1 sleep >> /tmp/hippocampus-sleep.log 2>&1
+30 3 * * * cd ~/vaults/my-vault && HIPPO_LLM_PROVIDER=ollama HIPPO_LLM_MODEL=<model> npx -y @mehrad77/hippocampus@0 sleep >> /tmp/hippocampus-sleep.log 2>&1
 ```
 
-Pin the version (`@0.1`) wherever you schedule it, so upgrades happen when you choose. Then run `hippo migrate` if the vault format changed. See <Link guide="cli">the command line</Link>.
+Pin the major version (`@0`) wherever you schedule it, so upgrades happen when you choose. Then run `hippo migrate` if the vault format changed. See <Link guide="cli">the command line</Link>.
 
 ## House rules
 

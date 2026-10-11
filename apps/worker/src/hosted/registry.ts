@@ -121,6 +121,7 @@ export type KeyKind = (typeof KEY_KINDS)[number];
 export const KEY_SCOPES = ["read", "remember", "goal", "quest", "curate"] as const;
 export type KeyScope = (typeof KEY_SCOPES)[number];
 
+// Also defined in packages/mcp/src/server.ts (SCOPES) and apps/worker/src/oauth.ts (SCOPE_LABELS).
 /** What each kind of key may do. Only `bound` keys choose (from `read`, `remember`, `goal`). */
 export const KIND_SCOPES: Record<KeyKind, readonly KeyScope[]> = {
   agent: ["read", "remember", "goal"],

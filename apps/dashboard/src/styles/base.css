@@ -1,3 +1,10 @@
+/*
+ * Every page's foundation (loaded by the Shell and Public layouts): box sizing, text scale, body and
+ * the codex's parchment backdrop, headings, links, code, focus ring, `.sr-only` and the skip link;
+ * then the app shell: the rail and its nav links, the main column and page head, the phone topbar
+ * and tab bar, and the signed-in user menu. Colors come from tokens.css only.
+ */
+
 *,
 *::before,
 *::after {
