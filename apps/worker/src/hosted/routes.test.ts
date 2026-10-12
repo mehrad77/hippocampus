@@ -1,5 +1,7 @@
 import type { HostedKeyInfo, HostedMintedKey, HostedSessionInfo, HostedSetupStatus } from "@hippocampus/dashboard";
+import { buildVaultFiles } from "@hippocampus/core";
 import { signWebhook } from "@hippocampus/store-github/testing";
+import { TEMPLATE } from "@hippocampus/template";
 import { beforeAll, describe, expect, it } from "vitest";
 import { browser } from "../testing/browser.ts";
 import { MemoryKV } from "../testing/memory-kv.ts";
@@ -244,6 +246,48 @@ describe("onboarding", () => {
     expect(logs).not.toContain(vaultId);
     expect(logs).not.toContain("status=waitlisted");
     expect(logs).not.toContain("moving to lisbon");
+  });
+
+  it("lists repos by latest push, says which already hold a vault, and reconnects one with just its id", async () => {
+    const { gh, github, routes, player, get, post, approvedPlayer } = await setup();
+    const installation = await approvedPlayer();
+    const vaultFiles = await buildVaultFiles(TEMPLATE, { campaign: "Lisbon relocation", humans: [{ id: "player", github: "player" }], timezone: "Europe/Lisbon", domains: ["housing"] });
+    const add = async (fullName: string, id: number, pushedAt: string, files?: Record<string, string>) => {
+      await gh.addRepo({ fullName, id, files, empty: files === undefined, pushedAt });
+      installation.repos.push(fullName);
+    };
+    gh.at("player/vault").pushedAt = "2026-09-01T08:00:00Z";
+    await add("player/notes", 9101, "2026-10-05T09:00:00Z", { "notes.txt": "x" });
+    await add("player/old-vault", 9100, "2026-10-10T10:00:00Z", vaultFiles);
+    await add("player/starters", 9102, "2026-10-12T11:00:00Z", { "README.md": "# hi\n" });
+    await player(github.installed("player", installation.id));
+
+    // Newest push first, in the status and in the picker; the picker also checks what each holds.
+    const listed = (await get<HostedSetupStatus>(player, "setup/status")).body.installation!.repos;
+    expect(listed.map((r) => r.fullName)).toEqual(["player/starters", "player/old-vault", "player/notes", "player/vault"]);
+    expect(listed[0]).toEqual({ id: 9102, fullName: "player/starters", private: true, pushedAt: "2026-10-12T11:00:00Z" });
+    const picker = (await get<{ repos: Record<string, unknown>[] }>(player, "setup/repos")).body.repos;
+    expect(picker.map((r) => [r.fullName, r.empty, r.adoptable])).toEqual([
+      ["player/starters", true, undefined],
+      ["player/old-vault", false, true],
+      ["player/notes", false, false],
+      ["player/vault", true, undefined],
+    ]);
+
+    // An existing vault needs only its id; one that isn't a vault yet is refused, with nothing written.
+    expect((await post(player, "setup/init", { repoId: 9102, adopt: true })).body).toMatchObject({ code: "NOT_A_VAULT" });
+    expect((await post(player, "setup/init", { repoId: 9100, adopt: true, presets: ["people"] })).body).toMatchObject({ code: "INVALID" });
+    const adopted = await post<{ mode: string; vault: { id: string; status: string } }>(player, "setup/init", { repoId: 9100, adopt: true });
+    expect(adopted.body).toMatchObject({ mode: "adopted", vault: { status: "ready" } });
+    expect(gh.at("player/old-vault").files()["_hippo/config.yaml"]).toBe(vaultFiles["_hippo/config.yaml"]);
+
+    // The app is uninstalled, then installed again (a new installation): the same repo brings the same vault back.
+    await routes.registry.setVaultStatus(adopted.body.vault.id, "disconnected", "uninstalled");
+    const again = gh.addInstallation({ account: { id: PLAYER, login: "player", type: "User" }, repos: ["player/old-vault"] });
+    await player(github.installed("player", again.id));
+    const back = await post<{ mode: string; vault: { id: string; status: string } }>(player, "setup/init", { repoId: 9100, adopt: true });
+    expect(back.body).toMatchObject({ mode: "adopted", vault: { id: adopted.body.vault.id, status: "ready" } });
+    expect((await routes.registry.vaultByRepo(9100))?.installationId).toBe(again.id);
   });
 
   it("refuses a public repo and says why", async () => {

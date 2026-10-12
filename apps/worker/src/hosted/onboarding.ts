@@ -1,11 +1,11 @@
 import { AGE_RECIPIENT, SLUG, presetCatalog, validTimezone, type HumanSetting, type VaultSettings } from "@hippocampus/core";
-import { HttpError, type HostedGitLab, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSetupPort, type HostedSetupStatus, type HostedVault, type SetupItem } from "@hippocampus/dashboard";
+import { HttpError, byRecentPush, type HostedGitLab, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSetupPort, type HostedSetupStatus, type HostedVault, type SetupItem } from "@hippocampus/dashboard";
 import { isConnectApp, keySnippets } from "@hippocampus/dashboard/connect";
-import { GitHubStore } from "@hippocampus/store-github";
+import { EmptyRepositoryError, GitHubStore } from "@hippocampus/store-github";
 import { PRESETS, SEEDS } from "@hippocampus/template";
 import { TOKEN_ID } from "../auth.ts";
 import { keyCredential } from "../oauth.ts";
-import { bootstrapVault } from "./bootstrap.ts";
+import { bootstrapVault, plan } from "./bootstrap.ts";
 import { curatorActionsEnabled, setCuratorActions } from "./curator-actions.ts";
 import type { GitHubApp, InstallationRepo } from "./github-app.ts";
 import { GitLabAuthError, type GitLabAccess, type GitLabProject } from "./gitlab.ts";
@@ -74,18 +74,28 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
     if (id) await deps.onVaultChanged?.(id);
   };
 
-  /** The installation's repos, through a read-only token; with `check`, whether each private one is empty. */
+  /**
+   * The installation's repos, newest push first, through a read-only token. With `check`, each private
+   * one (the first few, so the most recently pushed) says whether it's empty or already holds a vault.
+   */
   async function listRepos(installationId: number, check: boolean): Promise<HostedRepo[]> {
     const { token } = await app.installationToken(installationId, { permissions: { ...READ_ONLY } });
-    const repos = await app.installationRepositories(token);
+    const repos = (await app.installationRepositories(token)).sort(byRecentPush);
+    // The person's disconnected vaults are always checked: they get no pushes, so they would sink below the cap.
+    const lost = new Set(vaults.filter((v) => v.provider === "github" && v.status === "disconnected").map((v) => v.repoId));
     let checked = 0;
     return Promise.all(
       repos.map(async (r): Promise<HostedRepo> => {
-        const base = { id: r.id, fullName: r.fullName, private: r.private };
+        const base = { id: r.id, fullName: r.fullName, private: r.private, ...(r.pushedAt ? { pushedAt: r.pushedAt } : {}) };
         // Public repos are refused anyway, so they aren't worth the requests.
-        if (!check || !r.private || checked++ >= MAX_CHECKED) return base;
-        const info = await new GitHubStore({ repo: r.fullName, branch: r.defaultBranch, token, fetch: app.fetch, apiUrl: app.apiUrl }).info().catch(() => undefined);
-        return info ? { ...base, empty: info.empty } : base;
+        if (!check || !r.private || (!lost.has(r.id) && checked++ >= MAX_CHECKED)) return base;
+        const store = new GitHubStore({ repo: r.fullName, branch: r.defaultBranch, token, fetch: app.fetch, apiUrl: app.apiUrl });
+        // The same plan `bootstrapVault` makes, so what's offered here is what setup will do with it. The listing
+        // also tells an empty repo, so the repo itself needn't be fetched (the installation's list already has it).
+        const paths = await store.list().catch((err: unknown) => (err instanceof EmptyRepositoryError ? [] : undefined));
+        if (!paths) return base;
+        const p = plan(paths);
+        return p.mode === "adopt" ? { ...base, empty: false, adoptable: true } : p.mode === "initialize" ? { ...base, empty: true } : { ...base, empty: false, adoptable: false };
       }),
     );
   }
@@ -173,24 +183,26 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
 
   async function init(body: unknown): Promise<HostedInitResult> {
     const req = initRequest(body, account.login);
-    const settingsOf = { campaign: req.campaign, humans: req.humans, timezone: req.timezone, domains: req.domains, recipient: req.recipient };
+    // What to build from: a new vault's settings, or for an existing vault only a secrets key made at setup.
+    const from = (gitlabLogin?: string) => {
+      if (req.adopt) return { adoptOnly: true, settings: req.recipient ? { recipient: req.recipient } : {} };
+      // On GitLab the person setting the vault up is its primary human by their GitLab username too, unless the request links one.
+      const humans = gitlabLogin && req.humans && !req.humans.some((h) => h.gitlab) ? [{ ...req.humans[0]!, gitlab: gitlabLogin }, ...req.humans.slice(1)] : req.humans;
+      return { settings: { campaign: req.campaign, humans, timezone: req.timezone, domains: req.domains, recipient: req.recipient }, seed: req.seed, presets: req.presets };
+    };
     if (req.provider === "gitlab") {
       const g = needGitLab();
       const found = await gitlabProjects();
       if (!found) throw new HttpError(409, "Connect your GitLab account first.", "NO_GITLAB_CONNECTION");
       const project = found.projects.find((p) => p.id === req.repoId);
       if (!project) throw new HttpError(404, "That isn't one of your GitLab projects with write access (Developer or better), in your personal namespace. Pick another.", "NOT_FOUND");
-      // The person setting the vault up is its primary human by their GitLab username too, unless the request links one.
-      const humans = req.humans && !req.humans.some((h) => h.gitlab) ? [{ ...req.humans[0]!, gitlab: found.login }, ...req.humans.slice(1)] : req.humans;
       const result = await bootstrapVault({
         gitlab: g,
         registry,
         accountId: account.id,
         owner: account.user,
         repo: { id: project.id, fullName: project.fullName, branch: project.defaultBranch },
-        settings: { ...settingsOf, humans },
-        seed: req.seed,
-        presets: req.presets,
+        ...from(found.login),
         now: now(),
       });
       await changed(result.vault.id);
@@ -208,9 +220,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       owner: account.user,
       installationId,
       repo: { id: repo.id, fullName: repo.fullName, branch: repo.defaultBranch },
-      settings: settingsOf,
-      seed: req.seed,
-      presets: req.presets,
+      ...from(),
       now: now(),
     });
     await clearPendingInstallation(kv, account.id);
@@ -321,12 +331,17 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
   };
 }
 
+/** A checked `init` request: a new vault's settings, or (`adopt`) just the repo of a vault that exists. */
+export type InitRequest =
+  | (VaultSettings & { repoId: number; provider: Provider; seed?: string; presets?: string[]; adopt?: undefined })
+  | { repoId: number; provider: Provider; adopt: true; recipient?: string };
+
 /**
  * The vault's settings and the repo for `init`, checked before anything touches GitHub. Takes
  * `name` (or the older `campaign`) and `humans` (or one `human`); the signed-in `login` becomes the
  * first human's `github:` unless the request links someone already.
  */
-export function initRequest(body: unknown, login?: string): VaultSettings & { repoId: number; provider: Provider; seed?: string; presets?: string[] } {
+export function initRequest(body: unknown, login?: string): InitRequest {
   const b = (body ?? {}) as Record<string, unknown>;
   const bad = (msg: string): never => {
     throw new HttpError(400, msg, "INVALID");
@@ -340,6 +355,19 @@ export function initRequest(body: unknown, login?: string): VaultSettings & { re
     return ids;
   };
   if (typeof b.repoId !== "number" || !Number.isSafeInteger(b.repoId) || b.repoId <= 0) bad("repoId: pick one of the installation's repos");
+  // An age X25519 recipient: `age1` and 58 bech32 characters.
+  if (b.recipient !== undefined && (typeof b.recipient !== "string" || !AGE_RECIPIENT.test(b.recipient))) bad("recipient: an age public key (age1…)");
+  if (b.adopt !== undefined && typeof b.adopt !== "boolean") bad("adopt: true or false");
+  if (b.adopt === true) {
+    // Reconnecting a vault that exists: its own config has the name, humans, zone and domains.
+    if (b.seed !== undefined || slugs(b.presets, "presets").length) bad("adopt: an existing vault takes no seed or presets; they shape new vaults");
+    return {
+      repoId: b.repoId as number,
+      provider: (b.provider as Provider | undefined) ?? "github",
+      adopt: true,
+      ...(b.recipient === undefined ? {} : { recipient: b.recipient as string }),
+    };
+  }
   const rawName = b.name ?? b.campaign;
   const name = typeof rawName === "string" ? rawName.trim() : "";
   if (!name || name.length > 120) bad("name: what the memory is about, up to 120 characters");
@@ -371,8 +399,6 @@ export function initRequest(body: unknown, login?: string): VaultSettings & { re
   if (b.seed !== undefined && (typeof b.seed !== "string" || !Object.hasOwn(SEEDS, b.seed))) bad(`seed: choose from ${Object.keys(SEEDS).join(", ")}`);
   const presets = b.presets === undefined ? [] : slugs(b.presets, "presets");
   for (const p of presets) if (!Object.hasOwn(PRESETS, p)) bad(`presets: "${p}" isn't one; choose from ${Object.keys(PRESETS).sort().join(", ")}`);
-  // An age X25519 recipient: `age1` and 58 bech32 characters.
-  if (b.recipient !== undefined && (typeof b.recipient !== "string" || !AGE_RECIPIENT.test(b.recipient))) bad("recipient: an age public key (age1…)");
   return {
     repoId: b.repoId as number,
     provider: (b.provider as Provider | undefined) ?? "github",

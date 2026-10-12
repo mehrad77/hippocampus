@@ -120,9 +120,10 @@ export function hostedIndex(id: HostedStepId): number {
   return Math.max(0, HOSTED_STEPS.findIndex((s) => s.id === id));
 }
 
-export function hostedNeighbors(id: HostedStepId): { prev?: HostedStepDef; next?: HostedStepDef } {
-  const i = hostedIndex(id);
-  return { prev: HOSTED_STEPS[i - 1], next: HOSTED_STEPS[i + 1] };
+export function hostedNeighbors(id: HostedStepId, skip?: HostedStepId): { prev?: HostedStepDef; next?: HostedStepDef } {
+  const steps = HOSTED_STEPS.filter((s) => s.id === id || s.id !== skip);
+  const i = steps.findIndex((s) => s.id === id);
+  return { prev: steps[i - 1], next: steps[i + 1] };
 }
 
 /** What the steps depend on: the server's status, the repo picked here, and whether the campaign form is ready. */
@@ -147,8 +148,17 @@ export function hostedProvider(ctx: HostedContext): HostedProvider {
 export function hostedRepos(ctx: HostedContext): HostedRepoView[] {
   const provider = hostedProvider(ctx);
   const repos = provider === "gitlab" ? (ctx.status.gitlab?.repos ?? []) : (ctx.status.installation?.repos ?? []);
-  const mine = new Set((ctx.status.vaults ?? []).filter((v) => (v.provider ?? "github") === provider).map((v) => v.fullName.toLowerCase()));
-  return mine.size ? repos.map((r) => (mine.has(r.fullName.toLowerCase()) ? { ...r, yours: true } : r)) : repos;
+  const mine = new Map((ctx.status.vaults ?? []).filter((v) => (v.provider ?? "github") === provider).map((v) => [v.fullName.toLowerCase(), v.status]));
+  // A disconnected vault isn't taken: picking its repo again brings it back.
+  return repos.map((r) => {
+    const status = mine.get(r.fullName.toLowerCase());
+    return status === undefined ? r : status === "disconnected" ? { ...r, reconnect: true } : { ...r, yours: true };
+  });
+}
+
+/** The picked repo already holds a vault, so setup adopts it as it is: no name, id or domains to ask for. */
+export function pickedAdoptable(ctx: Pick<HostedContext, "status" | "picked" | "provider">): boolean {
+  return ctx.picked !== undefined && !!hostedRepos({ ...ctx, draftReady: false }).find((r) => r.id === ctx.picked)?.adoptable;
 }
 
 /** Where the setup status comes from; `?add` also lists GitLab projects beside a ready vault. */
@@ -201,7 +211,7 @@ export function hostedLock(id: HostedStepId, ctx: HostedContext): Wording | unde
       return v ? ["Install the app on your repo again first.", "Install the app on your repo again first."] : ["Install the app on your repo first.", "Install the app on your repo first."];
     }
     if (id === "init" && !pickedRepo(ctx)) return ["Pick the repo first.", "Pick the repo first."];
-    if (id === "init" && !ctx.draftReady) return ["Fill in the campaign step first.", "Settle the campaign first."];
+    if (id === "init" && !ctx.draftReady && !pickedAdoptable(ctx)) return ["Fill in the campaign step first.", "Settle the campaign first."];
     return undefined;
   }
   return ready ? undefined : ["This needs your vault. Set it up first; everything after it unlocks.", "This needs the vault. Open it first; everything after it unlocks."];
@@ -227,9 +237,10 @@ export function hostedStepState(id: HostedStepId, ctx: HostedContext): BadgeStat
     case "repo":
       return ready || pickedRepo(ctx) ? "done" : "todo";
     case "campaign":
-      return ready || ctx.draftReady ? "done" : "todo";
+      // An existing vault keeps its own settings, so there's nothing to fill in.
+      return ready || ctx.draftReady ? "done" : pickedAdoptable(ctx) ? "na" : "todo";
     case "init":
-      return ready ? "done" : v?.status === "bootstrapping" ? "wait" : v?.status === "disconnected" ? "error" : "todo";
+      return ready ? "done" : v?.status === "bootstrapping" ? "wait" : v?.status === "disconnected" && !pickedAdoptable(ctx) ? "error" : "todo";
     case "agents":
       return hasKey(s.keys, ["agent", "bound"]) ? "done" : "todo";
     case "curator":
@@ -246,7 +257,7 @@ export function hostedDefaultStep(ctx: HostedContext): HostedStepId {
   if (s.account.status !== "approved") return "access";
   if (v?.status === "ready") return !hasKey(s.keys, ["agent", "bound"]) ? "agents" : !hasKey(s.keys, ["curator"]) && !s.curatorActions ? "curator" : "done";
   if (v?.status === "bootstrapping") return "init";
-  if (hostedConnected(ctx)) return !pickedRepo(ctx) ? "repo" : ctx.draftReady ? "init" : "campaign";
+  if (hostedConnected(ctx)) return !pickedRepo(ctx) ? "repo" : ctx.draftReady || pickedAdoptable(ctx) ? "init" : "campaign";
   if (v?.status === "disconnected") return "install";
   return "create";
 }
@@ -269,6 +280,7 @@ export function repoVerdict(r: HostedRepoView, provider: HostedProvider = "githu
     return { usable: false, tone: "error", tag: "Not private", detail: "Anyone could read your memory there (internal projects are open to every signed-in user of the instance). Set it to Private in the project's visibility settings on GitLab, or pick another." };
   if (!r.private) return { usable: false, tone: "error", tag: "Public", detail: "Anyone could read your memory there. Make it private on GitHub (Settings → Danger Zone → Change visibility), or pick another." };
   if (r.yours) return { usable: false, tone: "optional", tag: "Already yours", detail: "It's one of your vaults here already. Switch to it from the vault menu, or pick another repo." };
+  if (r.reconnect && r.adoptable) return { usable: true, tone: "done", tag: "Reconnect", detail: "Your vault, disconnected: it's reconnected as it is, with nothing to fill in." };
   if (r.adoptable) return { usable: true, tone: "done", tag: "Existing vault", detail: "Already a Hippocampus vault: it's adopted as it is, and only missing rule files are added." };
   if (r.empty === true) return { usable: true, tone: "done", tag: "Empty", detail: "Private and empty: ready to become your vault." };
   if (r.empty === false && r.adoptable === false) return { usable: false, tone: "error", tag: "Has files", detail: "It already holds other files. Pick an empty repo (one with only a README, LICENSE or .gitignore works too)." };
@@ -322,6 +334,8 @@ export const draftReady = (d: CampaignDraft) => Object.values(draftProblems(d)).
 /** The init request for the picked repo. A repo that already holds a vault (`adopt`) is adopted as it is: presets only shape new vaults. */
 export function initRequest(d: CampaignDraft, repoId: number, opts: { adopt?: boolean; provider?: HostedProvider } = {}): HostedInitRequest {
   const provider = opts.provider ?? "github";
+  // An existing vault keeps its own settings, so nothing from the form goes along but a saved secrets key (used if the vault has none).
+  if (opts.adopt) return { ...(provider === "gitlab" ? { provider } : {}), repoId, adopt: true, ...(d.secrets === "create" && d.recipient && d.saved ? { recipient: d.recipient } : {}) };
   return {
     ...(provider === "gitlab" ? { provider } : {}),
     repoId,

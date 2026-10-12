@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HostedStatus } from "../../lib/types.ts";
-import { canAddVault, connectionRows, freeHumans, humanIdFor, inviteProblem, draftProblems, draftReady, forNewVault, hostedDefaultStep, hostedLock, hostedProvider, hostedRepos, hostedStepDef, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, repoVerdict, type HostedContext } from "./hosted.ts";
+import { canAddVault, connectionRows, freeHumans, humanIdFor, inviteProblem, draftProblems, draftReady, forNewVault, hostedDefaultStep, hostedLock, hostedNeighbors, hostedProvider, hostedRepos, hostedStepDef, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, pickedAdoptable, repoVerdict, type HostedContext } from "./hosted.ts";
 
 const base: HostedStatus = {
   kind: "hosted",
@@ -124,6 +124,57 @@ describe("repo picker", () => {
     expect(repoVerdict({ id: 3, fullName: "player/dotfiles", private: true, empty: false, adoptable: false })).toMatchObject({ usable: false, tag: "Has files" });
     expect(repoVerdict({ id: 4, fullName: "player/maybe", private: true, empty: false })).toMatchObject({ usable: true, tone: "warn" });
     expect(repoVerdict({ id: 5, fullName: "player/unchecked", private: true })).toMatchObject({ usable: true, tag: "Not checked" });
+  });
+});
+
+describe("reconnecting a repo that already holds a vault", () => {
+  const vault = { id: "v1", fullName: "player/lisbon-arc", branch: "main", status: "disconnected", reason: "uninstalled" } as const;
+  const existing = { id: 1, fullName: "player/lisbon-arc", private: true, empty: false, adoptable: true };
+  const fresh = { id: 2, fullName: "player/harbor-notes", private: true, empty: true };
+  const reinstalled: HostedStatus = { ...approved, installation: { id: 8, repos: [existing, fresh] }, vault, vaults: [vault] };
+
+  it("skips the naming step: an existing vault keeps its own settings", () => {
+    const resume = ctx(reinstalled, { picked: 1 });
+    expect(pickedAdoptable(resume)).toBe(true);
+    expect(hostedStepState("campaign", resume)).toBe("na");
+    expect(hostedLock("init", resume)).toBeUndefined();
+    expect(hostedStepState("init", resume)).toBe("todo");
+    expect(hostedDefaultStep(resume)).toBe("init");
+    // A new repo still goes through the form, and nothing picked means nothing adopted.
+    const created = ctx(reinstalled, { picked: 2 });
+    expect(pickedAdoptable(created)).toBe(false);
+    expect(hostedStepState("campaign", created)).toBe("todo");
+    expect(hostedLock("init", created)).toBeDefined();
+    expect(hostedDefaultStep(created)).toBe("campaign");
+    expect(pickedAdoptable(ctx(reinstalled))).toBe(false);
+    // The footer steps over the naming step both ways, and the naming step itself still has its neighbours.
+    expect(hostedNeighbors("repo", "campaign").next?.id).toBe("init");
+    expect(hostedNeighbors("init", "campaign").prev?.id).toBe("repo");
+    expect(hostedNeighbors("campaign", "campaign")).toMatchObject({ prev: { id: "repo" }, next: { id: "init" } });
+    expect(hostedNeighbors("repo").next?.id).toBe("campaign");
+  });
+
+  it("offers a disconnected vault's repo again, while a connected one stays taken", () => {
+    const [repo] = hostedRepos(ctx(reinstalled));
+    expect(repo).toMatchObject({ id: 1, reconnect: true });
+    expect(repo!.yours).toBeUndefined();
+    expect(repoVerdict(repo!)).toMatchObject({ usable: true, tag: "Reconnect" });
+    const connected: HostedStatus = { ...reinstalled, vault: { ...vault, status: "ready" }, vaults: [{ ...vault, status: "ready" }] };
+    const [taken] = hostedRepos(ctx(connected));
+    expect(taken).toMatchObject({ id: 1, yours: true });
+    expect(repoVerdict(taken!)).toMatchObject({ usable: false, tag: "Already yours" });
+  });
+
+  it("sends only the repo, so nothing from the form can overwrite the vault's settings", () => {
+    const draft = { ...newDraft("Europe/Lisbon"), campaign: "Lisbon Arc", seed: true, presets: ["people"] };
+    expect(initRequest(draft, 1, { adopt: true })).toEqual({ repoId: 1, adopt: true });
+    expect(initRequest(draft, 1, { adopt: true, provider: "gitlab" })).toEqual({ provider: "gitlab", repoId: 1, adopt: true });
+    // A key made and saved before picking the vault still goes along; the vault keeps its own if it has one.
+    const key = "age1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqs3290gq";
+    expect(initRequest({ ...draft, recipient: key, saved: true }, 1, { adopt: true })).toEqual({ repoId: 1, adopt: true, recipient: key });
+    expect(initRequest({ ...draft, recipient: key }, 1, { adopt: true })).not.toHaveProperty("recipient");
+    expect(initRequest(draft, 2)).toMatchObject({ repoId: 2, campaign: "Lisbon Arc", seed: "example-relocation", presets: ["people"] });
+    expect(initRequest(draft, 2)).not.toHaveProperty("adopt");
   });
 });
 

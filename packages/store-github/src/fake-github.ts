@@ -53,6 +53,8 @@ export interface FakeRepoOptions {
   empty?: boolean;
   files?: Record<string, string>;
   defaultBranch?: string;
+  /** What GitHub reports as the repo's `pushed_at` (ISO). Omitted: not reported. */
+  pushedAt?: string;
 }
 
 const sha1 = async (s: string) => hex(new Uint8Array(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(s))));
@@ -115,6 +117,8 @@ export class FakeRepo {
   readonly refs = new Map<string, string>();
   /** Requests to this repo, as `METHOD path` relative to it. */
   readonly calls: string[] = [];
+  /** `pushed_at` as the API reports it; tests set it to order repos. */
+  pushedAt?: string;
 
   constructor(
     private readonly objects: GitObjects,
@@ -171,7 +175,7 @@ export class FakeRepo {
     if (this.refs.has(this.defaultBranch)) for (const f of this.tree().values()) bytes += this.objects.blobs.get(f.sha)!.length;
     // `size` is in KiB, and 0 for a repo without commits.
     const size = this.empty ? 0 : Math.max(1, Math.ceil(bytes / 1024));
-    return { id: this.id, name, full_name: this.fullName, owner: { login: owner }, private: this.isPrivate, default_branch: this.defaultBranch, size };
+    return { id: this.id, name, full_name: this.fullName, owner: { login: owner }, private: this.isPrivate, default_branch: this.defaultBranch, size, ...(this.pushedAt ? { pushed_at: this.pushedAt } : {}) };
   }
 }
 
@@ -220,6 +224,7 @@ export class FakeGitHub {
 
   async addRepo(opts: FakeRepoOptions): Promise<FakeRepo> {
     const repo = new FakeRepo(this.objects, opts.fullName, opts.id ?? this.nextId++, opts.private ?? true, opts.defaultBranch ?? "main");
+    repo.pushedAt = opts.pushedAt;
     if (!opts.empty) await repo.commit(repo.defaultBranch, await this.objects.putTree(new Map(), Object.entries(opts.files ?? {})), "init");
     this.repos.set(opts.fullName.toLowerCase(), repo);
     return repo;

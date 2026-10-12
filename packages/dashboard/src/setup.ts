@@ -223,7 +223,15 @@ export interface HostedRepo {
   private: boolean;
   /** No commits yet. Unknown (absent) when it wasn't checked, e.g. for public repos. */
   empty?: boolean;
+  /** It already holds a Hippocampus vault (a `_hippo/config.yaml`): picking it adopts that vault as it is. Absent when it wasn't checked. */
+  adoptable?: boolean;
+  /** The last push (ISO), when the host says. The list comes newest first. */
+  pushedAt?: string;
 }
+
+/** The repo list's order: most recently pushed first, repos without a time last, then by name. ISO times sort as text. */
+export const byRecentPush = (a: Pick<HostedRepo, "pushedAt" | "fullName">, b: Pick<HostedRepo, "pushedAt" | "fullName">) =>
+  (b.pushedAt ?? "").localeCompare(a.pushedAt ?? "") || a.fullName.localeCompare(b.fullName);
 
 export interface HostedVault {
   id: string;
@@ -397,9 +405,16 @@ export interface HostedInitRequest {
   human?: string;
   /** The vault's humans, primary first. Without a `github:` on any of them, the signed-in login goes on the first. */
   humans?: { id: string; github?: string; domains?: string[] }[];
-  timezone: string;
-  domains: string[];
+  /** Required unless `adopt`. */
+  timezone?: string;
+  /** Required unless `adopt`. */
+  domains?: string[];
   seed?: "example-relocation";
+  /**
+   * Reconnect a repo that already holds a vault, as it is: only `repoId` (and `provider`) are needed, and the
+   * request fails with `NOT_A_VAULT` if the repo isn't one. Not with `seed` or `presets`, which shape new vaults.
+   */
+  adopt?: boolean;
   /** age public key for `secrets.recipient`. */
   recipient?: string;
   /** Presets to lay over the template, in order (names from `HostedSetupStatus.presets`). */
