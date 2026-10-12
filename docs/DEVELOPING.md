@@ -63,7 +63,16 @@ pnpm --filter @hippocampus/worker dev
 
 Open http://127.0.0.1:8787/. `dev` builds the dashboard and applies the registry migrations to a local D1 first. Pass `--choose` to the fake to pick the user at each sign-in (use two browser profiles), or `--login game-master` to be the other one. Tests use the same pieces in memory: `apps/worker/src/hosted/testing.ts` (the registry on `node:sqlite`, a GitHub App key pair, `FakeGitHub` from `packages/store-github`), and `apps/worker/src/testing/hosted-app.ts`, the whole hosted app as a harness, with `FakeGitLab` from `packages/store-gitlab` when asked.
 
-Never point the dev Worker at a real GitHub App or a real vault repo.
+### Against your own GitHub
+
+To run the dev Worker against real GitHub, use a GitHub App you own for development, never the official instance's App, and a repo you don't use as a vault. The Worker talks to github.com unless `GITHUB_API_URL` and `GITHUB_OAUTH_URL` are set, and it accepts them only on a loopback `HIPPO_PUBLIC_URL`.
+
+1. Create a GitHub App on your personal account. Set its callback URL and setup URL to `http://127.0.0.1:8787/oauth/github/callback`, with "Redirect on update" on. Give it repository permissions for contents and workflows (read and write), and no webhook (leave it inactive; installs and sign-in don't need it).
+2. Generate a private key and convert it to PKCS#8 (see [USAGE.md §8](USAGE.md#running-your-own-instance), step 1). Create a client secret.
+3. Write `apps/worker/.dev.vars` (gitignored) by hand, with your App's values and your GitHub user id in `HIPPO_ADMINS` (find it at `https://api.github.com/users/<login>`). Leave out `GITHUB_API_URL` and `GITHUB_OAUTH_URL`. Start with `HIPPO_PUBLIC_URL=http://127.0.0.1:8787`, and set `GITHUB_APP_SLUG` to the App's URL name.
+4. Run only `pnpm --filter @hippocampus/worker dev`, then open http://127.0.0.1:8787/ and sign in. Install the App on your account, choosing a test repo.
+
+Install the App on the test repo only. Hippocampus's checks reject a non-empty repo without a vault, so an empty private repo is the easiest start.
 
 Worker runtime notes:
 
