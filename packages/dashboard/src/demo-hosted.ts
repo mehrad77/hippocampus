@@ -1,7 +1,7 @@
 import { isConnectApp, keySnippets } from "./connect.ts";
 import { demoPresets } from "./demo-setup.ts";
 import { HttpError, errorResponse, json, readJson, securityHeaders } from "./http.ts";
-import { VAULT_HEADER, type AdminReferrals, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedAgentClaim, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem } from "./setup.ts";
+import { VAULT_HEADER, byRecentPush, type AdminReferrals, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedAgentClaim, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem } from "./setup.ts";
 import { capabilities, readOnlySource, type CuratorStatus, type DashboardSource, type SessionInfo } from "./source.ts";
 
 // The hosted app for `astro dev` (HIPPO_DEMO_HOSTED=1): an in-memory stand-in for the Worker's
@@ -324,8 +324,8 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     if (sub === "repos" && method === "GET") {
       if (!state.installation) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
       // Newest push first, as the real list is.
-      const repos = REPOS.map(({ ageDays, ...r }): HostedRepo => ({ ...r, ...(ageDays === undefined ? {} : { pushedAt: new Date(now().getTime() - ageDays * DAY).toISOString() }) }));
-      return { installation: state.installation, repos: repos.sort((a, b) => (b.pushedAt ?? "").localeCompare(a.pushedAt ?? "")) };
+      const repos = REPOS.map(({ ageDays, ...r }): HostedRepo => ({ ...r, ...(ageDays === undefined ? {} : { pushedAt: ago(ageDays * DAY) }) }));
+      return { installation: state.installation, repos: repos.sort(byRecentPush) };
     }
     if (sub === "init" && method === "POST" && (body as { provider?: unknown } | undefined)?.provider === "gitlab") {
       if (!state.gitlab) throw new HttpError(409, "Connect your GitLab account first.", "NO_GITLAB_CONNECTION");

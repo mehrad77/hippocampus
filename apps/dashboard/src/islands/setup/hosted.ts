@@ -120,9 +120,10 @@ export function hostedIndex(id: HostedStepId): number {
   return Math.max(0, HOSTED_STEPS.findIndex((s) => s.id === id));
 }
 
-export function hostedNeighbors(id: HostedStepId): { prev?: HostedStepDef; next?: HostedStepDef } {
-  const i = hostedIndex(id);
-  return { prev: HOSTED_STEPS[i - 1], next: HOSTED_STEPS[i + 1] };
+export function hostedNeighbors(id: HostedStepId, skip?: HostedStepId): { prev?: HostedStepDef; next?: HostedStepDef } {
+  const steps = HOSTED_STEPS.filter((s) => s.id === id || s.id !== skip);
+  const i = steps.findIndex((s) => s.id === id);
+  return { prev: steps[i - 1], next: steps[i + 1] };
 }
 
 /** What the steps depend on: the server's status, the repo picked here, and whether the campaign form is ready. */
@@ -147,11 +148,12 @@ export function hostedProvider(ctx: HostedContext): HostedProvider {
 export function hostedRepos(ctx: HostedContext): HostedRepoView[] {
   const provider = hostedProvider(ctx);
   const repos = provider === "gitlab" ? (ctx.status.gitlab?.repos ?? []) : (ctx.status.installation?.repos ?? []);
-  const named = (status?: "disconnected") => new Set((ctx.status.vaults ?? []).filter((v) => (v.provider ?? "github") === provider && (status ? v.status === status : v.status !== "disconnected")).map((v) => v.fullName.toLowerCase()));
+  const mine = new Map((ctx.status.vaults ?? []).filter((v) => (v.provider ?? "github") === provider).map((v) => [v.fullName.toLowerCase(), v.status]));
   // A disconnected vault isn't taken: picking its repo again brings it back.
-  const mine = named();
-  const lost = named("disconnected");
-  return mine.size || lost.size ? repos.map((r) => (mine.has(r.fullName.toLowerCase()) ? { ...r, yours: true } : lost.has(r.fullName.toLowerCase()) ? { ...r, reconnect: true } : r)) : repos;
+  return repos.map((r) => {
+    const status = mine.get(r.fullName.toLowerCase());
+    return status === undefined ? r : status === "disconnected" ? { ...r, reconnect: true } : { ...r, yours: true };
+  });
 }
 
 /** The picked repo already holds a vault, so setup adopts it as it is: no name, id or domains to ask for. */
@@ -238,7 +240,7 @@ export function hostedStepState(id: HostedStepId, ctx: HostedContext): BadgeStat
       // An existing vault keeps its own settings, so there's nothing to fill in.
       return ready || ctx.draftReady ? "done" : pickedAdoptable(ctx) ? "na" : "todo";
     case "init":
-      return ready ? "done" : v?.status === "bootstrapping" ? "wait" : v?.status === "disconnected" ? "error" : "todo";
+      return ready ? "done" : v?.status === "bootstrapping" ? "wait" : v?.status === "disconnected" && !pickedAdoptable(ctx) ? "error" : "todo";
     case "agents":
       return hasKey(s.keys, ["agent", "bound"]) ? "done" : "todo";
     case "curator":
@@ -332,8 +334,8 @@ export const draftReady = (d: CampaignDraft) => Object.values(draftProblems(d)).
 /** The init request for the picked repo. A repo that already holds a vault (`adopt`) is adopted as it is: presets only shape new vaults. */
 export function initRequest(d: CampaignDraft, repoId: number, opts: { adopt?: boolean; provider?: HostedProvider } = {}): HostedInitRequest {
   const provider = opts.provider ?? "github";
-  // An existing vault keeps its own settings, so nothing from the form goes along.
-  if (opts.adopt) return { ...(provider === "gitlab" ? { provider } : {}), repoId, adopt: true };
+  // An existing vault keeps its own settings, so nothing from the form goes along but a saved secrets key (used if the vault has none).
+  if (opts.adopt) return { ...(provider === "gitlab" ? { provider } : {}), repoId, adopt: true, ...(d.secrets === "create" && d.recipient && d.saved ? { recipient: d.recipient } : {}) };
   return {
     ...(provider === "gitlab" ? { provider } : {}),
     repoId,

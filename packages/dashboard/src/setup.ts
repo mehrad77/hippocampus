@@ -229,6 +229,10 @@ export interface HostedRepo {
   pushedAt?: string;
 }
 
+/** The repo list's order: most recently pushed first, repos without a time last, then by name. ISO times sort as text. */
+export const byRecentPush = (a: Pick<HostedRepo, "pushedAt" | "fullName">, b: Pick<HostedRepo, "pushedAt" | "fullName">) =>
+  (b.pushedAt ?? "").localeCompare(a.pushedAt ?? "") || a.fullName.localeCompare(b.fullName);
+
 export interface HostedVault {
   id: string;
   fullName: string;

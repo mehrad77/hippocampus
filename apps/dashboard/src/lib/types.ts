@@ -96,6 +96,12 @@ export type { HostedVaults };
  */
 export type HostedRepoView = HostedRepo & { yours?: boolean; reconnect?: boolean };
 
+/** `GET setup/repos`: the pending installation's repos, checked. */
+export interface HostedReposResponse {
+  installation: { id: number };
+  repos: HostedRepoView[];
+}
+
 /** `GET account`. */
 export interface AccountInfo {
   id: number;

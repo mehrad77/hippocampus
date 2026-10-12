@@ -84,7 +84,7 @@ export interface BootstrapOptions {
   seed?: string;
   /** Presets added to a new vault, in order (names of `PRESETS`). Refused for a repo that already holds a vault. */
   presets?: string[];
-  /** Only reconnect a repo that already holds a vault: refuse (409) one that would be initialized. `settings` are then never written. */
+  /** Only reconnect a repo that already holds a vault: refuse (409) one that would be initialized. Of `settings`, only `recipient` is then read. */
   adoptOnly?: boolean;
   /** The vault's clock while building, for reproducible output. */
   now?: Date;
@@ -155,7 +155,7 @@ export interface BootstrapResult {
  */
 export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResult> {
   try {
-    validateVaultSettings(o.settings);
+    if (!o.adoptOnly) validateVaultSettings(o.settings);
   } catch (err) {
     throw new HttpError(400, (err as Error).message, "INVALID");
   }
