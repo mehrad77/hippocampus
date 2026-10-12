@@ -9,7 +9,7 @@ import { getRegion, humanText, parseDoc } from "./markdown.ts";
 import { AGENT_ID, RESERVED_AGENT_IDS, SELF_CARD_FIELDS } from "./ops.ts";
 import { DisputeFrontmatter, type HippoConfig } from "./schema.ts";
 import { loadSchema, schemaFolder, type SchemaRegistry } from "./schema-registry.ts";
-import { isSecretRef, secretFieldOf, secretPath } from "./secrets.ts";
+import { AGE_ARMOR, isSecretRef, secretFieldOf, secretPath } from "./secrets.ts";
 import { bufferedStore, type Change, type VaultStore } from "./store.ts";
 import { slugify } from "./text.ts";
 import { VaultError } from "./vault.ts";
@@ -65,7 +65,6 @@ const SCAFFOLD = ["_hippo/templates", "_hippo/dashboards"];
 const GOAL_EDITABLE = new Set<string>([...GOAL_KEYS, ...LEGACY_GOAL_KEYS, "updated", "updated_by"]);
 /** Regions drawn from frontmatter (checked there), and the ones goal edits own. Any other region (the summary) must stay. */
 const DERIVED_REGIONS = new Set(["facts", "relations", "guidelines", "decisions", "questions", "stats", "clocks", "progress", "objectives"]);
-const AGE_ARMOR = "-----BEGIN AGE ENCRYPTED FILE-----";
 
 const under = (path: string, folder: string) => path.startsWith(`${folder}/`);
 const dirname = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("/")));

@@ -11,7 +11,7 @@ export function Value({ shown, mono }: { shown: Shown; mono?: boolean }) {
   const { v } = useTerms();
   if (shown.secret)
     return (
-      <span className="lock" title={v("Hidden: this value is encrypted in secrets/. Read it with `hippo secrets show` on your machine.", "Encrypted in secrets/. Read it with `hippo secrets show` on your machine.")}>
+      <span className="lock" title={v("Hidden: this value is encrypted in secrets/. Reveal it with your key file (the vault's owner), or read it with `hippo secrets show` on your machine.", "Encrypted in secrets/. Reveal it with your key file, or read it with `hippo secrets show` on your machine.")}>
         <Icon name="lock" size={14} />
         {v("hidden", "sealed")}
       </span>

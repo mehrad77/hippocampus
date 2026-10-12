@@ -9,6 +9,7 @@ Every merge to `main` publishes a release. Per-release notes are generated on [G
 **Breaking: vault format v2.** Run `hippo migrate` in each vault (this release's `hippo validate` still passes a v1 vault, with a hint). Older versions of Hippocampus refuse a migrated vault.
 
 ### Added
+- **Reveal and rotate secrets in the browser** (hosted, owner only): **Reveal** next to a secret fact opens it with the key file you pick, in your browser; **Key compromised? Rotate…** moves every secret to a new key, decrypting and re-encrypting in the browser. The server only handles ciphertext (`GET secrets`, `POST actions/rotate-secrets`).
 - **Sleep tells the person what to do next:** the relay's `done` report and the morning review list `next` steps (secrets recipient missing, goal status changes ignored, failed memories, disputes, suggested domains), each naming the dashboard page that fixes it, and the sleep skill has the agent relay them. Per-episode warnings no longer get lost in agent-run sleep.
 - **Set or replace the secrets key after setup:** a **Secrets key** panel on the hosted Setup page (owner only: make a key in the browser or paste a public key; replacing asks for confirmation), `hippo secrets set`, and `POST actions/secrets`. Adopting an existing vault keeps the key made during setup.
 - **Goal owners:** a new promise with no named owner goes to the party member who reported it, the Goals page has an owner picker, and status changes the sleep ignores get their own review section and say how to fix them.

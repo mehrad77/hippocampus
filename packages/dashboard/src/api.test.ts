@@ -1,4 +1,4 @@
-import { AuditError, HippoService, generateKeyPair, VaultVersionError, createIntroduction, parseDoc, renderIntroduction, type MemoryStore } from "@hippocampus/core";
+import { AuditError, HippoService, decryptSecret, encryptSecret, generateKeyPair, VaultVersionError, createIntroduction, parseDoc, renderIntroduction, type MemoryStore } from "@hippocampus/core";
 import { afterAll, describe, expect, it } from "vitest";
 import { SECRET_PLAINTEXT, now, richStore } from "./__fixtures__/vault.ts";
 import { createDashboardApi, type DashboardApiOptions } from "./api.ts";
@@ -81,7 +81,7 @@ describe("dashboard API: reads", () => {
       humans: ["player"],
       actor: { kind: "human", id: "player" },
       user: { login: "player" },
-      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, secrets: true, authority: true, names: false, handOver: false, introductions: true, curator: false, upgrade: false, setup: "none" },
+      capabilities: { rule: true, goal: true, quest: true, proposal: true, retract: true, remember: true, confidential: true, data: true, party: true, domains: true, secrets: true, reveal: true, authority: true, names: false, handOver: false, introductions: true, curator: false, upgrade: false, setup: "none" },
     });
   });
 
@@ -272,6 +272,22 @@ describe("dashboard API: actions", () => {
     expect(await store.read("_hippo/config.yaml")).toContain(b.recipient);
   });
 
+  it("secrets: hands the owner's browser ciphertext only, and rotates every secret to a new key at once", async () => {
+    const { get, post, store } = harness();
+    const old = await generateKeyPair();
+    const fresh = await generateKeyPair();
+    await post("actions/secrets", { recipient: old.recipient });
+    await store.write("secrets/passport/number.age", await encryptSecret(old.recipient, SECRET_PLAINTEXT));
+    const r = await get("secrets");
+    expect(r).toMatchObject({ status: 200, body: { recipient: old.recipient, files: [{ path: "secrets/passport/number.age", entity: "passport", field: "number" }] } });
+    expect(JSON.stringify(r.body)).not.toContain("secret://");
+    expect(JSON.stringify(r.body)).not.toContain(SECRET_PLAINTEXT);
+    const files = await Promise.all(r.body.files.map(async (f: { path: string; armored: string }) => ({ path: f.path, armored: await encryptSecret(fresh.recipient, await decryptSecret(old.identity, f.armored)) })));
+    expect(await post("actions/rotate-secrets", { recipient: fresh.recipient, files: [] })).toMatchObject({ status: 400, body: { code: "VAULT" } });
+    expect(await post("actions/rotate-secrets", { recipient: fresh.recipient, files })).toMatchObject({ status: 200, body: { rotated: 1 } });
+    expect(await decryptSecret(fresh.identity, (await store.read("secrets/passport/number.age"))!)).toBe(SECRET_PLAINTEXT);
+  });
+
   it("domain: adds the new ones to the config, then lets an agent hold them", async () => {
     const { post, store, get } = harness();
     expect(await post("actions/domain", { ids: ["Health", "housing"] })).toMatchObject({ status: 200, body: { added: ["health"] } });
@@ -364,7 +380,7 @@ describe("dashboard API: errors", () => {
     expect((await get("session")).body).toEqual({
       mode: "setup",
       user: { login: "player" },
-      capabilities: { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, confidential: false, data: false, party: false, domains: false, secrets: false, authority: false, names: false, handOver: false, introductions: false, curator: false, upgrade: false, setup: "none" },
+      capabilities: { rule: false, goal: false, quest: false, proposal: false, retract: false, remember: false, confidential: false, data: false, party: false, domains: false, secrets: false, reveal: false, authority: false, names: false, handOver: false, introductions: false, curator: false, upgrade: false, setup: "none" },
     });
     expect(await get("setup/status")).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
   });
@@ -390,8 +406,8 @@ describe("dashboard API: errors", () => {
   });
 
   it("501 when the source lacks a capability", async () => {
-    const { get, post } = harness({ source: (full) => ({ ...full, rule: undefined, addParty: undefined, addDomains: undefined, setSecretsRecipient: undefined, setAuthority: undefined, introduction: undefined, proposal: undefined, retract: undefined }) });
-    expect((await get("session")).body.capabilities).toEqual({ rule: false, goal: true, quest: true, proposal: false, retract: false, remember: true, confidential: true, data: true, party: false, domains: false, secrets: false, authority: false, names: false, handOver: false, introductions: false, curator: false, upgrade: false, setup: "none" });
+    const { get, post } = harness({ source: (full) => ({ ...full, rule: undefined, addParty: undefined, addDomains: undefined, setSecretsRecipient: undefined, secretFiles: undefined, rotateSecrets: undefined, setAuthority: undefined, introduction: undefined, proposal: undefined, retract: undefined }) });
+    expect((await get("session")).body.capabilities).toEqual({ rule: false, goal: true, quest: true, proposal: false, retract: false, remember: true, confidential: true, data: true, party: false, domains: false, secrets: false, reveal: false, authority: false, names: false, handOver: false, introductions: false, curator: false, upgrade: false, setup: "none" });
     expect(await post("actions/proposal", { dispute: "x", decision: "decline" })).toMatchObject({ status: 501 });
     expect(await post("actions/retract", { entity: "migration-agency", field: "phone" })).toMatchObject({ status: 501 });
     expect(await post("actions/upgrade-vault", {})).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });
@@ -399,6 +415,8 @@ describe("dashboard API: errors", () => {
     expect(await post("actions/party", { id: "job-scout", title: "Job Scout" })).toMatchObject({ status: 501 });
     expect(await post("actions/domain", { ids: ["health"] })).toMatchObject({ status: 501 });
     expect(await post("actions/secrets", { recipient: "age1x" })).toMatchObject({ status: 501 });
+    expect(await get("secrets")).toMatchObject({ status: 501 });
+    expect(await post("actions/rotate-secrets", { recipient: "age1x", files: [] })).toMatchObject({ status: 501 });
     expect(await post("actions/authority", { agent: "home-finder", domains: [] })).toMatchObject({ status: 501 });
     expect(await post("actions/introduction", { agent: "job-scout", decision: "dismiss" })).toMatchObject({ status: 501 });
     expect(await get("curator")).toMatchObject({ status: 501, body: { code: "UNSUPPORTED" } });

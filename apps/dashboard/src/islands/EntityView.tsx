@@ -22,6 +22,7 @@ import { PageGate } from "../ui/PageGate.tsx";
 import { DateText, Empty, Panel, RelTime, Runes, Skeleton, SkeletonPanel } from "../ui/Parts.tsx";
 import { RichText } from "../ui/RichText.tsx";
 import { Seal } from "../ui/Seal.tsx";
+import { RevealSecret } from "../ui/RevealSecret.tsx";
 import { Value } from "../ui/Value.tsx";
 
 /** Names the tab and the top bar: the record's title once known, else the page's name in the reader's voice. */
@@ -140,7 +141,7 @@ function Sheet({ slug, session }: { slug: string; session: SessionInfo }) {
               </p>
             </Panel>
           )}
-          <Ledger facts={d.facts} card={c} me={session.actor?.kind === "human" ? session.actor.id : undefined} canRetract={!!session.capabilities.retract && session.actor?.kind === "human"} slug={c.slug} refs={refs} days={days} voice={voice} />
+          <Ledger facts={d.facts} card={c} me={session.actor?.kind === "human" ? session.actor.id : undefined} canRetract={!!session.capabilities.retract && session.actor?.kind === "human"} canReveal={!!session.capabilities.reveal} slug={c.slug} refs={refs} days={days} voice={voice} />
           {d.guidelines && <Guidelines g={d.guidelines} me={session.actor?.kind === "human" ? session.actor.id : undefined} refs={refs} voice={voice} />}
           <Ties relations={d.relations} slug={c.slug} voice={voice} />
           <Panel title="Your notes" icon="quill" className="sheet-notes">
@@ -267,20 +268,22 @@ interface LedgerProps {
   /** The human the dashboard acts as: their facts read "you", other people's their name. */
   me?: string;
   canRetract: boolean;
+  /** The owner can open secrets in the browser with their key file. */
+  canReveal: boolean;
   slug: string;
   refs: Map<string, Ref>;
   days: Map<string, string>;
   voice: Voice;
 }
 
-function Ledger({ facts, card, me, canRetract, slug, refs, days, voice }: LedgerProps) {
+function Ledger({ facts, card, me, canRetract, canReveal, slug, refs, days, voice }: LedgerProps) {
   const { v } = voice;
   return (
     <Panel title={v("Facts", "Ledger")} icon="codex" aside={facts.length ? <FactTally facts={card.facts} /> : undefined}>
       {facts.length ? (
         <ul className="ledger">
           {facts.map((f) => (
-            <FactRow key={f.field} f={f} me={me} retract={canRetract ? () => retract(slug, f) : undefined} refs={refs} days={days} voice={voice} />
+            <FactRow key={f.field} f={f} me={me} retract={canRetract ? () => retract(slug, f) : undefined} reveal={canReveal && f.secret ? slug : undefined} refs={refs} days={days} voice={voice} />
           ))}
         </ul>
       ) : (
@@ -335,7 +338,7 @@ function Qualifiers({ f, voice: { v } }: { f: FactDetail; voice: Voice }) {
   );
 }
 
-function FactRow({ f, me, retract, refs, days, voice }: { f: FactDetail; me?: string; retract?: () => void; refs: Map<string, Ref>; days: Map<string, string>; voice: Voice }) {
+function FactRow({ f, me, retract, reveal, refs, days, voice }: { f: FactDetail; me?: string; retract?: () => void; reveal?: string; refs: Map<string, Ref>; days: Map<string, string>; voice: Voice }) {
   const { t, v } = voice;
   const [confirm, setConfirm] = useState(false);
   const mine = f.byHuman && (!me || f.by.toLowerCase() === me.toLowerCase());
@@ -353,6 +356,7 @@ function FactRow({ f, me, retract, refs, days, voice }: { f: FactDetail; me?: st
         <span className="ledger__value">
           <Value shown={f} />
         </span>
+        {reveal && <RevealSecret entity={reveal} field={f.field} label={fieldLabel(f.name ?? f.field)} />}
         <Seal status={f.status} />
         {f.dispute && (
           <a className="flag flag--dispute" href={href.page("council", `#${f.dispute}`)}>

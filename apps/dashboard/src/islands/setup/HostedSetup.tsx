@@ -108,7 +108,7 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
         </Panel>
       </div>
 
-      {vault.role === "owner" && session.capabilities.secrets && <SecretsPanel vaultName={vault.fullName.split("/").pop() ?? vault.fullName} />}
+      {vault.role === "owner" && session.capabilities.secrets && <SecretsPanel vaultName={vault.fullName.split("/").pop() ?? vault.fullName} canRotate={!!session.capabilities.reveal} />}
       <HostedVaultsPanel status={status} />
       <MembersPanel session={session} status={status} />
       {vault.role !== "viewer" && <ConnectionsPanel status={status} />}

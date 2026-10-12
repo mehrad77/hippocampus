@@ -514,7 +514,7 @@ export class VaultRuntime {
           ? awaitingUpgrade(config, { mode: "worker", vault }, human, upgradeVault)
           : { ...serviceSource(this.service(), { mode: "worker", vault }, { curator: this.curator, ...(human ? { human } : {}) }), upgradeVault, ...this.names() };
       // Viewers only read; only the owner upgrades the vault or runs the curator's controls.
-      const { upgradeVault: _upgrade, curator: _curator, setSecretsRecipient: _key, ...shared } = full;
+      const { upgradeVault: _upgrade, curator: _curator, setSecretsRecipient: _key, secretFiles: _files, rotateSecrets: _rotate, ...shared } = full;
       const source = role === "viewer" ? readOnlySource(full) : role === "member" ? shared : full;
       const api = createDashboardApi({
         basePath: DASHBOARD_API,

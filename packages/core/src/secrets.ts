@@ -7,6 +7,9 @@ import { Decrypter, Encrypter, armor, generateX25519Identity, identityToRecipien
  */
 export const SECRET_SCHEME = "secret://";
 
+/** How every ciphertext file starts: armored age. */
+export const AGE_ARMOR = "-----BEGIN AGE ENCRYPTED FILE-----";
+
 /** A scoped key's `:` (`pin@org:harbor`) is stored as `~`, which no scope contains, so file names stay portable. */
 export function secretRef(entity: string, field: string): string {
   return `${SECRET_SCHEME}${entity}/${field.replace(/:/g, "~")}`;
