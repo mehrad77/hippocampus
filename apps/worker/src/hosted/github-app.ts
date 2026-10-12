@@ -71,6 +71,8 @@ export interface InstallationRepo {
   fullName: string;
   private: boolean;
   defaultBranch: string;
+  /** When the repo last got a push (ISO), so the latest commit pushed. Absent when GitHub didn't say. */
+  pushedAt?: string;
 }
 
 export interface GitHubAppOptions {
@@ -92,9 +94,10 @@ interface RepoJson {
   full_name: string;
   private: boolean;
   default_branch: string;
+  pushed_at?: string | null;
 }
 
-const toRepo = (r: RepoJson): InstallationRepo => ({ id: r.id, fullName: r.full_name, private: r.private, defaultBranch: r.default_branch });
+const toRepo = (r: RepoJson): InstallationRepo => ({ id: r.id, fullName: r.full_name, private: r.private, defaultBranch: r.default_branch, ...(r.pushed_at ? { pushedAt: r.pushed_at } : {}) });
 
 export class GitHubApp {
   readonly apiUrl: string;

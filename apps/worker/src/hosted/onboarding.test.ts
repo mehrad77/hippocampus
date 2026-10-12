@@ -40,6 +40,27 @@ describe("initRequest", () => {
     expect(bad({ seed: "toString" })).toThrow(/seed/);
   });
 
+  it("takes just the repo to reconnect a vault that exists, with placeholders for what its own config holds", () => {
+    expect(initRequest({ repoId: 9001, adopt: true }, "player")).toEqual({
+      repoId: 9001,
+      provider: "github",
+      campaign: "vault",
+      humans: [{ id: "owner", github: "player" }],
+      timezone: "UTC",
+      domains: [],
+      adopt: true,
+    });
+    expect(initRequest({ repoId: 9001, adopt: true, provider: "gitlab" }).provider).toBe("gitlab");
+    const bad = (body: Record<string, unknown>) => () => initRequest({ repoId: 9001, adopt: true, ...body });
+    expect(bad({ adopt: "yes" })).toThrow(/adopt/);
+    expect(bad({ seed: "example-relocation" })).toThrow(/no seed or presets/);
+    expect(bad({ presets: ["people"] })).toThrow(/no seed or presets/);
+    expect(bad({ recipient: "nope" })).toThrow(/recipient/);
+    expect(initRequest({ repoId: 9001, adopt: true, presets: [] }).adopt).toBe(true);
+    // Without adopt, the form is still required.
+    expect(() => initRequest({ repoId: 9001 })).toThrow(/name/);
+  });
+
   it("takes bundled presets, each once", () => {
     expect(initRequest({ ...BASE, name: "Harbor term", human: "player", presets: ["people", "developer", "people"] }).presets).toEqual(["people", "developer"]);
     expect(initRequest({ ...BASE, name: "Harbor term", human: "player", presets: [] }).presets).toBeUndefined();

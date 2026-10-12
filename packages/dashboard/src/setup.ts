@@ -223,6 +223,10 @@ export interface HostedRepo {
   private: boolean;
   /** No commits yet. Unknown (absent) when it wasn't checked, e.g. for public repos. */
   empty?: boolean;
+  /** It already holds a Hippocampus vault (a `_hippo/config.yaml`): picking it adopts that vault as it is. Absent when it wasn't checked. */
+  adoptable?: boolean;
+  /** The last push (ISO), when the host says. The list comes newest first. */
+  pushedAt?: string;
 }
 
 export interface HostedVault {
@@ -397,9 +401,16 @@ export interface HostedInitRequest {
   human?: string;
   /** The vault's humans, primary first. Without a `github:` on any of them, the signed-in login goes on the first. */
   humans?: { id: string; github?: string; domains?: string[] }[];
-  timezone: string;
-  domains: string[];
+  /** Required unless `adopt`. */
+  timezone?: string;
+  /** Required unless `adopt`. */
+  domains?: string[];
   seed?: "example-relocation";
+  /**
+   * Reconnect a repo that already holds a vault, as it is: only `repoId` (and `provider`) are needed, and the
+   * request fails with `NOT_A_VAULT` if the repo isn't one. Not with `seed` or `presets`, which shape new vaults.
+   */
+  adopt?: boolean;
   /** age public key for `secrets.recipient`. */
   recipient?: string;
   /** Presets to lay over the template, in order (names from `HostedSetupStatus.presets`). */

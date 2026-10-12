@@ -29,7 +29,7 @@ async function setup(opts: { permissions?: Record<string, "read" | "write"> } = 
     installation.repos.push(fullName);
     return { id, fullName };
   };
-  const run = (repo: { id: number; fullName: string }, extra: { seed?: string; presets?: string[] } = {}) =>
+  const run = (repo: { id: number; fullName: string }, extra: { seed?: string; presets?: string[]; adoptOnly?: boolean } = {}) =>
     bootstrapVault({ app, registry, accountId: 4242, installationId: installation.id, repo, settings: SETTINGS, now: NOW, ...extra });
   return { gh, app, registry, installation, addRepo, run };
 }
@@ -142,6 +142,24 @@ describe("bootstrapVault", () => {
     // A new vault takes them.
     await run({ id: 9001, fullName: "player/vault" }, { presets: ["people"] });
     expect(gh.at("player/vault").files()["_hippo/config.yaml"]).toMatch(/^presets: \[people\]$/m);
+  });
+
+  it("with adoptOnly, reconnects a vault as it is and never initializes anything else", async () => {
+    const { gh, registry, run, addRepo } = await setup();
+    const existing = await buildVaultFiles(TEMPLATE, { ...SETTINGS, now: NOW });
+    const config = existing["_hippo/config.yaml"];
+    const repo = await addRepo("player/old-vault", 9004, existing);
+    expect((await run(repo, { adoptOnly: true })).mode).toBe("adopted");
+    // Its own settings stand, whatever the request carried.
+    expect(gh.at("player/old-vault").files()["_hippo/config.yaml"]).toBe(config);
+
+    // An empty repo, or one with only starter files, is a new vault: that needs the form, so nothing is claimed or written.
+    for (const [name, id, files] of [["empty", 9005, undefined], ["starters", 9006, { "README.md": "# hi\n" }]] as const) {
+      const err = await refusal(run(await addRepo(`player/${name}`, id, files), { adoptOnly: true }));
+      expect(err).toMatchObject({ status: 409, code: "NOT_A_VAULT" });
+      expect(gh.at(`player/${name}`).log()).toHaveLength(files ? 1 : 0);
+    }
+    expect((await registry.vaultsOf((await registry.account(4242))!)).map((v) => v.fullName)).toEqual(["player/old-vault"]);
   });
 
   it("knows only its own presets and seeds, not an object's properties", async () => {

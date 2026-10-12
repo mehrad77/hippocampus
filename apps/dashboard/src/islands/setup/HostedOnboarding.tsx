@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { postJson } from "../../lib/api.ts";
 import { invalidate, useResource } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
-import { plural } from "../../lib/format.ts";
+import { plural, relTime } from "../../lib/format.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
 import { switchVault } from "../../lib/vault.ts";
@@ -30,6 +30,7 @@ import {
   initRequest,
   newDraft,
   parseHostedStep,
+  pickedAdoptable,
   repoVerdict,
   STEP_ITEM,
   statusKey,
@@ -132,8 +133,13 @@ export function HostedOnboarding({ session, status: initial, footer, adding }: {
   const fresh = live.data?.kind === "hosted" ? live.data : initial;
   // Adding a vault starts from nothing, whatever vault this tab shows.
   const status = adding ? forNewVault(fresh) : fresh;
-  const ctx: HostedContext = { status, picked, draftReady: draftReady(draft), provider };
-  const host = hostedProvider(ctx);
+  const plain: HostedContext = { status, picked, draftReady: draftReady(draft), provider };
+  const host = hostedProvider(plain);
+  // The status lists the installation's repos unchecked. The picker's own request (the same cached one) also says which
+  // are empty or already hold a vault, which the steps after it need: an existing vault skips the naming step.
+  const checked = useResource<{ installation: { id: number }; repos: HostedRepoView[] }>(host !== "gitlab" && status.installation ? "/setup/repos" : null);
+  const ctx: HostedContext = checked.data && status.installation ? { ...plain, status: { ...status, installation: { ...status.installation, repos: checked.data.repos } } } : plain;
+  const adopting = pickedAdoptable(ctx);
   const steps = stepsFor(host);
   const noun = host === "gitlab" ? "GitLab project" : "GitHub repository";
 
@@ -201,8 +207,8 @@ export function HostedOnboarding({ session, status: initial, footer, adding }: {
               </h2>
               {state && <StateBadge state={state} />}
             </div>
-            <p className="sz-step__lede">{v(...step.lede)}</p>
-            {item && !lock && item.state !== "done" && item.detail && (
+            <p className="sz-step__lede">{adopting && current === "init" ? "This repo already holds a vault. Reconnecting it adds only the rule files it's missing; your notes and settings stay as they are." : v(...step.lede)}</p>
+            {item && !lock && item.state !== "done" && item.detail && !(adopting && !status.vault) && (
               <p className="sz-step__status small">
                 <span className="muted">Right now:</span> {item.detail}
               </p>
@@ -498,7 +504,7 @@ function InstallGitHub({ status }: HostedStepProps) {
         <div className="callout callout--ok" role="status">
           <Icon name="check" />
           <div>
-            <strong>Installed.</strong> The app can see {plural(inst.repos.length, "repository", "repositories")}. <a href="#repo">Pick the repo →</a>
+            <strong>Installed.</strong> The app can see {plural(inst.repos.length, "repository", "repositories")}. {v?.status === "disconnected" ? <>Pick <span className="mono sz-break">{v.fullName}</span> to reconnect it. </> : null}<a href="#repo">Pick the repo →</a>
           </div>
         </div>
       )}
@@ -581,7 +587,10 @@ function RepoStep({ status, ctx, host, picked, setPicked }: HostedStepProps) {
                   <input type="radio" name="hz-repo" value={r.id} checked={picked === r.id} disabled={!verdict.usable} onChange={() => setPicked(r.id)} />
                   <span className="hz-repo__text">
                     <span className="hz-repo__name mono sz-break">{r.fullName}</span>
-                    <span className="small muted">{verdict.detail}</span>
+                    <span className="small muted">
+                      {verdict.detail}
+                      {r.pushedAt ? ` Pushed ${relTime(r.pushedAt)}.` : ""}
+                    </span>
                   </span>
                   <ToneTag tone={verdict.tone} word={verdict.tag} title={verdict.detail} compact />
                 </label>
@@ -603,8 +612,9 @@ function RepoStep({ status, ctx, host, picked, setPicked }: HostedStepProps) {
       </p>
       {picked !== undefined && list.some((r) => r.id === picked) && (
         <div className="row">
-          <a className="btn btn--primary" href="#campaign">
-            Continue <Icon name="chevron" />
+          {/* An existing vault keeps its own settings, so it skips the naming step. */}
+          <a className="btn btn--primary" href={pickedAdoptable(ctx) ? "#init" : "#campaign"}>
+            {pickedAdoptable(ctx) ? "Reconnect this vault" : "Continue"} <Icon name="chevron" />
           </a>
         </div>
       )}
@@ -614,7 +624,7 @@ function RepoStep({ status, ctx, host, picked, setPicked }: HostedStepProps) {
 
 // ── 5. Campaign and the secrets key ────────────────────────────────────────
 
-function CampaignStep({ status, draft, setDraft, identity, setIdentity, session }: HostedStepProps) {
+function CampaignStep({ status, ctx, draft, setDraft, identity, setIdentity, session }: HostedStepProps) {
   const { v } = useTerms();
   const [tried, setTried] = useState(false);
   const zones = useMemo(() => (typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : []), []);
@@ -624,6 +634,18 @@ function CampaignStep({ status, draft, setDraft, identity, setIdentity, session 
         <Icon name="check" />
         <div>
           {v("Set up", "Settled")}: {session.campaign ?? "your vault"} lives in <a href={href.repo(status.vault)}>{status.vault.fullName}</a>. Its settings are in <code>_hippo/config.yaml</code> there; edit them in Obsidian or on {status.vault.provider === "gitlab" ? "GitLab" : "GitHub"}.
+        </div>
+      </div>
+    );
+  if (pickedAdoptable(ctx))
+    return (
+      <div className="callout callout--ok" role="status">
+        <Icon name="check" />
+        <div className="stack sz-tight">
+          <strong>This repo is already a vault, so there's nothing to fill in.</strong>
+          <span>
+            Its name, your id, time zone and domains stay as they are in <code>_hippo/config.yaml</code>. <a href="#init">Reconnect it →</a>
+          </span>
         </div>
       </div>
     );
@@ -826,6 +848,8 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
   const action = useAction();
   const vault = status.vault;
   const repo: HostedRepoView | undefined = hostedRepos(ctx).find((r) => r.id === picked);
+  // An existing vault is taken as it is: no name, id or domains, no template.
+  const adopting = !!repo?.adoptable;
   if (vault?.status === "ready")
     return (
       <div className="callout callout--ok" role="status">
@@ -850,7 +874,7 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
     const res = await action.run(() => postJson<HostedInitResult>("/setup/init", initRequest(draft, picked, { adopt: !!repo?.adoptable, provider: host })));
     if (!res) return;
     if (res.recipientKept) toast("This vault already had its own secrets key, so the one you just made was not used. Keep using the key file that goes with the vault's.", "info");
-    toast(res.mode === "adopted" ? `Adopted ${res.vault.fullName}: your existing vault is connected.` : v(`${res.vault.fullName} is your vault now.`, `${res.vault.fullName} holds the campaign now.`), "ok");
+    toast(res.mode === "adopted" ? (repo?.reconnect ? `Reconnected ${res.vault.fullName}.` : `Adopted ${res.vault.fullName}: your existing vault is connected.`) : v(`${res.vault.fullName} is your vault now.`, `${res.vault.fullName} holds the campaign now.`), "ok");
     setIdentity(undefined);
     clearDraft();
     // The session turns into a vault session; its new scope drops what was cached for the setup-only one.
@@ -870,7 +894,10 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
         </div>
       )}
       <Facts
-        rows={[
+        rows={adopting ? [
+          [host === "gitlab" ? "Project" : "Repository", <span className="mono sz-break">{repo!.fullName}</span>],
+          ["Settings", <span className="muted">kept as they are, from <code>_hippo/config.yaml</code></span>],
+        ] : [
           [host === "gitlab" ? "Project" : "Repository", repo ? <span className="mono sz-break">{repo.fullName}</span> : <a href="#repo">Pick one</a>],
           [v("Name", "Campaign"), draft.campaign.trim() || <a href="#campaign">Not set</a>],
           ["Your id", <span className="mono">{draft.human}</span>],
@@ -882,10 +909,15 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
         ]}
       />
       <p className="small">
-        <a href="#campaign">Change these</a> · <a href="#repo">Pick another {host === "gitlab" ? "project" : "repo"}</a>
+        {adopting ? null : <><a href="#campaign">Change these</a> · </>}
+        <a href="#repo">Pick another {host === "gitlab" ? "project" : "repo"}</a>
       </p>
       <Effects
-        items={[
+        items={adopting ? [
+          ["writes", <>one commit into <code>{repo!.fullName}</code>, only if rule files for agents are missing. Your notes and settings are not touched.</>],
+          ["contacts", host === "gitlab" ? "GitLab, through your GitLab connection." : "GitHub, through the app installed on that repository."],
+          ["never", "touches your other repositories, or sees the private secrets key."],
+        ] : [
           [
             "writes",
             <>
@@ -899,7 +931,7 @@ function InitStep({ status, ctx, host, draft, picked, setIdentity, clearDraft }:
       {action.error !== undefined && <ErrorCallout error={action.error} />}
       <div className="row">
         <button type="button" className="btn btn--primary" onClick={() => void go()} disabled={action.busy || !repo}>
-          <Icon name={action.busy ? "hourglass" : "sparkle"} className={action.busy ? "sz-spin" : undefined} /> {action.busy ? `Setting up… one commit to ${host === "gitlab" ? "GitLab" : "GitHub"}` : v("Set up the vault", "Open the vault")}
+          <Icon name={action.busy ? "hourglass" : "sparkle"} className={action.busy ? "sz-spin" : undefined} /> {action.busy ? (adopting ? "Reconnecting…" : `Setting up… one commit to ${host === "gitlab" ? "GitLab" : "GitHub"}`) : adopting ? "Reconnect vault" : v("Set up the vault", "Open the vault")}
         </button>
       </div>
     </div>

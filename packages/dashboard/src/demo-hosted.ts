@@ -35,7 +35,8 @@ export interface HostedDemoOptions {
   now?: () => Date;
 }
 
-type DemoRepo = HostedRepo & { adoptable?: boolean };
+/** `ageDays`: how long ago the repo was last pushed to, so the list's order and times stay fresh. */
+type DemoRepo = HostedRepo & { ageDays?: number };
 type AccountStatus = "waitlisted" | "approved" | "denied" | "deleted";
 interface DemoAccount {
   id: number;
@@ -55,10 +56,10 @@ const vaultId = (n: number) => `01J9Z8D3M0V${String(n).padStart(15, "0")}`;
 const STAGES: HostedDemoStage[] = ["signed-out", "waitlisted", "requested", "approved", "installed", "ready"];
 
 const REPOS: DemoRepo[] = [
-  { id: 501, fullName: `${LOGIN}/vault`, private: true, empty: true },
-  { id: 502, fullName: `${LOGIN}/lisbon-arc`, private: true, empty: false, adoptable: true },
-  { id: 503, fullName: `${LOGIN}/dotfiles`, private: true, empty: false, adoptable: false },
-  { id: 504, fullName: `${LOGIN}/harbor-notes`, private: false },
+  { id: 501, fullName: `${LOGIN}/vault`, private: true, empty: true, ageDays: 30 },
+  { id: 502, fullName: `${LOGIN}/lisbon-arc`, private: true, empty: false, adoptable: true, ageDays: 1 },
+  { id: 503, fullName: `${LOGIN}/dotfiles`, private: true, empty: false, adoptable: false, ageDays: 9 },
+  { id: 504, fullName: `${LOGIN}/harbor-notes`, private: false, ageDays: 90 },
 ];
 
 const GITLAB_URL = "https://gitlab.example";
@@ -135,8 +136,19 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     return state.vaults.find((v) => v.id === state.last) ?? state.vaults[0];
   };
   const ready = (request: Request) => pick(request)?.status === "ready";
+  /** The person's disconnected vault in this repo, if they have one: setting it up again reconnects it. */
+  const disconnectedAt = (fullName: string, provider: "github" | "gitlab") => state.vaults.find((v) => v.fullName === fullName && (v.provider ?? "github") === provider && v.status === "disconnected");
+  /** Bring a disconnected vault back, as it is. */
+  const reconnect = (fullName: string, provider: "github" | "gitlab"): HostedVault | undefined => {
+    const v = disconnectedAt(fullName, provider);
+    if (!v) return undefined;
+    v.status = "ready";
+    delete v.reason;
+    return v;
+  };
   /** The repo can become a vault: not one already, and the person has room for another. */
   const claimable = (fullName: string, provider: "github" | "gitlab") => {
+    if (disconnectedAt(fullName, provider)) return;
     if (state.vaults.some((v) => v.fullName === fullName && (v.provider ?? "github") === provider)) throw new HttpError(409, `${fullName} is already one of your vaults.`, "ALREADY_VAULT");
     if (owned().length >= VAULT_LIMIT) throw new HttpError(409, `You can have ${VAULT_LIMIT} vaults; remove one first.`, "VAULT_LIMIT");
   };
@@ -311,36 +323,40 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     }
     if (sub === "repos" && method === "GET") {
       if (!state.installation) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
-      return { installation: state.installation, repos: REPOS };
+      // Newest push first, as the real list is.
+      const repos = REPOS.map(({ ageDays, ...r }): HostedRepo => ({ ...r, ...(ageDays === undefined ? {} : { pushedAt: new Date(now().getTime() - ageDays * DAY).toISOString() }) }));
+      return { installation: state.installation, repos: repos.sort((a, b) => (b.pushedAt ?? "").localeCompare(a.pushedAt ?? "")) };
     }
     if (sub === "init" && method === "POST" && (body as { provider?: unknown } | undefined)?.provider === "gitlab") {
       if (!state.gitlab) throw new HttpError(409, "Connect your GitLab account first.", "NO_GITLAB_CONNECTION");
-      const b = (body ?? {}) as { repoId?: unknown; campaign?: unknown };
+      const b = (body ?? {}) as { repoId?: unknown; campaign?: unknown; adopt?: unknown };
       const repo = GITLAB_REPOS.find((r) => r.id === b.repoId);
       if (!repo) throw new HttpError(404, "That isn't one of your GitLab projects with write access (Developer or better), in your personal namespace. Pick another.", "NOT_FOUND");
-      if (typeof b.campaign !== "string" || !b.campaign.trim()) throw new HttpError(400, "campaign: a name, up to 120 characters", "INVALID");
+      if (b.adopt !== true && (typeof b.campaign !== "string" || !b.campaign.trim())) throw new HttpError(400, "campaign: a name, up to 120 characters", "INVALID");
       if (!repo.private) throw new HttpError(400, `${repo.fullName} is not private: anyone could read this memory. Make it private on GitLab (Settings → General → Visibility), then try again.`, "PUBLIC_REPO");
       if (repo.empty === false && !repo.adoptable) throw new HttpError(409, `${repo.fullName} already has files; pick an empty project (or one with only a README, LICENSE or .gitignore).`, "NOT_EMPTY");
+      if (b.adopt === true && !repo.adoptable) throw new HttpError(409, `${repo.fullName} isn't a Hippocampus vault yet. Pick it again to set it up as a new one.`, "NOT_A_VAULT");
       claimable(repo.fullName, "gitlab");
       await new Promise((r) => setTimeout(r, opts.initDelay ?? 1200));
-      const vault = addVault(gitlabVault(repo.fullName));
+      const vault = reconnect(repo.fullName, "gitlab") ?? addVault(gitlabVault(repo.fullName));
       if (state.vaults.length === 1) seedCurator();
       const result: HostedInitResult = { vault, mode: repo.adoptable ? "adopted" : "initialized" };
       return result;
     }
     if (sub === "init" && method === "POST") {
       if (!state.installation) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
-      const b = (body ?? {}) as { repoId?: unknown; name?: unknown; campaign?: unknown };
+      const b = (body ?? {}) as { repoId?: unknown; name?: unknown; campaign?: unknown; adopt?: unknown };
       const name = b.name ?? b.campaign;
       const repo = REPOS.find((r) => r.id === b.repoId);
       if (!repo) throw new HttpError(404, "That repo isn't one the app was installed on. Add it to the installation on GitHub, or pick another.", "NOT_FOUND");
-      if (typeof name !== "string" || !name.trim()) throw new HttpError(400, "name: a name, up to 120 characters", "INVALID");
+      if (b.adopt !== true && (typeof name !== "string" || !name.trim())) throw new HttpError(400, "name: a name, up to 120 characters", "INVALID");
       if (!repo.private) throw new HttpError(400, `${repo.fullName} is public: anyone could read this memory. Make it private on GitHub (Settings → Danger Zone → Change visibility), then try again.`, "PUBLIC_REPO");
       if (repo.empty === false && !repo.adoptable) throw new HttpError(409, `${repo.fullName} already has files; pick an empty repo (or one with only a README, LICENSE or .gitignore).`, "NOT_EMPTY");
+      if (b.adopt === true && !repo.adoptable) throw new HttpError(409, `${repo.fullName} isn't a Hippocampus vault yet. Pick it again to set it up as a new one.`, "NOT_A_VAULT");
       claimable(repo.fullName, "github");
       await new Promise((r) => setTimeout(r, opts.initDelay ?? 1200));
       state.installation = undefined;
-      const vault = addVault({ fullName: repo.fullName, branch: "main", status: "ready", provider: "github" });
+      const vault = reconnect(repo.fullName, "github") ?? addVault({ fullName: repo.fullName, branch: "main", status: "ready", provider: "github" });
       if (state.vaults.length === 1) seedCurator();
       const result: HostedInitResult = { vault, mode: repo.adoptable ? "adopted" : "initialized" };
       return result;

@@ -90,8 +90,11 @@ export type {
 export type HostedStatus = HostedSetupStatus;
 export type { HostedVaults };
 
-/** A repo in `GET setup/repos`; `adoptable` says it already holds a Hippocampus vault, `yours` that it's one of the person's vaults here already. */
-export type HostedRepoView = HostedRepo & { adoptable?: boolean; yours?: boolean };
+/**
+ * A repo in `GET setup/repos` (`adoptable`: it already holds a Hippocampus vault). `yours` says it's one of the
+ * person's connected vaults here already; `reconnect`, one that's disconnected, so picking it brings it back.
+ */
+export type HostedRepoView = HostedRepo & { yours?: boolean; reconnect?: boolean };
 
 /** `GET account`. */
 export interface AccountInfo {

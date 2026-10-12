@@ -84,6 +84,8 @@ export interface BootstrapOptions {
   seed?: string;
   /** Presets added to a new vault, in order (names of `PRESETS`). Refused for a repo that already holds a vault. */
   presets?: string[];
+  /** Only reconnect a repo that already holds a vault: refuse (409) one that would be initialized. `settings` are then never written. */
+  adoptOnly?: boolean;
   /** The vault's clock while building, for reproducible output. */
   now?: Date;
 }
@@ -175,6 +177,7 @@ export async function bootstrapVault(o: BootstrapOptions): Promise<BootstrapResu
 
   const p = info.empty ? ({ mode: "initialize" } as const) : plan(await store.list(), t.provider);
   if (p.mode === "refuse") throw new HttpError(409, `${info.fullName} already has files; pick an empty repo (or one with only a README, LICENSE or .gitignore).`, "NOT_EMPTY");
+  if (o.adoptOnly && p.mode !== "adopt") throw new HttpError(409, `${info.fullName} isn't a Hippocampus vault yet. Pick it again to set it up as a new one.`, "NOT_A_VAULT");
   if (p.mode === "adopt") {
     // Presets shape a new vault; an existing one gets them from its owner (`hippo preset add`), who can review the changes.
     if (o.presets?.length)
