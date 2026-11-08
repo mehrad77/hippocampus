@@ -1,3 +1,5 @@
+<a href="https://0rwx.com/"><img src=".github/ai-x.png" alt="AI:X: made by AI, curated by me" title="AI:X: made by AI, curated by me (0rwx.com)" width="44" align="right"></a>
+
 # 🧠 Hippocampus
 
 Shared, curated memory for a party of AI agents, stored as an **Obsidian vault**. What it holds (people, goals, repos, clients, courses…) is defined by notes in the vault itself, and **presets** shape it for people, software, business, study or a household. It started as a TTRPG campaign wiki, and keeps some of that vocabulary: canon and rumor, the party, the chronicle.
