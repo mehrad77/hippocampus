@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { SLEEP_WORKFLOW } from "../apps/worker/src/hosted/sleep-workflow.ts";
+import { EXAMPLE_MCP_URL, SLEEP_WORKFLOW } from "../apps/worker/src/hosted/sleep-workflow.ts";
 
 // The workflows this repo hands to vaults run in people's private repos, where nobody here sees them
 // fail. actionlint (scripts/lint-workflows.mjs) checks they're valid; these check they still do what
@@ -72,8 +72,12 @@ describe("the hosted app's nightly sleep workflow", () => {
   it("gets no repo permissions and never checks the vault out", () => {
     expect(w.permissions).toEqual({});
     for (const j of jobs) expect(j.permissions).toBeUndefined();
-    expect(steps.map((s) => s.uses)).toEqual(["anthropics/claude-code-action@v1"]);
-    expect(steps.some((s) => s.run)).toBe(false);
+    expect(steps.map((s) => s.uses)).toEqual(["anthropics/claude-code-action@v1", undefined]);
+    // The one shell step only says why a failed run failed: the final result's text, nothing else of the run.
+    const runs = steps.filter((s) => s.run);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ if: "failure() && steps.claude.outputs.execution_file != ''" });
+    expect(String(runs[0]!.run)).toMatch(/^if \[ -f "\$EXECUTION_FILE" \]; then\n\s+jq -r 'last \| select\(\.type == "result"\) \| \.result \/\/ empty' "\$EXECUTION_FILE" \| head -c 2000\nfi\n$/);
   });
 
   it("lets Claude use the vault's MCP tools and nothing else", () => {
@@ -82,13 +86,15 @@ describe("the hosted app's nightly sleep workflow", () => {
     expect(args).not.toMatch(/--(dangerously-skip-permissions|disallowedTools|permission-mode)/);
   });
 
-  it("takes its key and URL from the repo's secrets and variables, never inline", () => {
+  it("takes its keys from the repo's secrets, never inline; only the vault's address is written in", () => {
     const action = steps[0]!.with!;
-    expect(action.anthropic_api_key).toBe("${{ secrets.ANTHROPIC_API_KEY }}");
+    // The API key only without a subscription token: Claude Code would prefer a key it's given.
+    expect(action.anthropic_api_key).toBe("${{ secrets.CLAUDE_CODE_OAUTH_TOKEN == '' && secrets.ANTHROPIC_API_KEY || '' }}");
     expect(action.claude_code_oauth_token).toBe("${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}");
     expect(String(action.claude_args)).toContain('"Authorization":"Bearer ${{ secrets.HIPPO_CURATOR_KEY }}"');
-    expect(String(action.claude_args)).toContain('"url":"${{ vars.HIPPO_MCP_URL }}"');
-    expect(SLEEP_WORKFLOW).not.toMatch(/hippo_[\w-]{20,}|sk-ant-|ghp_|ghs_|https?:\/\/(?!github\.com)/);
+    // The address isn't secret (the curator key authenticates); a variable set by hand still wins.
+    expect(String(action.claude_args)).toContain(`"url":"\${{ vars.HIPPO_MCP_URL || '${EXAMPLE_MCP_URL}' }}"`);
+    expect(SLEEP_WORKFLOW.split(EXAMPLE_MCP_URL).join("")).not.toMatch(/hippo_[\w-]{20,}|sk-ant-|ghp_|ghs_|https?:\/\/(?!github\.com)/);
   });
 });
 

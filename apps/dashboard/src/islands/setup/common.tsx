@@ -168,10 +168,11 @@ export function useAction() {
   return { busy, error, run, clear: useCallback(() => setError(undefined), []) };
 }
 
-export type EffectKind = "writes" | "runs" | "reads" | "contacts" | "shows" | "never";
+export type EffectKind = "writes" | "removes" | "runs" | "reads" | "contacts" | "shows" | "never";
 
 const EFFECT: Record<EffectKind, { icon: IconName; verb: string }> = {
   writes: { icon: "quill", verb: "Writes" },
+  removes: { icon: "close", verb: "Removes" },
   runs: { icon: "hourglass", verb: "Runs" },
   reads: { icon: "eye", verb: "Reads" },
   contacts: { icon: "cloud", verb: "Contacts" },

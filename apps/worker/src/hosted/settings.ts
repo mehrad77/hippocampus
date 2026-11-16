@@ -162,6 +162,12 @@ export const oauthUrlOf = (s: Pick<HostedSettings, "oauthUrl">) => s.oauthUrl ??
 /** Where a person installs the app (and picks the repo). */
 export const installUrl = (s: Pick<HostedSettings, "appSlug" | "oauthUrl">) => `${oauthUrlOf(s)}/apps/${encodeURIComponent(s.appSlug)}/installations/new`;
 
+/**
+ * An installation's settings on GitHub, where its owner approves new permissions. This is the form for
+ * an installation on a personal account; `ActionsApi` switches to /organizations/<org>/ for an organization.
+ */
+export const installationSettingsUrl = (s: Pick<HostedSettings, "oauthUrl">, installationId: number) => `${oauthUrlOf(s)}/settings/installations/${installationId}`;
+
 /** GitHub's new-repo form, prefilled with a private repo named `vault`. */
 export const newRepoUrl = (s: Pick<HostedSettings, "oauthUrl">) =>
   `${oauthUrlOf(s)}/new?${new URLSearchParams({ name: "vault", visibility: "private", description: "Hippocampus memory vault" })}`;

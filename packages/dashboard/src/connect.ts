@@ -193,8 +193,8 @@ export function curatorSnippets(t: ConnectTarget & { repo?: string }): Snippet[]
     out.push({
       label: "GitHub Actions secrets (for the nightly workflow)",
       lang: "bash",
-      code: `gh secret set HIPPO_CURATOR_KEY --repo ${t.repo} --body "${t.key}"\ngh variable set HIPPO_MCP_URL --repo ${t.repo} --body "${t.url}"`,
-      note: "The workflow also needs Claude: a subscription token (claude setup-token, then gh secret set CLAUDE_CODE_OAUTH_TOKEN) or an API key (gh secret set ANTHROPIC_API_KEY).",
+      code: `gh secret set HIPPO_CURATOR_KEY --repo ${t.repo} --body "${t.key}"`,
+      note: "The workflow also needs Claude, as a secret too: a subscription token (claude setup-token, then gh secret set CLAUDE_CODE_OAUTH_TOKEN) or an API key (gh secret set ANTHROPIC_API_KEY). The vault's address is written into the workflow when you turn it on.",
     });
   return out;
 }

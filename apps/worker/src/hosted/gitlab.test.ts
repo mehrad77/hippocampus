@@ -260,6 +260,9 @@ describe("a vault on GitLab", () => {
     expect(res.status).toBe(409);
     expect(((await res.json()) as { code: string }).code).toBe("GITHUB_ONLY");
     expect((await status(h, visit)).curatorActions).toBeUndefined();
+    // Nor its secrets, state or runs.
+    for (const r of [await h.post(visit, "setup/curator-actions/secrets", { claudeToken: "sk-ant-oat01-example" }), await h.post(visit, "setup/curator-actions/run", {}), await h.api(visit, "setup/curator-actions/state")])
+      expect(((await r.json()) as { code: string }).code).toBe("GITHUB_ONLY");
   });
 });
 

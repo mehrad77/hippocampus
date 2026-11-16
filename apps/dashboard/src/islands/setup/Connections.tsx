@@ -1,17 +1,29 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CURATION_PLACES, type CurationPlace } from "@hippocampus/dashboard/connect";
-import { postJson } from "../../lib/api.ts";
+import { ApiError, postJson } from "../../lib/api.ts";
 import { useResource } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
-import type { AccountApp, HostedAgentClaim, HostedCuratorActionsResult, HostedKeyInfo, HostedMintedKey, HostedStatus } from "../../lib/types.ts";
+import type {
+  AccountApp,
+  HostedActionsModel,
+  HostedActionsRunResult,
+  HostedActionsSecretsRequest,
+  HostedActionsSecretsResult,
+  HostedAgentClaim,
+  HostedCuratorActionsResult,
+  HostedCuratorActionsState,
+  HostedKeyInfo,
+  HostedMintedKey,
+  HostedStatus,
+} from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Dialog, Empty, Panel, RelTime, SkeletonPanel } from "../../ui/Parts.tsx";
 import { AddAgent } from "./AddAgent.tsx";
 import { HostedCurator } from "./HostedCurator.tsx";
-import { ConfirmDialog, Effects, ErrorCallout, Facts, refreshSetup, Snippets, ToneTag, useAction } from "./common.tsx";
-import { actionsSnippets, connectionRows, type ConnectionRow } from "./hosted.ts";
+import { ConfirmDialog, Effects, ErrorCallout, Facts, Field, refreshSetup, Snippets, ToneTag, useAction } from "./common.tsx";
+import { ACTIONS_CREDENTIALS, actionsChecklist, actionsRunTone, actionsSnippets, connectionRows, credentialProblem, runEvent, type ActionsCredential, type ConnectionRow } from "./hosted.ts";
 
 const SCOPE_WORDS: Record<string, string> = { read: "read: search and read", remember: "remember: add new memories", goal: "goal: update goals", curate: "curate: run sleep (sees secrets)" };
 
@@ -199,7 +211,8 @@ export function CurationSetup({ status, bare, runs, curated }: { status: HostedS
   const [minted, setMinted] = useState<HostedMintedKey>();
   const action = useAction();
   const mint = async () => {
-    const res = await action.run(() => postJson<HostedMintedKey>("/setup/keys", { kind: "curator", label: CURATION_PLACES.find((p) => p.id === place)!.title }));
+    // A key for Actions made by hand carries the same tag as the card's, so saving on the card later revokes it.
+    const res = await action.run(() => postJson<HostedMintedKey>("/setup/keys", { kind: "curator", label: CURATION_PLACES.find((p) => p.id === place)!.title, ...(place === "actions" ? { app: "github-actions" } : {}) }));
     if (!res) return;
     setMinted(res);
     void refreshSetup();
@@ -209,6 +222,23 @@ export function CurationSetup({ status, bare, runs, curated }: { status: HostedS
     place === "actions" ? snippets.filter((s) => /Actions/.test(s.label)) : place === "schedule" ? snippets.filter((s) => !/Actions|cron/.test(s.label)) : snippets.filter((s) => /cron|prompt/.test(s.label));
   // Once a curator is set up, its runs come first and the setup folds away.
   const configured = curated ?? (!!status.curatorActions || hostedOn || (status.keys ?? []).some((k) => k.kind === "curator"));
+  // The Actions curator, once on, stands above the fold like hosted curation: Run now and its runs stay in sight.
+  const actionsAbove = !bare && github && !!status.curatorActions;
+  // A curator key by hand: for an agent, or for Actions set up with `gh` (the Actions card makes its own).
+  const keyBlock = minted ? (
+    <div className="stack sz-tight">
+      <p className="small">
+        <strong>Your curator key</strong> is in the snippets below; you won't see it again.
+      </p>
+      <Snippets snippets={forPlace.length ? forPlace : snippets} />
+    </div>
+  ) : (
+    <div className="row">
+      <button type="button" className={`btn ${place === "actions" ? "btn--sm" : "btn--primary"}`} onClick={() => void mint()} disabled={action.busy || status.vault?.status !== "ready"}>
+        <Icon name="key" /> {action.busy ? "Creating…" : "Create the curator key"}
+      </button>
+    </div>
+  );
   const setup = (
     <div className="stack">
       <p className="small">
@@ -237,21 +267,15 @@ export function CurationSetup({ status, bare, runs, curated }: { status: HostedS
       {action.error !== undefined && <ErrorCallout error={action.error} />}
       {place === "hosted" ? (
         <HostedCurator status={status} />
-      ) : minted ? (
-        <div className="stack sz-tight">
-          <p className="small">
-            <strong>Your curator key</strong> is in the snippets below; you won't see it again.
-          </p>
-          <Snippets snippets={forPlace.length ? forPlace : snippets} />
-        </div>
+      ) : place === "actions" && github ? (
+        actionsAbove ? (
+          <p className="small muted">The GitHub Actions curator is on: its settings and runs are above.</p>
+        ) : (
+          <ActionsCurator status={status} manual={keyBlock} />
+        )
       ) : (
-        <div className="row">
-          <button type="button" className="btn btn--primary" onClick={() => void mint()} disabled={action.busy || status.vault?.status !== "ready"}>
-            <Icon name="key" /> {action.busy ? "Creating…" : place === "actions" ? "1. Create the curator key" : "Create the curator key"}
-          </button>
-        </div>
+        keyBlock
       )}
-      {place === "actions" && github && <ActionsCurator status={status} />}
       {place === "schedule" && (
         <p className="small muted">
           Connect the bot with its snippet, then have it run the sleep prompt nightly (or whenever you ask). In Claude Code, install the plugin (<code>claude plugin install hippocampus@hippocampus</code>) and ask for <code>/hippocampus:sleep-setup</code>: it creates the nightly task. See{" "}
@@ -265,6 +289,7 @@ export function CurationSetup({ status, bare, runs, curated }: { status: HostedS
     <Panel title={v("Nightly curation", "The nightly sleep")} icon="moonStars" id="curation">
       <div className="stack">
         {hostedOn && <HostedCurator status={status} />}
+        {actionsAbove && <ActionsCurator status={status} manual={keyBlock} />}
         {runs}
         {configured && runs ? (
           <details className="sz-details">
@@ -279,41 +304,281 @@ export function CurationSetup({ status, bare, runs, curated }: { status: HostedS
   );
 }
 
-/** The vault repo's nightly GitHub Actions workflow: what it needs, and turning it on or off. */
-export function ActionsCurator({ status }: { status: HostedStatus }) {
-  const action = useAction();
-  const known = status.curatorActions !== undefined;
-  const on = !!status.curatorActions;
+const isPermissionError = (e: unknown) => e instanceof ApiError && e.code === "NEEDS_PERMISSION";
+
+/**
+ * The vault repo's nightly GitHub Actions workflow, set up from here: turning it on or off, the owner's
+ * Claude token or API key (write-only, straight to the repo's encrypted secrets), the model, the
+ * checklist, Run now and the recent runs. `manual` is the by-hand way: a curator key and `gh` commands.
+ */
+export function ActionsCurator({ status, manual }: { status: HostedStatus; manual?: React.ReactNode }) {
+  const { v } = useTerms();
+  const ready = status.vault?.status === "ready";
+  const [active, setActive] = useState(false);
+  const st = useResource<HostedCuratorActionsState>(ready ? "/setup/curator-actions/state" : null, { poll: active ? 60_000 : undefined });
+  const s = st.data;
+  const runs = s?.runs;
+  // GitHub is asked again each minute only while a run is queued or going: each read costs several API calls.
+  const running = !!runs?.some((r) => r.status !== "completed");
+  useEffect(() => setActive(running), [running]);
+
+  const toggleAct = useAction();
+  const saveAct = useAction();
+  const runAct = useAction();
+  const known = (s?.enabled ?? status.curatorActions) !== undefined;
+  const on = !!(s?.enabled ?? status.curatorActions);
   const repo = status.vault?.fullName ?? "<you>/vault";
-  const toggle = async () => {
-    const res = await action.run(() => postJson<HostedCuratorActionsResult>("/setup/curator-actions", { enable: !on }));
-    if (!res) return;
-    toast(res.enabled ? `The Actions curator is on: ${res.path}.` : "The Actions curator is off.", "ok");
-    await refreshSetup();
+  const perm = s?.needsPermission;
+
+  const savedKind = ACTIONS_CREDENTIALS.find((c) => s?.secrets?.includes(c.secret));
+  const [kind, setKind] = useState<ActionsCredential>("claudeToken");
+  const [value, setValue] = useState("");
+  const [replacing, setReplacing] = useState(false);
+  const [tried, setTried] = useState(false);
+  const savedModel = (s?.workflow?.model ?? "sonnet") as HostedActionsModel;
+  const [model, setModel] = useState<HostedActionsModel>();
+  const pickedModel = model ?? savedModel;
+  const showField = !savedKind || replacing;
+  const problem = showField && (value.trim() || tried) ? credentialProblem(kind, value) : undefined;
+  const checks = actionsChecklist(s, status.curatorActions);
+
+  const reload = () => Promise.all([st.reload(), refreshSetup()]);
+  /** A refusal for permissions: the state's callout says what to do, so it's read again. */
+  const refusedFor = (e: unknown): never => {
+    if (isPermissionError(e)) void st.reload();
+    throw e;
   };
+  const toggle = async () => {
+    // Turning it on writes the workflow with the model picked here.
+    const res = await toggleAct.run(() => postJson<HostedCuratorActionsResult>("/setup/curator-actions", on ? { enable: false } : { enable: true, model: pickedModel }));
+    if (!res) return;
+    if (res.enabled) setModel(undefined);
+    toast(res.enabled ? `The Actions curator is on, with ${res.model === "opus" ? "Opus" : "Sonnet"}: ${res.path}.` : "The Actions curator is off.", "ok");
+    await reload();
+  };
+  const save = async () => {
+    setTried(true);
+    const sending = showField && value.trim() ? value.trim() : undefined;
+    if (showField && !savedKind && !sending) return;
+    if (sending && credentialProblem(kind, sending)) return;
+    const body: HostedActionsSecretsRequest = { ...(sending ? { [kind]: sending } : {}), model: pickedModel };
+    const res = await saveAct.run(() => postJson<HostedActionsSecretsResult>("/setup/curator-actions/secrets", body).catch(refusedFor));
+    // The value leaves the page with the request: the field empties whatever the answer.
+    setValue("");
+    if (!res) return;
+    setReplacing(false);
+    setTried(false);
+    // While the workflow is off the model waits here, for Turn it on.
+    if (res.model) setModel(undefined);
+    toast(sending ? "Saved to your repository's secrets. It won't be shown again." : "Saved.", "ok");
+    await reload();
+  };
+  const runNow = async () => {
+    const res = await runAct.run(() => postJson<HostedActionsRunResult>("/setup/curator-actions/run", {}).catch(refusedFor));
+    if (!res) return;
+    toast("GitHub queued the run. It shows below in a few seconds.", "ok");
+    setActive(true);
+    // GitHub lists a dispatched run a moment after it's queued.
+    setTimeout(() => void st.reload(), 3000);
+  };
+  // A refusal for permissions shows as the callout above, not as an error under the button.
+  const errorOf = (e: unknown) => (e === undefined || isPermissionError(e) ? undefined : e);
+  const busy = toggleAct.busy || saveAct.busy || runAct.busy;
+
   return (
-    <section className="sz-card" aria-labelledby="hz-actions-title">
+    <section className="sz-card hz-actions" aria-labelledby="hz-actions-title">
       <div className="sz-card__head">
         <Icon name="github" />
         <strong id="hz-actions-title">Or let GitHub Actions curate</strong>
         {known ? <ToneTag tone={on ? "done" : "na"} word={on ? "On" : "Off"} title={on ? "The workflow runs every night" : "Not set up"} compact /> : <ToneTag tone="optional" word="Unknown" title="Couldn't check the repository just now" compact />}
       </div>
       <p className="small">
-        A workflow in your vault repository runs the curator there every night, so no machine of yours has to be on. It uses your repository's Actions minutes and your own Anthropic API key, which stays in the repository's secrets. Set these first:
+        {v(
+          "A workflow in your vault's GitHub repository runs the curator every night, so no machine of yours has to be on. It uses the repository's Actions minutes, and Claude paid for by your subscription or your API key.",
+          "A workflow in the campaign's GitHub repository puts the party to sleep every night, so no machine of yours has to be on. It uses the repository's Actions minutes, and Claude paid for by your subscription or your API key.",
+        )}
       </p>
-      <Snippets snippets={actionsSnippets(repo, status.mcpUrl)} />
-      <Effects
-        items={[
-          ["writes", on ? <>removes the workflow (<code>.github/workflows/sleep.yml</code>) from <code>{repo}</code>, in one commit.</> : <>the workflow (<code>.github/workflows/sleep.yml</code>) into <code>{repo}</code>, in one commit.</>],
-          ["never", "sees your Anthropic API key: GitHub hands it to the workflow."],
-        ]}
-      />
-      {action.error !== undefined && <ErrorCallout error={action.error} />}
+
+      {perm && (
+        <div className="callout callout--warn" role="status">
+          <Icon name="lock" />
+          <div className="stack sz-tight">
+            {perm.who === "operator" ? (
+              <span>
+                <strong>This Hippocampus can't manage Actions secrets and runs yet.</strong> Its operator has to add those permissions to its GitHub App first. Until then, use <strong>Set it up by hand</strong> below.
+              </span>
+            ) : (
+              <span>
+                <strong>Hippocampus needs permission to manage Actions secrets and runs on <code>{perm.repo}</code>.</strong> Approve it on GitHub, then come back here.
+              </span>
+            )}
+            <span className="row sz-tight-row">
+              {perm.who !== "operator" && (
+                <a className="btn btn--sm btn--primary" href={perm.settingsUrl} target="_blank" rel="noreferrer">
+                  <Icon name="github" size={16} /> Approve it on GitHub
+                </a>
+              )}
+              <button type="button" className="btn btn--sm" onClick={() => void st.reload()} disabled={st.loading}>
+                Check again
+              </button>
+            </span>
+          </div>
+        </div>
+      )}
+
+      <ul className="hz-actions__checks" aria-label="What the workflow needs">
+        {checks.map((c) => (
+          <li key={c.id}>
+            <ToneTag tone={c.done ? "done" : c.done === false ? "todo" : "optional"} word={c.done ? "Set" : c.done === false ? "To do" : "Unknown"} compact />
+            <span className="small">
+              <strong>{c.word}</strong> <span className="muted">· {c.detail}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+
+      {showField && (
+      <fieldset className="sz-fieldset" disabled={!!perm}>
+        <legend className="label">Pay for Claude with</legend>
+        {ACTIONS_CREDENTIALS.map((c) => (
+          <label key={c.id} className="check sz-scope">
+            <input type="radio" name="hz-actions-kind" checked={kind === c.id} onChange={() => setKind(c.id)} />
+            <span>
+              <strong>{c.word}</strong>
+              <span className="small muted"> · {c.help}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      )}
+
+      <div className="sz-form">
+        {showField ? (
+          <Field label="Your Claude token or Anthropic API key" hint="It goes straight to your repository's encrypted secrets; Hippocampus doesn't keep it. Saving one kind replaces the other." problem={problem}>
+            {(f) => (
+              <span className="sz-keyrow">
+                <input
+                  id={f.id}
+                  className="input mono"
+                  type="password"
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  value={value}
+                  disabled={!!perm}
+                  onChange={(e) => setValue(e.target.value)}
+                  placeholder={ACTIONS_CREDENTIALS.find((c) => c.id === kind)!.placeholder}
+                  aria-describedby={f.describedBy}
+                  aria-invalid={!!problem}
+                />
+                {replacing && (
+                  <button
+                    type="button"
+                    className="btn btn--sm btn--ghost"
+                    onClick={() => {
+                      setValue("");
+                      setReplacing(false);
+                    }}
+                  >
+                    Keep the saved one
+                  </button>
+                )}
+              </span>
+            )}
+          </Field>
+        ) : (
+          <Field label="Your Claude token or Anthropic API key" hint="GitHub keeps it encrypted; nobody can read it back, Hippocampus included.">
+            {(f) => (
+              <span className="row sz-tight-row" id={f.id}>
+                <span className="small">
+                  <Icon name="lock" size={16} /> Saved to your repository's secrets ({savedKind!.word.toLowerCase()})
+                </span>
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  disabled={!!perm}
+                  onClick={() => {
+                    setKind(savedKind!.id);
+                    setReplacing(true);
+                  }}
+                >
+                  Replace it
+                </button>
+              </span>
+            )}
+          </Field>
+        )}
+        <Field label="Model" hint={on ? "Sonnet curates well for less; Opus is the most careful." : "Sonnet curates well for less; Opus is the most careful. Turn it on uses this one."}>
+          {(f) => (
+            <select id={f.id} className="input" value={pickedModel} aria-describedby={f.describedBy} onChange={(e) => setModel(e.target.value as HostedActionsModel)}>
+              <option value="sonnet">Sonnet (default)</option>
+              <option value="opus">Opus</option>
+            </select>
+          )}
+        </Field>
+      </div>
+      <p className="small muted">Hippocampus sets the curator key for you when you save, and a new curator key replaces the one it made before. The vault's address and the model are written into the workflow itself.</p>
+      {errorOf(saveAct.error) !== undefined && <ErrorCallout error={saveAct.error} />}
       <div className="row">
-        <button type="button" className={`btn ${on ? "" : "btn--primary"}`} onClick={() => void toggle()} disabled={action.busy || status.vault?.status !== "ready"}>
-          <Icon name={on ? "close" : "moonStars"} /> {action.busy ? "Working…" : on ? "Turn it off" : "Turn it on"}
+        <button type="button" className="btn btn--primary" onClick={() => void save()} disabled={busy || !ready || !!perm}>
+          <Icon name="lock" /> {saveAct.busy ? "Saving…" : "Save to GitHub"}
         </button>
       </div>
+
+      <Effects
+        items={[
+          ["writes", <>your token or key and a curator key into <code>{repo}</code>'s Actions secrets.</>],
+          on
+            ? ["removes", <>the workflow (<code>.github/workflows/sleep.yml</code>) from <code>{repo}</code> when you turn it off, in one commit. A new model is one commit too.</>]
+            : ["writes", <>the workflow (<code>.github/workflows/sleep.yml</code>), with your vault's address and the model, into <code>{repo}</code> when you turn it on, in one commit.</>],
+          ["never", "keeps your token or key: it passes through once, sealed for GitHub."],
+        ]}
+      />
+      {errorOf(toggleAct.error) !== undefined && <ErrorCallout error={toggleAct.error} />}
+      {errorOf(runAct.error) !== undefined && <ErrorCallout error={runAct.error} />}
+      <div className="row">
+        <button type="button" className={`btn ${on ? "" : "btn--primary"}`} onClick={() => void toggle()} disabled={busy || !ready}>
+          <Icon name={on ? "close" : "moonStars"} /> {toggleAct.busy ? "Working…" : on ? "Turn it off" : "Turn it on"}
+        </button>
+        <button type="button" className="btn" onClick={() => void runNow()} disabled={busy || !ready || !on || !!perm} title={on ? undefined : "Turn the workflow on first"}>
+          <Icon name="hourglass" /> {runAct.busy ? "Starting…" : "Run now"}
+        </button>
+      </div>
+
+      {on && runs !== undefined && (
+        <div className="stack sz-tight">
+          <span className="label">Recent runs</span>
+          {runs.length ? (
+            <ul className="hz-actions__runs">
+              {runs.map((r) => {
+                const t = actionsRunTone(r);
+                return (
+                  <li key={r.id}>
+                    <ToneTag tone={t.tone} word={t.word} title={t.help} compact />
+                    <span className="small muted">
+                      <RelTime at={r.created} /> · {runEvent(r.event)}
+                    </span>
+                    <a className="small" href={r.url} target="_blank" rel="noreferrer">
+                      View on GitHub
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="small muted">No runs yet: the first is tonight at 03:23 UTC, or press Run now.</p>
+          )}
+        </div>
+      )}
+      {st.error !== undefined && !s && <p className="small muted">Couldn't read the repository's Actions settings just now.</p>}
+
+      <details className="sz-details">
+        <summary>Set it up by hand</summary>
+        <div className="stack sz-tight">
+          <p className="small">If you'd rather set the secrets yourself, with the GitHub CLI or on GitHub. Keys and tokens go in as secrets, never variables: variables are plain text anyone with access to the repository can read.</p>
+          {manual}
+          <Snippets snippets={actionsSnippets(repo)} />
+        </div>
+      </details>
     </section>
   );
 }
