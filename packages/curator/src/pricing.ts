@@ -123,7 +123,15 @@ export type StepMix = Record<Step, string>;
  * gates and scores within the margin of the best, checked end to end. Empty until the eval has run
  * (packages/curator/src/eval); hosted curation offers a provider only once its mix is here.
  */
-export const RECOMMENDED: Partial<Record<HostedProvider, { mix: StepMix; checked: string; promptVersion: string }>> = {};
+export const RECOMMENDED: Partial<Record<HostedProvider, { mix: StepMix; checked: string; promptVersion: string }>> = {
+  // 2026-11-16: Haiku, Sonnet and Opus 5.5, 9 cases × 3 repeats. Every model passed every gate; Haiku
+  // scored best or tied on each step at about 1/30 of the cost, end to end 0.803 against Opus's 0.821.
+  anthropic: {
+    mix: { mentions: "claude-haiku-5-5", match: "claude-haiku-5-5", claims: "claude-haiku-5-5", summary: "claude-haiku-5-5" },
+    checked: "2026-11-16",
+    promptVersion: "abd07fd2fa03",
+  },
+};
 
 /**
  * Output tokens a hosted call may generate, per step (reasoning included). Provisional; the eval
