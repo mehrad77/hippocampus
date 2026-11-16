@@ -5,6 +5,11 @@ import { DEMO_STAGES, hostedDemo, type HostedDemoStage } from "../../../../../pa
 import { STEP_MAX_OUTPUT as CURATOR_MAX_OUTPUT } from "../../../../../packages/curator/src/pricing.ts";
 import type { HostedRepoView, HostedStatus } from "../../lib/types.ts";
 import {
+  actionsChecklist,
+  actionsRunTone,
+  actionsSnippets,
+  credentialProblem,
+  runEvent,
   arrival,
   canAddVault,
   capProblems,
@@ -618,5 +623,63 @@ describe("outcomeTone", () => {
     expect(outcomeTone("stopped")).toMatchObject({ tone: "na", word: "stopped" });
     expect(outcomeTone("toString").word).toBe("toString");
     expect(outcomeTone("").word).toBe("Unknown");
+  });
+});
+
+describe("the GitHub Actions curator card", () => {
+  const MCP = "https://hippo.example/mcp/01J9Z8D3M0V000000000000001";
+
+  it("ticks the checklist from the state, and says unknown when GitHub wasn't asked", () => {
+    const done = (s: Parameters<typeof actionsChecklist>[0], enabled?: boolean) => actionsChecklist(s, enabled).map((c) => [c.id, c.done]);
+    expect(done(undefined, true)).toEqual([
+      ["workflow", true],
+      ["credential", undefined],
+      ["curatorKey", undefined],
+      ["address", undefined],
+    ]);
+    expect(done({ enabled: false, mcpUrl: MCP, secrets: [] })).toEqual([
+      ["workflow", false],
+      ["credential", false],
+      ["curatorKey", false],
+      ["address", false],
+    ]);
+    const set = actionsChecklist({ enabled: true, mcpUrl: MCP, secrets: ["CLAUDE_CODE_OAUTH_TOKEN", "HIPPO_CURATOR_KEY"], workflow: { mcpUrl: MCP, model: "sonnet" } }, true);
+    expect(set.every((c) => c.done)).toBe(true);
+    expect(set.find((c) => c.id === "credential")?.detail).toBe("a Claude subscription token");
+    expect(set.find((c) => c.id === "address")?.detail).toBe("the workflow knows your vault's address");
+    // Another vault's address isn't this one's; an older workflow has none written in.
+    const address = (s: Parameters<typeof actionsChecklist>[0]) => actionsChecklist(s, true).find((c) => c.id === "address")!;
+    expect(address({ enabled: true, mcpUrl: MCP, workflow: { mcpUrl: `${MCP}x` } })).toMatchObject({ done: false, detail: expect.stringMatching(/another address/) });
+    expect(address({ enabled: true, mcpUrl: MCP, workflow: {} })).toMatchObject({ done: false, detail: expect.stringMatching(/older workflow/) });
+    expect(actionsChecklist({ enabled: true, outdated: true, mcpUrl: MCP }, true)[0]!.detail).toMatch(/older version/);
+  });
+
+  it("dresses runs: queued and running wait, a failure says where to look", () => {
+    expect(actionsRunTone({ status: "queued", conclusion: null })).toMatchObject({ tone: "wait", word: "Queued" });
+    expect(actionsRunTone({ status: "in_progress", conclusion: null })).toMatchObject({ tone: "wait", word: "Running" });
+    expect(actionsRunTone({ status: "completed", conclusion: "success" })).toMatchObject({ tone: "done" });
+    expect(actionsRunTone({ status: "completed", conclusion: "failure" })).toMatchObject({ tone: "error", word: "Failed: open it on GitHub to see why" });
+    expect(actionsRunTone({ status: "completed", conclusion: "cancelled" })).toMatchObject({ tone: "na", word: "Cancelled" });
+    expect(actionsRunTone({ status: "completed", conclusion: "neutral" })).toMatchObject({ tone: "na", word: "neutral" });
+    expect([runEvent("schedule"), runEvent("workflow_dispatch"), runEvent("push")]).toEqual(["nightly", "Run now", "push"]);
+  });
+
+  it("catches a token pasted as the other kind, or a Hippocampus key", () => {
+    expect(credentialProblem("claudeToken", "sk-ant-oat01-abc")).toBeUndefined();
+    expect(credentialProblem("apiKey", "sk-ant-api03-abc")).toBeUndefined();
+    expect(credentialProblem("apiKey", "sk-ant-oat01-abc")).toMatch(/subscription token/);
+    expect(credentialProblem("claudeToken", "sk-ant-api03-abc")).toMatch(/API key/);
+    expect(credentialProblem("apiKey", "hippo_abc")).toMatch(/Hippocampus key/);
+    expect(credentialProblem("apiKey", "two words")).toMatch(/one line/);
+    expect(credentialProblem("apiKey", "  ")).toMatch(/Paste/);
+  });
+
+  it("keeps keys under gh secret set in the by-hand commands, never gh variable set", () => {
+    const snippets = actionsSnippets("player/vault");
+    expect(snippets).toHaveLength(1);
+    const [secrets] = snippets;
+    for (const name of ["HIPPO_CURATOR_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]) expect(secrets!.code).toContain(`gh secret set ${name} --repo player/vault`);
+    expect(secrets!.code).not.toMatch(/^gh variable set/m);
+    expect(secrets!.code).not.toMatch(/# or ANTHROPIC_API_KEY/);
   });
 });

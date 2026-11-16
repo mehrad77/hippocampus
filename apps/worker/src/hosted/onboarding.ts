@@ -7,17 +7,17 @@ import { PRESETS, SEEDS } from "@hippocampus/template";
 import { TOKEN_ID } from "../auth.ts";
 import { keyCredential } from "../oauth.ts";
 import { bootstrapVault, plan } from "./bootstrap.ts";
-import { curatorActionsEnabled, setCuratorActions } from "./curator-actions.ts";
+import { ACTIONS_CURATOR_APP, ACTIONS_DISPATCH, ACTIONS_WRITE_SECRETS, ActionsApi, credential, curatorActionsEnabled, curatorActionsState, setCuratorActions } from "./curator-actions.ts";
 import type { GitHubApp, InstallationRepo } from "./github-app.ts";
 import { GitLabAuthError, type GitLabAccess, type GitLabProject } from "./gitlab.ts";
 import type { AgentClaim } from "./agent-claims.ts";
-import { MAX_VAULTS_PER_USER, keyRequest, type DisconnectReason, type MemberVault, type Provider, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
+import { KIND_SCOPES, MAX_VAULTS_PER_USER, keyRequest, type DisconnectReason, type MemberVault, type Provider, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
 import { clearPendingInstallation, pendingInstallation, type SessionKV } from "./session.ts";
 import { GITLAB_CONNECT_PATH } from "./gitlab.ts";
 import type { Caller } from "./routes.ts";
-import { hostedCurationAvailable, installUrl, newRepoUrl, oauthUrlOf, type HostedSettings } from "./settings.ts";
+import { hostedCurationAvailable, installUrl, installationSettingsUrl, newRepoUrl, oauthUrlOf, type HostedSettings } from "./settings.ts";
 import { PRICES, RECOMMENDED, STEPS, priceOf, type HostedProvider, type StepMix } from "@hippocampus/curator";
-import type { HostedCuratorStatus, HostedVaultCurator } from "@hippocampus/dashboard";
+import { ACTIONS_MODELS, type HostedActionsModel, type HostedActionsRunResult, type HostedActionsSecret, type HostedActionsSecretsResult, type HostedCuratorStatus, type HostedVaultCurator } from "@hippocampus/dashboard";
 import type { StartResult } from "./hosted-curator.ts";
 import { HOSTED_PROVIDERS, checkKey, type LlmAccess, type LlmSettings } from "./llm-access.ts";
 
@@ -327,6 +327,66 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
   /** Members manage only the keys they made; the owner, all of them. */
   const keyOwner = (v: MemberVault) => (v.role === "owner" ? undefined : account.user);
 
+  /** The picked vault, for the GitHub Actions curator: the owner's, ready, on GitHub. */
+  function actionsVault(): MemberVault {
+    const v = pickedVault(["owner"], "set up its curator");
+    if (v.status !== "ready") throw new HttpError(409, "This vault isn't ready.", "NOT_READY");
+    if (v.provider !== "github") throw new HttpError(409, "Nightly sleep on a schedule runs on GitHub Actions; for a GitLab vault, run sleep with your own curator agent.", "GITHUB_ONLY");
+    return v;
+  }
+
+  /**
+   * `POST curator-actions/secrets`: the owner's Claude credential (one kind, deleting the other), a new
+   * curator key for Actions (revoking the one it replaces), written through the GitHub App, and the
+   * model, into the workflow file. The credential passes through once, sealed for GitHub; nothing here
+   * keeps or echoes it.
+   */
+  async function saveActionsSecrets(body: unknown): Promise<HostedActionsSecretsResult> {
+    const b = (body ?? {}) as { claudeToken?: unknown; apiKey?: unknown; model?: unknown };
+    if (b.claudeToken !== undefined && b.apiKey !== undefined) throw new HttpError(400, "Send claudeToken or apiKey, not both: the workflow uses one.", "INVALID");
+    if (b.model !== undefined && !ACTIONS_MODELS.includes(b.model as HostedActionsModel)) throw new HttpError(400, `model: ${ACTIONS_MODELS.join(" or ")}`, "INVALID");
+    const model = b.model as HostedActionsModel | undefined;
+    const kind: HostedActionsSecret | undefined = b.claudeToken !== undefined ? "CLAUDE_CODE_OAUTH_TOKEN" : b.apiKey !== undefined ? "ANTHROPIC_API_KEY" : undefined;
+    const value = kind === "CLAUDE_CODE_OAUTH_TOKEN" ? credential(b.claudeToken, "claudeToken") : kind ? credential(b.apiKey, "apiKey") : undefined;
+    const vault = actionsVault();
+    const api = new ActionsApi(app, vault, ACTIONS_WRITE_SECRETS, installationSettingsUrl(settings, vault.installationId));
+    await api.ready();
+    // The keys the app made for Actions before: tagged with its app, since a curator key names no agent.
+    const previous = (await registry.keys(vault.id)).filter((k) => k.kind === "curator" && k.app === ACTIONS_CURATOR_APP);
+    // A model-only change keeps the key, unless there isn't one anymore (revoked under Connected apps).
+    const rotate = value !== undefined || !previous.length;
+    const saved: HostedActionsSecret[] = [];
+    const removed: HostedActionsSecret[] = [];
+    // Minted first, so a vault at its key limit fails before anything on GitHub changes.
+    const minted = rotate ? await registry.mintKey(vault.id, { kind: "curator", label: "GitHub Actions", scopes: [...KIND_SCOPES.curator], app: ACTIONS_CURATOR_APP }, account.user) : undefined;
+    try {
+      const repoKey = await api.publicKey();
+      if (kind && value !== undefined) {
+        await api.putSecret(kind, value, repoKey);
+        saved.push(kind);
+        // Only one kind is ever set: with both, Claude Code would pick the API key over a subscription.
+        const other: HostedActionsSecret = kind === "CLAUDE_CODE_OAUTH_TOKEN" ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN";
+        if (await api.deleteSecret(other)) removed.push(other);
+      }
+      if (minted) {
+        await api.putSecret("HIPPO_CURATOR_KEY", minted.token, repoKey);
+        saved.push("HIPPO_CURATOR_KEY");
+      }
+    } catch (err) {
+      if (minted) await registry.revokeKey(vault.id, minted.key.id).catch(() => undefined);
+      throw err;
+    }
+    if (minted && previous.length) {
+      for (const k of previous) await registry.revokeKey(vault.id, k.id).catch(() => undefined);
+      await deps.releaseCredentials?.(vault.id, previous.map((k) => keyCredential(k.id)));
+      await changed(vault.id);
+    }
+    // The model lives in the workflow file: rewritten (one commit) only if it's on and the text changes.
+    const on = model ? await curatorActionsEnabled(app, vault) : false;
+    const now = on ? (await setCuratorActions(app, vault, true, { mcpUrl, model })).model : undefined;
+    return { saved, removed, curatorKey: minted ? "replaced" : "kept", ...(now ? { model: now } : {}) };
+  }
+
   /** Forget one of the person's vaults: its keys, connector grants and cache. The repo stays as it is. */
   async function removeVault(body: unknown): Promise<{ ok: true }> {
     const b = (body ?? {}) as { id?: unknown; confirm?: unknown };
@@ -400,12 +460,23 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
         return minted;
       }
       if (path === "curator-actions" && method === "POST") {
-        const enable = (body as { enable?: unknown } | undefined)?.enable;
+        const { enable, model } = (body ?? {}) as { enable?: unknown; model?: unknown };
         if (typeof enable !== "boolean") throw new HttpError(400, "enable: true or false", "INVALID");
-        const vault = pickedVault(["owner"], "set up its curator");
-        if (vault.status !== "ready") throw new HttpError(409, "This vault isn't ready.", "NOT_READY");
-        if (vault.provider !== "github") throw new HttpError(409, "Nightly sleep on a schedule runs on GitHub Actions; for a GitLab vault, run sleep with your own curator agent.", "GITHUB_ONLY");
-        return setCuratorActions(app, vault, enable);
+        if (model !== undefined && !ACTIONS_MODELS.includes(model as HostedActionsModel)) throw new HttpError(400, `model: ${ACTIONS_MODELS.join(" or ")}`, "INVALID");
+        return setCuratorActions(app, actionsVault(), enable, { mcpUrl, ...(model ? { model: model as string } : {}) });
+      }
+      if (path === "curator-actions/state" && method === "GET") {
+        const vault = actionsVault();
+        return curatorActionsState(app, vault, { mcpUrl, settingsUrl: installationSettingsUrl(settings, vault.installationId) });
+      }
+      if (path === "curator-actions/secrets" && method === "POST") return saveActionsSecrets(body);
+      if (path === "curator-actions/run" && method === "POST") {
+        const vault = actionsVault();
+        const api = new ActionsApi(app, vault, ACTIONS_DISPATCH, installationSettingsUrl(settings, vault.installationId));
+        await api.ready();
+        await api.dispatch();
+        const queued: HostedActionsRunResult = { queued: true };
+        return queued;
       }
       if ((path === "curator-llm" || path.startsWith("curator-llm/")) && method === "POST") {
         // The owner's key pays for the vault's curation: only the owner sets it up.
@@ -586,7 +657,7 @@ function items(s: HostedSetupStatus): SetupItem[] {
     if (s.curatorActions !== undefined)
       out.push(
         s.curatorActions
-          ? { id: "curator", title: "Nightly sleep", state: "done", detail: "GitHub Actions runs sleep every night with Claude; it needs the repo secrets and variables its workflow lists", how: "performed" }
+          ? { id: "curator", title: "Nightly sleep", state: "done", detail: "GitHub Actions runs sleep every night with Claude, with the token or key you saved under Nightly curation", how: "performed" }
           : { id: "curator", title: "Nightly sleep", state: "optional", detail: "Run sleep with your own curator agent, or have GitHub Actions run it nightly with Claude", how: "performed" },
       );
   }

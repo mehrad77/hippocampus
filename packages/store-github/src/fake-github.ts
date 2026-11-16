@@ -113,12 +113,35 @@ class GitObjects {
 }
 
 /** One repository: its branches and settings. Its git objects live in the shared store. */
+/** A workflow run as `GET actions/workflows/{file}/runs` reports it. */
+export interface FakeRun {
+  id: number;
+  status: string;
+  conclusion: string | null;
+  created_at: string;
+  html_url: string;
+  event: string;
+}
+
+/** The repo's GitHub Actions settings: secrets (sealed, as sent), runs and dispatches. */
+export class FakeActions {
+  /** The repo's secrets key, base64 (X25519). Tests that open sealed secrets set their own. */
+  publicKey = { key_id: "568250167242549743", key: btoa(String.fromCharCode(...new Uint8Array(32))) };
+  readonly secrets = new Map<string, { encrypted_value: string; key_id: string; updated_at: string }>();
+  /** Newest first, per workflow file. */
+  readonly runs = new Map<string, FakeRun[]>();
+  readonly dispatches: { workflow: string; ref: string }[] = [];
+  /** Answer this status to every Actions request, e.g. 500 to play GitHub having a bad minute. */
+  failWith?: number;
+}
+
 export class FakeRepo {
   readonly refs = new Map<string, string>();
   /** Requests to this repo, as `METHOD path` relative to it. */
   readonly calls: string[] = [];
   /** `pushed_at` as the API reports it; tests set it to order repos. */
   pushedAt?: string;
+  readonly actions = new FakeActions();
 
   constructor(
     private readonly objects: GitObjects,
@@ -201,6 +224,10 @@ export class FakeGitHub {
   readonly tokens = new Map<string, FakeToken>();
   /** Every request as `METHOD path`: relative to the repo for repo endpoints (`GET ` is the repo itself), else absolute. */
   readonly calls: string[] = [];
+  /** What the App itself asks for (`GET /app`): installations approve these, or an older set. */
+  appPermissions: FakePermissions = { metadata: "read", contents: "write", workflows: "write", secrets: "write", actions: "write" };
+  /** Refuse (422) every installation token, as GitHub does for reasons of its own. */
+  refuseTokens = false;
   /** Answer 401 to repo requests without a known, unexpired token. */
   requireAuth = false;
   /** Checks the app's JWT on `/app/*`. Unset, any bearer passes. */
@@ -319,7 +346,10 @@ export class FakeGitHub {
     if (!this.reaches(t, repo.fullName)) return notFound();
     if (!t.permissions || path === "") return undefined;
     const need: Access = method === "GET" ? "read" : "write";
-    if (!allows(t.permissions.contents, need)) return json(403, { message: "Resource not accessible by integration" });
+    // Actions endpoints answer to their own permissions, not Contents.
+    const scope = path.startsWith("actions/secrets") ? "secrets" : path.startsWith("actions/") ? "actions" : "contents";
+    if (!allows(t.permissions[scope], need)) return json(403, { message: "Resource not accessible by integration" });
+    if (scope !== "contents") return undefined;
     const paths = path.startsWith("contents/") ? [decodeURIComponent(path.slice("contents/".length))] : path === "git/trees" ? ((body.tree as { path: string }[] | undefined) ?? []).map((e) => e.path) : [];
     if (need === "write" && paths.some(isWorkflow) && !allows(t.permissions.workflows, "write"))
       return json(403, { message: "refusing to allow a GitHub App to create or update workflow without `workflows` permission" });
@@ -331,6 +361,7 @@ export class FakeGitHub {
     let m: RegExpMatchArray | null;
 
     if (method === "GET" && path === "") return json(200, repo.json());
+    if (path.startsWith("actions/")) return this.actionsRoute(repo, method, path, body);
     if (method === "PUT" && (m = path.match(/^contents\/(.+)$/))) return this.putContents(repo, decodeURIComponent(m[1]!), body);
     if (repo.empty) return path.startsWith("git/") ? json(409, { message: "Git Repository is empty." }) : notFound();
 
@@ -407,6 +438,43 @@ export class FakeGitHub {
     return json(existing ? 200 : 201, { content: { name: path.split("/").pop(), path, sha: blob.sha, type: "file" }, commit: { sha: commit, tree: { sha: tree }, message: body.message } });
   }
 
+  /** Repo secrets (sealed values kept as sent), and one workflow's runs and dispatches. */
+  private actionsRoute(repo: FakeRepo, method: string, path: string, body: Record<string, unknown>): Response {
+    const a = repo.actions;
+    if (a.failWith) return json(a.failWith, { message: "fake: Actions is down" });
+    const stamp = this.now().toISOString();
+    let m: RegExpMatchArray | null;
+    if (method === "GET" && path === "actions/secrets/public-key") return json(200, a.publicKey);
+    if (method === "GET" && path === "actions/secrets") return json(200, { total_count: a.secrets.size, secrets: [...a.secrets].map(([name, s]) => ({ name, created_at: s.updated_at, updated_at: s.updated_at })) });
+    if ((m = path.match(/^actions\/secrets\/([A-Za-z0-9_]+)$/))) {
+      const name = m[1]!;
+      if (method === "PUT") {
+        if (typeof body.encrypted_value !== "string" || body.key_id !== a.publicKey.key_id) return json(422, { message: "Bad request: encrypted_value and the current key_id are required" });
+        const existed = a.secrets.has(name);
+        a.secrets.set(name, { encrypted_value: body.encrypted_value, key_id: body.key_id, updated_at: stamp });
+        return new Response(null, { status: existed ? 204 : 201 });
+      }
+      if (method === "DELETE") return a.secrets.delete(name) ? new Response(null, { status: 204 }) : notFound();
+    }
+    if ((m = path.match(/^actions\/workflows\/([\w.-]+)\/(runs|dispatches)$/))) {
+      const file = m[1]!;
+      // GitHub knows a workflow only once its file is on the default branch.
+      if (repo.empty || !repo.tree().has(`.github/workflows/${file}`)) return notFound();
+      if (method === "GET" && m[2] === "runs") {
+        const runs = a.runs.get(file) ?? [];
+        return json(200, { total_count: runs.length, workflow_runs: runs.slice(0, 5) });
+      }
+      if (method === "POST" && m[2] === "dispatches") {
+        a.dispatches.push({ workflow: file, ref: String(body.ref ?? "") });
+        const runs = a.runs.get(file) ?? [];
+        const id = 9000 + a.dispatches.length;
+        a.runs.set(file, [{ id, status: "queued", conclusion: null, created_at: stamp, html_url: `https://github.test/${repo.fullName}/actions/runs/${id}`, event: "workflow_dispatch" }, ...runs]);
+        return new Response(null, { status: 204 });
+      }
+    }
+    return json(404, { message: `fake: unhandled ${method} ${path}` });
+  }
+
   private async apiRoute(method: string, path: string, bearer: string | undefined, body: Record<string, unknown>): Promise<Response> {
     let m: RegExpMatchArray | null;
 
@@ -416,6 +484,16 @@ export class FakeGitHub {
       const installation = this.installations.get(Number(m[1]));
       if (!installation) return notFound();
       return this.mint(installation, body);
+    }
+    if (method === "GET" && (m = path.match(/^\/app\/installations\/(\d+)$/))) {
+      const denied = await this.authorizeApp(bearer);
+      if (denied) return denied;
+      const installation = this.installations.get(Number(m[1]));
+      return installation ? json(200, { id: installation.id, account: installation.account, permissions: installation.permissions }) : notFound();
+    }
+    if (method === "GET" && path === "/app") {
+      const denied = await this.authorizeApp(bearer);
+      return denied ?? json(200, { slug: "hippocampus", permissions: this.appPermissions });
     }
     if (method === "DELETE" && (m = path.match(/^\/app\/installations\/(\d+)$/))) {
       const denied = await this.authorizeApp(bearer);
@@ -457,6 +535,7 @@ export class FakeGitHub {
 
   /** An installation token, narrowed to the requested repos and permissions. */
   private mint(installation: FakeInstallation, body: Record<string, unknown>): Response {
+    if (this.refuseTokens) return json(422, { message: "fake: GitHub won't make that token" });
     const ids = body.repository_ids as number[] | undefined;
     const names = body.repositories as string[] | undefined;
     let repos = installation.repos;

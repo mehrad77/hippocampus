@@ -67,7 +67,7 @@ Open http://127.0.0.1:8787/. `dev` builds the dashboard and applies the registry
 
 To run the dev Worker against real GitHub, use a GitHub App you own for development, never the official instance's App, and a repo you don't use as a vault. The Worker talks to github.com unless `GITHUB_API_URL` and `GITHUB_OAUTH_URL` are set, and it accepts them only on a loopback `HIPPO_PUBLIC_URL`.
 
-1. Create a GitHub App on your personal account. Set its callback URL and setup URL to `http://127.0.0.1:8787/oauth/github/callback`, with "Redirect on update" on. Give it repository permissions for contents and workflows (read and write), and no webhook (leave it inactive; installs and sign-in don't need it).
+1. Create a GitHub App on your personal account. Set its callback URL and setup URL to `http://127.0.0.1:8787/oauth/github/callback`, with "Redirect on update" on. Give it repository permissions for contents and workflows (read and write), and for secrets and actions (read and write; the Actions curator's card uses them), and no webhook (leave it inactive; installs and sign-in don't need it).
 2. Generate a private key and convert it to PKCS#8 (see [USAGE.md §8](USAGE.md#running-your-own-instance), step 1). Create a client secret.
 3. Write `apps/worker/.dev.vars` (gitignored) by hand, with your App's values and your GitHub user id in `HIPPO_ADMINS` (find it at `https://api.github.com/users/<login>`). Leave out `GITHUB_API_URL` and `GITHUB_OAUTH_URL`. Start with `HIPPO_PUBLIC_URL=http://127.0.0.1:8787`, and set `GITHUB_APP_SLUG` to the App's URL name.
 4. Run only `pnpm --filter @hippocampus/worker dev`, then open http://127.0.0.1:8787/ and sign in. Install the App on your account, choosing a test repo.

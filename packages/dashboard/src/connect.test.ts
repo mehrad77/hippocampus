@@ -47,7 +47,8 @@ describe("connecting an app", () => {
     ]);
     const actions = curatorSnippets({ ...t, server: "hippo-vault-curator", repo: "player/vault" }).at(-1)!;
     expect(actions.code).toContain("gh secret set HIPPO_CURATOR_KEY --repo player/vault");
-    expect(actions.code).toContain("gh variable set HIPPO_MCP_URL");
+    // The address is baked into the workflow: no repository variables.
+    expect(actions.code).not.toContain("gh variable set");
   });
 });
 
