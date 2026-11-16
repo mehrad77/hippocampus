@@ -109,7 +109,18 @@ If your coding agent is also connected to your Hippocampus MCP server or your va
 
 ## Evals
 
-- **Public:** fictional golden tests only. Optionally, a fictional episode set for running real models.
+- **Public:** fictional golden tests only, and the curator eval (`packages/curator/src/eval/`): fictional nights on the example vault, scored against what a careful curator would do. It picks hosted curation's default models.
+- **Running the curator eval** costs money and needs a key, in the environment only. Each run uses hosted settings, answers are cached by model and question, and results and the cache go to `~/.cache/hippocampus/eval/` (never the repo: the privacy guard scans untracked files).
+
+  ```bash
+  ANTHROPIC_API_KEY=… node_modules/.bin/tsx packages/curator/src/eval/run.ts --provider anthropic --model claude-haiku-5-5
+  ```
+
+  ```bash
+  node_modules/.bin/tsx packages/curator/src/eval/compare.ts --margin 0.03
+  ```
+
+  Run each candidate model alone for every step (`--model`), three repeats (the default), then `compare.ts`. It prints each step's models with their gates, score, $ per 100 memories and time, and the recommended mix: per step, the cheapest model that passes the step's hard gates (secrets flagged, nothing leaked, answers that parse) within the margin of the best. Run that mix end to end (`--step mentions=… --step claims=…`); it's accepted when it scores within the margin of the best single model. Record it, dated, in `RECOMMENDED` in `packages/curator/src/pricing.ts`. Prices there come from each provider's page, with the source, never from memory.
 - **Private:** keep evals built from your real memos inside your vault, e.g. `_hippo/evals/`. The vault loader ignores that folder. Run a new version or model against a copy of your vault before trusting it.
 
 ## Changing the vault format
