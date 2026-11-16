@@ -405,7 +405,8 @@ export class Vault {
       d.fm.opened = now;
     }
     for (const c of claims) {
-      const same = d.fm.claims.find((x) => String(x.value) === String(c.value) && x.by === c.by);
+      // The same source saying the same thing in other words (case, spacing) is one claim.
+      const same = d.fm.claims.find((x) => x.by === c.by && (isSecretRef(x.value) || isSecretRef(c.value) ? String(x.value) === String(c.value) : sameValue(x.value, c.value)));
       if (same) {
         same.src = [...new Set([...same.src, ...c.src])];
         if (c.confidential) same.confidential = true;

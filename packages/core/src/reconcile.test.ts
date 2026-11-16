@@ -191,6 +191,19 @@ const twoHumans = (extra: Record<string, string> = {}) =>
   Vault.load(fixtureStore({ "_hippo/config.yaml": TWO_HUMANS, "characters/player.md": "---\ntype: character\ntitle: Player\n---\n", ...extra }), { now });
 
 describe("applyFact rows that need a vault", () => {
+  it("a claim the same source repeats in other case or spacing joins its claim in the dispute", async () => {
+    const v = await twoHumans();
+    const pc = v.resolve("player")!;
+    await applyFact(v, pc, "nickname", "Harbor Kid", { by: "campus-agent", at: at0, src: ["ep-1"] });
+    await applyFact(v, pc, "nickname", "Dockhand", { by: "job-scout", at: at1, src: ["ep-2"] });
+    await applyFact(v, pc, "nickname", "DOCKHAND ", { by: "job-scout", at: at2, src: ["ep-3"] });
+    const [d] = v.openDisputes();
+    expect(d!.fm.claims.map((c) => [c.value, c.by, c.src])).toEqual([
+      ["Harbor Kid", "campus-agent", ["ep-1"]],
+      ["Dockhand", "job-scout", ["ep-2", "ep-3"]],
+    ]);
+  });
+
   it("different scopes never conflict: each scope is its own key", async () => {
     const v = await twoHumans();
     const pc = v.resolve("player")!;
