@@ -1,4 +1,4 @@
-import { AuditError, CONFIG_PATH, CURRENT_VAULT_VERSION, HippoService, humanByLogin, StoreConflictError, Vault, displayName, migrate, parseConfig, vaultVersionStatus, type HippoConfig, type HumanLogins, type SearcherFactory } from "@hippocampus/core";
+import { AuditError, CONFIG_PATH, CURRENT_VAULT_VERSION, HippoService, humanByLogin, StoreConflictError, Vault, displayName, migrate, parseConfig, readFailures, vaultVersionStatus, type HippoConfig, type HumanLogins, type SearcherFactory } from "@hippocampus/core";
 import { SleepRelay, type RunStore } from "@hippocampus/curator/relay";
 import { HttpError, createDashboardApi, errorResponse, json, readOnlySource, serviceSource, type DashboardSource, type ErrorReport, type SourceInfo, type VaultUpgrade } from "@hippocampus/dashboard";
 import { HippoIndex, doSql, type DurableSqlLike, type SqlStorageLike } from "@hippocampus/index";
@@ -19,6 +19,9 @@ import { DailyCounter, QUOTAS, limitRuns, quotaOverrides, sizeGuard, type Quotas
 import { SqlRunStore, onPut } from "./run-store.ts";
 import { AgentClaims, type AgentClaim } from "./agent-claims.ts";
 import { ConnectionSettings } from "./connection-settings.ts";
+import { AlarmBook, nextNight } from "./alarms.ts";
+import { HostedCurator, type HostedCuratorDeps, type StartResult } from "./hosted-curator.ts";
+import type { HostedVaultCurator } from "@hippocampus/dashboard";
 
 // One hosted vault, served from its own Durable Object. Everything here is plain TypeScript over
 // ports (the object's storage, a token minter, fetch), so it runs under Node in tests; vault-host.ts
@@ -123,6 +126,8 @@ export interface VaultRuntimeDeps {
   log?: (line: string) => void;
   /** The format migration; tests swap it to make it misbehave. */
   migrate?: typeof migrate;
+  /** Hosted curation with the owner's model key; absent when the instance has no `HIPPO_TOKEN_KEY`. */
+  hosted?: HostedCuratorDeps;
 }
 
 export const DASHBOARD_API = "/dashboard/api";
@@ -249,6 +254,9 @@ export class VaultRuntime {
   private readonly runs: RunStore;
   private readonly claims: AgentClaims;
   private readonly settings: ConnectionSettings;
+  /** The object's one alarm, shared by the lease, the cache GC, the hosted night and its slices. */
+  private readonly alarms: AlarmBook;
+  readonly hosted: HostedCurator;
 
   constructor(private readonly d: VaultRuntimeDeps) {
     this.meta = d.meta;
@@ -264,17 +272,42 @@ export class VaultRuntime {
       this.token = d.gitlab.tokenFor(d.meta.accountId);
     } else this.token = storedToken(d.storage.sql, () => d.app.installationToken(installationId, { repositoryIds: [repoId], permissions: RUNTIME_PERMISSIONS }), now);
     this.writer = new ScribeQueue(this.reads());
+    this.alarms = new AlarmBook(d.storage.sql, d.storage);
     this.runs = this.leased(limitRuns(new SqlRunStore(d.storage.sql), this.counter, this.quotas.sleepRunsPerDay));
     this.claims = new AgentClaims(d.storage.sql, this.clock);
     this.settings = new ConnectionSettings(d.storage.sql);
+    const open = async (at: Date) => {
+      await this.ready();
+      const store = this.store(CURATOR);
+      return { vault: await Vault.load(store, { now: () => at }), store };
+    };
     this.relay = new SleepRelay({
-      open: async (at) => {
-        await this.ready();
-        const store = this.store(CURATOR);
-        return { vault: await Vault.load(store, { now: () => at }), store };
-      },
+      open,
       runs: this.runs,
       clock: this.clock,
+      // Without hosted curation on this instance, every agent's run is needed, as before.
+      ...(d.hosted ? { gate: (i) => this.hosted.gate(i) } : {}),
+      spent: (run) => this.hosted.spent(run),
+    });
+    this.hosted = new HostedCurator({
+      sql: d.storage.sql,
+      vaultId: d.meta.vaultId,
+      clock: this.clock,
+      relay: this.relay,
+      runs: this.runs,
+      alarms: this.alarms,
+      open: async () => {
+        const { vault, store } = await open(this.clock());
+        return { vault, failures: await readFailures(store) };
+      },
+      inboxCount: async () => {
+        await this.learnInbox();
+        const prefix = this.inboxPrefix;
+        // Episode files only: `inbox/<agent>/<id>.md`, not the README or `_`-prefixed notes.
+        return (await this.reads().list(prefix)).filter((p) => /^[^/]+\/[^_/][^/]*\.md$/.test(p.slice(prefix.length))).length;
+      },
+      log: d.log,
+      ...(d.hosted ? { deps: d.hosted } : {}),
     });
   }
 
@@ -419,7 +452,7 @@ export class VaultRuntime {
       await next(s);
       const at = Date.parse(s.leaseUntil) + 1000;
       // A lapsed run is saved while it's being finished; it needs no alarm.
-      if (at > this.clock().getTime()) await this.d.storage.setAlarm?.(at);
+      await this.alarms.set("lease", at > this.clock().getTime() ? at : undefined);
     });
   }
 
@@ -437,9 +470,9 @@ export class VaultRuntime {
 
   /** An object that's used gets a cache GC within a day; an idle one isn't woken. */
   private async keepAlarm(): Promise<void> {
-    if (this.gcScheduled || !this.d.storage.getAlarm || !this.d.storage.setAlarm) return;
+    if (this.gcScheduled || !this.d.storage.setAlarm) return;
     this.gcScheduled = true;
-    if ((await this.d.storage.getAlarm()) === null) await this.d.storage.setAlarm(this.clock().getTime() + GC_EVERY_MS);
+    if (this.alarms.get("gc") === undefined) await this.alarms.set("gc", this.clock().getTime() + GC_EVERY_MS);
   }
 
   /**
@@ -474,6 +507,7 @@ export class VaultRuntime {
         ...(!grant.agent && grant.credential ? { holds: (agent: string) => this.claims.holds(agent, grant.credential!) } : {}),
         relay: grant.scopes.includes("curate") ? this.relay : undefined,
         ...(grant.scopes.includes("curate") ? {} : { curation: curationNote(grant, ceiling) }),
+        curationState: () => this.hosted.curationState(),
         jsonSchemaValidator: this.d.jsonSchemaValidator,
       });
       const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
@@ -603,16 +637,51 @@ export class VaultRuntime {
     return { slug };
   }
 
-  /** Finishes a run whose lease passed, and drops cached blobs nobody read lately. */
+  /**
+   * Every job the alarm serves: finishes a run whose lease passed, drops cached blobs nobody read
+   * lately, starts a due hosted night, and drives an open hosted run's next slice. Then the alarm is
+   * set to the earliest job left, so no job overwrites another's time.
+   */
   async alarm(): Promise<void> {
     this.gcScheduled = false;
+    const now = this.clock().getTime();
+    const due = this.alarms.due(now);
     try {
-      await this.relay.expire(this.clock());
+      try {
+        await this.relay.expire(this.clock());
+      } finally {
+        this.blobs.pruneOlderThan(BLOB_TTL_MS);
+      }
+      await this.hosted.tick(due);
     } finally {
-      this.blobs.pruneOlderThan(BLOB_TTL_MS);
+      const run = await this.runs.get().catch(() => undefined);
+      const lease = run ? Date.parse(run.leaseUntil) + 1000 : undefined;
+      this.alarms.put("lease", lease !== undefined && lease > this.clock().getTime() ? lease : undefined);
+      // A night that failed before booking the next one still gets tomorrow's.
+      const hour = this.hosted.cachedHour();
+      if (due.has("night") && this.alarms.get("night") === undefined && hour !== undefined) this.alarms.put("night", nextNight(hour, this.clock()));
+      await this.alarms.arm();
     }
-    const { run } = await this.relay.status();
-    if (run) await this.d.storage.setAlarm?.(Date.parse(run.leaseUntil) + 1000);
+  }
+
+  /** Hosted curation for this vault, for the owner's dashboard. */
+  hostedCurator(): Promise<HostedVaultCurator> {
+    return this.hosted.status();
+  }
+
+  /** The owner changed the vault's nightly hour (already written to the registry). */
+  setHostedSchedule(hourUtc: number | null): Promise<HostedVaultCurator> {
+    return this.hosted.setSchedule(hourUtc);
+  }
+
+  /** The owner's Run now: a hosted run at once, set-aside memories included. Its slices follow on the alarm. */
+  runHostedCuratorNow(): Promise<StartResult> {
+    return this.hosted.start({ manual: true });
+  }
+
+  /** The Cron's backstop: re-arms a missing or late alarm. */
+  ensureAlarm(): Promise<boolean> {
+    return this.hosted.ensureAlarm();
   }
 }
 
@@ -777,6 +846,23 @@ export class HostedVault {
 
   async curation(credentials: string[]): Promise<Record<string, boolean>> {
     return this.require().curation(credentials);
+  }
+
+  async hostedCurator(): Promise<HostedVaultCurator> {
+    return this.require().hostedCurator();
+  }
+
+  async setHostedSchedule(hourUtc: number | null): Promise<HostedVaultCurator> {
+    return this.require().setHostedSchedule(hourUtc);
+  }
+
+  async runHostedCuratorNow(): Promise<StartResult> {
+    return this.require().runHostedCuratorNow();
+  }
+
+  /** A vault that isn't serving has nothing to arm. */
+  async ensureAlarm(): Promise<boolean> {
+    return (await this.live()?.ensureAlarm()) ?? false;
   }
 
   /** Stop serving; storage stays until `destroy`, so a reconnect picks up where it left off. */

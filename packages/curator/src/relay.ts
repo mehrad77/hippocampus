@@ -137,7 +137,7 @@ export interface NotNeeded {
 export type GateVerdict = { needed: true } | { needed: false; reason: "hosted" | "idle"; hosted?: { lastRun?: string; nextRun?: string } };
 
 /** Decides whether an agent's run is needed, given the vault it would curate (the standby curator). */
-export type SleepGate = (i: { now: Date; vault: Vault; failures: Failures }) => Promise<GateVerdict>;
+export type SleepGate = (i: { now: Date; vault: Vault; failures: Failures; curator: string }) => Promise<GateVerdict>;
 
 /** The open run. Holds no plaintext: reports carry slugs and decisions, evidence is redacted. */
 export interface RunState {
@@ -391,7 +391,7 @@ export class SleepRelay {
       const { vault, store } = await this.d.open(now);
       const failures = await readFailures(store);
       if (this.d.gate && !i.force && !i.hosted) {
-        const verdict = await this.d.gate({ now, vault, failures });
+        const verdict = await this.d.gate({ now, vault, failures, curator });
         if (!verdict.needed) return notNeeded(verdict);
       }
       const limit = i.limit ?? Math.min(this.batch, vault.config.curator.batch_size);

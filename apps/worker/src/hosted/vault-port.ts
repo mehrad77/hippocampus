@@ -1,4 +1,6 @@
+import type { HostedVaultCurator } from "@hippocampus/dashboard";
 import type { AgentClaim } from "./agent-claims.ts";
+import type { StartResult } from "./hosted-curator.ts";
 import type { VaultRecord } from "./registry.ts";
 import type { DashboardUser, VaultGrant, VaultMeta } from "./vault-runtime.ts";
 
@@ -6,7 +8,7 @@ import type { DashboardUser, VaultGrant, VaultMeta } from "./vault-runtime.ts";
 // it calls, typed structurally so the Worker's routing and its tests stay free of Workers-only
 // modules. worker.ts hands the real namespace in, so the compiler holds these to the class.
 
-export type { AgentClaim, DashboardUser, VaultGrant, VaultMeta };
+export type { AgentClaim, DashboardUser, HostedVaultCurator, StartResult, VaultGrant, VaultMeta };
 
 export interface PartyMember {
   id: string;
@@ -31,6 +33,14 @@ export interface VaultStub {
   setCurate(credential: string, on: boolean): Promise<void>;
   /** What the person chose for these connections since connecting them; the rest are on their defaults. */
   curation(credentials: string[]): Promise<Record<string, boolean>>;
+  /** Hosted curation for this vault: its hour, last run and standby check-in. */
+  hostedCurator(): Promise<HostedVaultCurator>;
+  /** The owner changed the vault's nightly hour in the registry (null: off); the object re-arms. */
+  setHostedSchedule(hourUtc: number | null): Promise<HostedVaultCurator>;
+  /** The owner's Run now: the run's id, or why it didn't start. */
+  runHostedCuratorNow(): Promise<StartResult>;
+  /** The Cron's backstop: re-arms a missing or late alarm. Whether it did. */
+  ensureAlarm(): Promise<boolean>;
   disconnect(reason: string): Promise<void>;
   /** Wipe the vault's Durable Object (account deletion). The repo stays. */
   destroy(): Promise<void>;

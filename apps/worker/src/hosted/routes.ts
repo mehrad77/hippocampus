@@ -17,6 +17,9 @@ import { apiUrlOf, type HostedSettings } from "./settings.ts";
 import { WEBHOOK_PATH, handleWebhook } from "./webhooks.ts";
 import { DEVICE_PATH, DEVICE_TOKEN_PATH, DeviceRequests } from "./device.ts";
 import { deviceRoutes } from "./device-routes.ts";
+import type { HostedVaultCurator } from "@hippocampus/dashboard";
+import type { StartResult } from "./hosted-curator.ts";
+import { LlmAccess } from "./llm-access.ts";
 
 // The hosted app's own routes: accounts, onboarding, admin, account settings and GitHub's webhook.
 // Everything else (the dashboard pages, a ready vault's API, MCP) falls through to the caller.
@@ -36,6 +39,12 @@ export interface HostedHooks extends AccountHooks {
   setCurate?: (vault: MemberVault, grant: string, on: boolean) => Promise<void>;
   /** Which connection holds which agent name in a vault. */
   claims?: (vault: MemberVault) => Promise<AgentClaim[]>;
+  /** Hosted curation for one vault, from its object. */
+  hostedCurator?: (vault: MemberVault) => Promise<HostedVaultCurator>;
+  /** The vault's nightly hour changed in the registry: its object re-arms. */
+  setHostedSchedule?: (vault: MemberVault, hourUtc: number | null) => Promise<HostedVaultCurator>;
+  /** The owner's Run now. */
+  runHostedCurator?: (vault: MemberVault) => Promise<StartResult>;
 }
 
 export interface HostedDeps {
@@ -84,6 +93,8 @@ export interface HostedRoutes {
   gitlab?: GitLabAccess;
   /** Check every GitLab vault against GitLab (a Cron Trigger runs this). */
   checkGitLab(): Promise<string[]>;
+  /** Set when the instance can seal model keys (`HIPPO_TOKEN_KEY`). */
+  llm?: LlmAccess;
   sessions: Sessions;
   /** The caller, looked up once per request: the Worker reuses it to pick the vault's Durable Object. */
   who(request: Request): Promise<Caller | undefined>;
@@ -100,6 +111,7 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
   const sessions = createSessions({ settings, kv, registry, app, fetch: deps.fetch, now });
   const gitlab = settings.gitlab ? new GitLabAccess(settings.gitlab, registry, { fetch: deps.fetch, now }) : undefined;
   const connect = gitlab ? gitlabConnect({ publicUrl: settings.publicUrl, kv, access: gitlab, sessions }) : undefined;
+  const llm = settings.tokenKey ? new LlmAccess(deps.registry, settings.tokenKey, now) : undefined;
   const hooks = deps.hooks ?? {};
   const admin = adminRoutes({ registry, admins: settings.admins, onVaultChanged: hooks.onVaultChanged });
 
@@ -223,7 +235,26 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
       let result: unknown;
       if (section === "admin") result = await admin(method, sub, body, url, caller.account);
       else {
-        const port = hostedSetup({ caller, settings, registry, app, gitlab, kv, now, onVaultChanged: hooks.onVaultChanged, destroyVault: hooks.destroyVault, revokeVaultGrants: hooks.revokeVaultGrants, releaseCredentials: hooks.releaseCredentials, seatAgent: hooks.seatAgent, claims: hooks.claims });
+        const port = hostedSetup({
+          caller,
+          settings,
+          registry,
+          app,
+          gitlab,
+          kv,
+          now,
+          fetch: deps.fetch,
+          ...(llm ? { llm } : {}),
+          onVaultChanged: hooks.onVaultChanged,
+          destroyVault: hooks.destroyVault,
+          revokeVaultGrants: hooks.revokeVaultGrants,
+          releaseCredentials: hooks.releaseCredentials,
+          seatAgent: hooks.seatAgent,
+          claims: hooks.claims,
+          hostedCurator: hooks.hostedCurator,
+          setHostedSchedule: hooks.setHostedSchedule,
+          runHostedCurator: hooks.runHostedCurator,
+        });
         result = (sub === "" || sub === "status") && method === "GET" ? await port.status(url) : await port.handle(method, sub, body, url);
       }
       return done(json(200, result ?? { ok: true }));
@@ -271,7 +302,7 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
 
   const checkGitLab = async (): Promise<string[]> => (gitlab ? checkGitLabVaults({ registry, access: gitlab, onVaultChanged: hooks.onVaultChanged }) : []);
 
-  return Object.assign(handler, { registry, app, gitlab, checkGitLab, sessions, who });
+  return Object.assign(handler, { registry, app, gitlab, checkGitLab, sessions, who, ...(llm ? { llm } : {}) });
 }
 
 /** Unexpected errors aren't logged: their messages can carry vault names or content. The request's log line records the 500. */

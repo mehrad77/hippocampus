@@ -90,6 +90,11 @@ export class LlmAccess {
     };
   }
 
+  /** What the account spent on models this UTC month, in micro-dollars. */
+  spentThisMonth(accountId: number): Promise<number> {
+    return monthSpend(this.db, accountId, this.now());
+  }
+
   /** The key itself, for the Durable Object that runs the night. Never for a response. */
   async keyFor(accountId: number): Promise<string | undefined> {
     const [row] = await this.db.all<{ secret: string }>("SELECT secret FROM llm_credentials WHERE account_id = ?", [accountId]);

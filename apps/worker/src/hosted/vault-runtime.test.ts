@@ -11,6 +11,12 @@ import { GitHubApp } from "./github-app.ts";
 import type { Quotas } from "./quotas.ts";
 import { APP, appKeyPair, hostedGitHub } from "./testing.ts";
 import { HostedVault, VaultRuntime, type DashboardUser, type VaultGrant, type VaultMeta } from "./vault-runtime.ts";
+import { ProviderStop, ScriptedLLM, priceOf, type LLM, type Meter, type StepMix } from "@hippocampus/curator";
+import { BUSY_RETRY_MS, type HostedCuratorDeps } from "./hosted-curator.ts";
+import { LlmAccess } from "./llm-access.ts";
+import { monthSpend } from "./llm-spend.ts";
+import { Registry } from "./registry.ts";
+import { registryDb } from "./testing.ts";
 
 let keys: Awaited<ReturnType<typeof appKeyPair>>;
 beforeAll(async () => {
@@ -51,7 +57,14 @@ function objectStorage() {
 }
 
 async function setup(
-  o: { quotas?: Partial<Quotas>; storage?: ReturnType<typeof objectStorage>; edit?: (files: Record<string, string>) => void; files?: Record<string, string>; migrate?: typeof migrate } = {},
+  o: {
+    quotas?: Partial<Quotas>;
+    storage?: ReturnType<typeof objectStorage>;
+    edit?: (files: Record<string, string>) => void;
+    files?: Record<string, string>;
+    migrate?: typeof migrate;
+    hosted?: (clock: () => Date) => HostedCuratorDeps | Promise<HostedCuratorDeps>;
+  } = {},
 ) {
   let t = START;
   const clock = () => new Date(t);
@@ -69,7 +82,18 @@ async function setup(
   const storage = o.storage ?? objectStorage();
   const meta: VaultMeta = { vaultId: "01JVAULTPLAYER0000000000000", fullName: "player/vault", branch: "main", repoId: 9001, installationId: installation.id };
   const logged: string[] = [];
-  const deps = { app, apiUrl: "https://api.github.test", webUrl: "https://github.test", fetch: github.fetch, clock, quotas: o.quotas, log: (line: string) => void logged.push(line), migrate: o.migrate };
+  const hosted = await o.hosted?.(clock);
+  const deps = {
+    app,
+    apiUrl: "https://api.github.test",
+    webUrl: "https://github.test",
+    fetch: github.fetch,
+    clock,
+    quotas: o.quotas,
+    log: (line: string) => void logged.push(line),
+    migrate: o.migrate,
+    ...(hosted ? { hosted } : {}),
+  };
   const runtime = new VaultRuntime({ ...deps, storage, meta });
 
   const connect = async (grant: VaultGrant, rt: { mcp: VaultRuntime["mcp"] } = runtime) => {
@@ -90,7 +114,7 @@ async function setup(
   };
   const mints = () => gh.calls.filter((c) => /^POST \/app\/installations\/\d+\/access_tokens$/.test(c)).length;
   const writes = () => gh.calls.filter((c) => c.startsWith("POST git/") || c.startsWith("PATCH git/")).length;
-  return { gh, repo, app, storage, meta, deps, runtime, connect, api, mints, writes, logged, advance: (ms: number) => (t += ms) };
+  return { gh, repo, app, storage, meta, deps, runtime, connect, api, mints, writes, logged, clock, advance: (ms: number) => (t += ms) };
 }
 
 const trailers = (message: string) => message.slice(message.lastIndexOf("\n\n") + 2).split("\n");
@@ -732,5 +756,270 @@ describe("HostedVault: the object's lifecycle", () => {
     const res = await ask(host);
     expect(res.status).toBe(500);
     expect(await res.json()).toMatchObject({ code: "MISCONFIGURED" });
+  });
+});
+
+describe("VaultRuntime: hosted curation with the owner's key", () => {
+  const TOKEN_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(5)));
+  const MODEL_KEY = "sk-ant-test-landlord-0000";
+  const MIX: StepMix = { mentions: "claude-haiku-5-5", match: "claude-haiku-5-5", claims: "claude-haiku-5-5", summary: "claude-haiku-5-5" };
+  const VAULT_ID = "01JVAULTPLAYER0000000000000";
+  const ACCOUNT = 4242;
+  const HOUR = 3;
+  /** START is 09:00 UTC; the vault's first night is the next day at 03:00. */
+  const FIRST_NIGHT = Date.parse("2026-10-02T03:00:00.000Z");
+
+  /** A careful model, paid for through the meter as a real one would be. */
+  const careful = ({ meter, mix }: { meter: Meter; mix: StepMix }): LLM => {
+    const llm = new ScriptedLLM();
+    for (const name of ["mentions", "match", "claims", "summary"]) llm.respond(name, () => answer({ name } as Question));
+    return llm.bill(meter, priceOf("anthropic", mix.mentions)!, { input: 1000, output: 200 });
+  };
+
+  async function world(o: { answerer?: HostedCuratorDeps["answerer"]; monthCapUsd?: number; runCapUsd?: number } = {}) {
+    let db!: Awaited<ReturnType<typeof registryDb>>;
+    let access!: LlmAccess;
+    let models = 0;
+    const s = await setup({
+      hosted: async (clock) => {
+        db = await registryDb();
+        const registry = new Registry(db, clock);
+        await registry.signIn({ id: ACCOUNT, login: "player" }, { admin: true });
+        const { vault } = await registry.claimVault({ accountId: ACCOUNT, installationId: 1, repoId: 9001, fullName: "player/vault", branch: "main" });
+        // The registry's vault under the id this object is named by; nothing else refers to it yet.
+        await db.all("PRAGMA foreign_keys = OFF");
+        await db.all("UPDATE vaults SET id = ?, status = 'ready' WHERE id = ?", [VAULT_ID, vault.id]);
+        await db.all("PRAGMA foreign_keys = ON");
+        access = new LlmAccess(db, TOKEN_KEY, clock);
+        await access.save(ACCOUNT, { provider: "anthropic", steps: MIX, key: MODEL_KEY, monthCapMicros: (o.monthCapUsd ?? 5) * 1e6, runCapMicros: (o.runCapUsd ?? 1) * 1e6 });
+        return {
+          access,
+          db,
+          accountOf: async (id: string) => (id === VAULT_ID ? ACCOUNT : undefined),
+          answerer: (a) => {
+            models++;
+            expect(a.key).toBe(MODEL_KEY);
+            return (o.answerer ?? careful)(a);
+          },
+        };
+      },
+    });
+    const remember = async (text = "New landlord is João Silva.") => (await s.connect(bound("home-finder"))).call("remember", { text });
+    const schedule = async (hour: number | null = HOUR) => {
+      await access.setSchedule(VAULT_ID, hour);
+      return s.runtime.setHostedSchedule(hour);
+    };
+    /** To the night, and the alarm goes off. */
+    const night = async () => {
+      s.advance(FIRST_NIGHT - s.clock().getTime());
+      await s.runtime.alarm();
+    };
+    const hostedLines = () => s.logged.filter((l) => l.includes("curator/hosted")).map((l) => JSON.parse(l) as Record<string, unknown>);
+    const onboard = async () => (await (await s.connect(AGENT_KEY)).call("onboard", { agent: "residency-agent" })).text;
+    return { ...s, db: () => db, access: () => access, models: () => models, remember, schedule, night, hostedLines, onboard };
+  }
+
+  it("runs the night itself when memories wait: commits as the hosted curator, through the audit, and pays from the account", async () => {
+    const w = await world();
+    await w.remember();
+    expect(await w.schedule()).toMatchObject({ enabled: true, hourUtc: HOUR, nextRun: new Date(FIRST_NIGHT).toISOString() });
+    expect(w.storage.alarm()).toBe(FIRST_NIGHT);
+
+    await w.night();
+    const { run, history } = await w.runtime.relay.status();
+    expect(run).toBeUndefined();
+    expect(history[0]).toMatchObject({ curator: "hosted", outcome: "done", consolidated: 1, model: "anthropic:claude-haiku-5-5" });
+    expect(history[0]!.cost!.micros).toBeGreaterThan(0);
+    expect(await monthSpend(w.db(), ACCOUNT, w.clock())).toBe(history[0]!.cost!.micros);
+
+    // Every curated commit went through the audited store as the curator, signed as the hosted run.
+    const files = w.repo.files();
+    expect(Object.keys(files).filter((p) => p.startsWith("inbox/"))).toEqual(["inbox/README.md"]);
+    expect(files["characters/joao-silva.md"]).toContain("The player's landlord in Lisbon.");
+    const curated = w.repo.log().filter((c) => c.message.startsWith("chore(sleep)"));
+    expect(curated.length).toBeGreaterThan(1);
+    for (const c of curated) expect(trailers(c.message)).toEqual(expect.arrayContaining(["Hippo-Actor: curator", "Hippo-Curator: hosted", "Hippo-Model: anthropic:claude-haiku-5-5"]));
+
+    // Logged by route, status, cost and a hashed vault id: no memory, no key.
+    const lines = w.hostedLines();
+    expect(lines.map((l) => l.route)).toEqual(["curator/hosted night", "curator/hosted"]);
+    expect(lines[1]).toMatchObject({ status: 200, micros: history[0]!.cost!.micros });
+    for (const l of w.logged) {
+      expect(l).not.toContain("João");
+      expect(l).not.toContain(MODEL_KEY);
+      expect(l).not.toContain(VAULT_ID);
+    }
+    // Tomorrow's night is on the books.
+    expect(await w.runtime.hostedCurator()).toMatchObject({ enabled: true, nextRun: "2026-10-03T03:00:00.000Z", lastRun: { outcome: "done", consolidated: 1 } });
+  });
+
+  it("drives a long night in slices, each re-armed a second later", async () => {
+    const w = await world();
+    for (const text of ["New landlord is João Silva.", "The landlord prefers rent by bank transfer.", "The landlord's agency is in Alfama."]) await w.remember(text);
+    await w.schedule();
+    await w.night();
+    // Rulings, then the first two episodes: three units, and the run waits for its next slice.
+    expect((await w.runtime.relay.status()).run).toMatchObject({ curator: "hosted" });
+    expect(w.storage.alarm()).toBe(w.clock().getTime() + 1000);
+    expect(w.hostedLines().at(-1)).toMatchObject({ route: "curator/hosted", status: 202 });
+    w.advance(1000);
+    await w.runtime.alarm();
+    const { run, history } = await w.runtime.relay.status();
+    expect(run).toBeUndefined();
+    expect(history[0]).toMatchObject({ curator: "hosted", outcome: "done" });
+    expect(history[0]!.consolidated + history[0]!.failed).toBe(3);
+  });
+
+  it("skips a night with nothing waiting, and books the next", async () => {
+    const w = await world();
+    await w.schedule();
+    await w.night();
+    expect((await w.runtime.relay.status()).history).toEqual([]);
+    expect(w.models()).toBe(0);
+    expect(w.hostedLines()).toEqual([expect.objectContaining({ route: "curator/hosted night", code: "IDLE" })]);
+    expect((await w.runtime.hostedCurator()).nextRun).toBe(new Date(FIRST_NIGHT + 24 * 3600_000).toISOString());
+  });
+
+  it("waits on an agent's open run, trying again in 30 minutes", async () => {
+    const w = await world();
+    await w.remember();
+    await w.schedule();
+    w.advance(FIRST_NIGHT - w.clock().getTime() - 60_000);
+    const agent = (await (await w.connect(CURATOR_KEY)).call("sleep_start", { model: "test-model", curator: "archivist", force: true })).json();
+    expect(agent.state).toBe("ask");
+    w.advance(60_000);
+    await w.runtime.alarm();
+    expect((await w.runtime.relay.status()).run).toMatchObject({ curator: "archivist" });
+    expect(w.hostedLines().at(-1)).toMatchObject({ code: "BUSY" });
+    expect((await w.runtime.hostedCurator()).nextRun).toBe(new Date(FIRST_NIGHT + BUSY_RETRY_MS).toISOString());
+  });
+
+  it("honours a paused account: no run, and agents hear that a standby runs", async () => {
+    const w = await world();
+    await w.remember();
+    await w.schedule();
+    await w.access().pause(ACCOUNT, "auth");
+    await w.night();
+    expect((await w.runtime.relay.status()).history).toEqual([]);
+    expect(w.hostedLines().at(-1)).toMatchObject({ code: "PAUSED" });
+    expect(await w.onboard()).toContain("Nightly curation: Hippocampus runs it at 03:00 UTC, but it is paused: the model key was refused; a standby curator will run if one is set up.");
+  });
+
+  it("pauses the account when the month's budget is reached, not when the run's is", async () => {
+    // A month cap below one call's worst case: the first call is refused.
+    const w = await world({ monthCapUsd: 0.0001 });
+    await w.remember();
+    await w.schedule();
+    await w.night();
+    expect((await w.runtime.relay.status()).history[0]).toMatchObject({ curator: "hosted", outcome: "aborted", stop: "budget", consolidated: 0 });
+    expect(Object.keys(w.repo.files()).filter((p) => p.startsWith("inbox/home-finder/"))).toHaveLength(1);
+    expect((await w.access().settings(ACCOUNT))!.paused).toBe("budget:2026-10");
+    expect(w.hostedLines().at(-1)).toMatchObject({ code: "BUDGET" });
+  });
+
+  it("passes over a memory too large for the run's cap until the cap is raised, without pausing", async () => {
+    const w = await world({ runCapUsd: 0.0001 });
+    await w.remember();
+    await w.schedule();
+    await w.night();
+    const [first] = (await w.runtime.relay.status()).history;
+    expect(first).toMatchObject({ outcome: "done", consolidated: 0, tooLarge: [expect.stringMatching(/^ep-/)] });
+    expect((await w.access().settings(ACCOUNT))!.paused).toBeUndefined();
+
+    // The next run leaves it out: nothing else waits, so there's no run at all.
+    expect(await w.runtime.runHostedCuratorNow()).toMatchObject({ code: "IDLE" });
+    // A higher cap lets it back in.
+    await w.access().save(ACCOUNT, { provider: "anthropic", steps: MIX, monthCapMicros: 5e6, runCapMicros: 1e6 });
+    expect(await w.runtime.runHostedCuratorNow()).toMatchObject({ run: expect.stringMatching(/^run-/) });
+    expect(w.storage.alarm()).toBe(w.clock().getTime());
+    await w.runtime.alarm();
+    expect((await w.runtime.relay.status()).history[0]).toMatchObject({ outcome: "done", consolidated: 1 });
+  });
+
+  it("pauses the account when the provider refuses the key, leaving the memory in the inbox", async () => {
+    const refusing = (): LLM => ({
+      name: "refused",
+      object: async () => {
+        throw new ProviderStop("auth", 401);
+      },
+    });
+    const w = await world({ answerer: refusing });
+    await w.remember();
+    await w.schedule();
+    await w.night();
+    expect((await w.runtime.relay.status()).history[0]).toMatchObject({ outcome: "aborted", stop: "auth", failed: 0 });
+    expect((await w.access().settings(ACCOUNT))!.paused).toBe("auth");
+    expect(Object.keys(w.repo.files()).filter((p) => p.startsWith("inbox/home-finder/"))).toHaveLength(1);
+  });
+
+  it("closes an open hosted run at its next alarm once the operator switches it off, and starts none", async () => {
+    const on = await world();
+    await on.remember();
+    expect(await on.runtime.runHostedCuratorNow()).toMatchObject({ run: expect.stringMatching(/^run-/) });
+
+    // The same object after a deploy with HIPPO_HOSTED_CURATOR=off.
+    const off = new VaultRuntime({ ...on.deps, hosted: { ...on.deps.hosted!, off: true }, storage: on.storage, meta: on.meta });
+    await off.alarm();
+    const { run, history } = await off.relay.status();
+    expect(run).toBeUndefined();
+    expect(history[0]).toMatchObject({ curator: "hosted", outcome: "aborted" });
+    expect(on.models()).toBe(0);
+    expect(await off.runHostedCuratorNow()).toMatchObject({ code: "OFF" });
+  });
+
+  it("re-arms a lost alarm for the Cron's backstop, and leaves a good one alone", async () => {
+    const w = await world();
+    await w.schedule();
+    await w.storage.deleteAlarm();
+    expect(await w.runtime.ensureAlarm()).toBe(true);
+    expect(w.storage.alarm()).toBe(FIRST_NIGHT);
+    expect(await w.runtime.ensureAlarm()).toBe(false);
+    // Switched off in the registry: the night is dropped, and nothing is armed for it.
+    await w.access().setSchedule(VAULT_ID, null);
+    await w.storage.deleteAlarm();
+    expect(await w.runtime.ensureAlarm()).toBe(false);
+    expect(w.storage.alarm()).toBeNull();
+  });
+
+  it("tells a standby curator it isn't needed while hosted curation is healthy, records each check-in, and runs it when paused", async () => {
+    const w = await world();
+    await w.remember();
+    await w.schedule();
+    const curator = await w.connect(CURATOR_KEY);
+    const skipped = (await curator.call("sleep_start", { model: "test-model", curator: "claude-code-curator" })).json();
+    expect(skipped).toMatchObject({ state: "not_needed", reason: "hosted" });
+    expect((await w.runtime.relay.status()).run).toBeUndefined();
+    expect(await w.runtime.hostedCurator()).toMatchObject({ standby: { curator: "claude-code-curator", at: w.clock().toISOString(), decision: "hosted" } });
+
+    await w.access().pause(ACCOUNT, "credit");
+    const ran = (await curator.call("sleep_start", { model: "test-model", curator: "claude-code-curator" })).json();
+    expect(ran.state).toBe("ask");
+    expect(await w.runtime.hostedCurator()).toMatchObject({ standby: { curator: "claude-code-curator", decision: "needed" } });
+    expect(await w.onboard()).toContain("paused: the model provider's credit ran out; the standby curator claude-code-curator will run.");
+  });
+
+  it("leaves a vault without hosted curation as it was: an empty inbox still runs, and agents hear who curates", async () => {
+    const w = await world();
+    expect(await w.onboard()).toContain("No curator yet: 0 memories waiting.");
+    await w.remember();
+    expect(await w.onboard()).toContain("No curator yet: 1 memory waiting.");
+
+    const curator = await w.connect(CURATOR_KEY);
+    let step = (await curator.call("sleep_start", { model: "test-model", curator: "archivist" })).json();
+    expect(step.state).toBe("ask");
+    while (step.state === "ask") step = (await curator.call("sleep_answer", { run: step.run, answers: step.questions.map((q: Question) => ({ question_id: q.id, value: JSON.stringify(answer(q)) })) })).json();
+    expect(step.state).toBe("done");
+    // Nothing waits now, and the vault has no hosted curation: the run still happens, as before.
+    expect((await curator.call("sleep_start", { model: "test-model", curator: "archivist" })).json().state).not.toBe("not_needed");
+    expect(await w.runtime.hostedCurator()).toEqual({ enabled: false });
+    expect(await w.onboard()).toContain("Nightly curation: the curator archivist runs it (last run 2026-10-01).");
+  });
+
+  it("says when Hippocampus curates, in every agent's onboard", async () => {
+    const w = await world();
+    await w.remember();
+    await w.schedule();
+    await w.night();
+    expect(await w.onboard()).toContain("Nightly curation: Hippocampus runs it at 03:00 UTC (last run 2026-10-02).");
   });
 });

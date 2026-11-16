@@ -2,6 +2,7 @@
 // approve accounts, and optionally a GitLab OAuth application for vaults on GitLab. Everything
 // but the URLs is a Worker secret.
 
+import type { HostedProvider } from "@hippocampus/curator";
 import { checkTokenKey } from "./token-box.ts";
 
 export interface HostedSettings {
@@ -24,7 +25,14 @@ export interface HostedSettings {
   gitlab?: GitLabSettings;
   /** Seals secrets kept in the registry (`HIPPO_TOKEN_KEY`). GitLab needs it, but it can be set without GitLab. */
   tokenKey?: string;
+  /** `HIPPO_HOSTED_CURATOR=off`: the operator's kill switch. No hosted run starts, and an open one closes at its next alarm. */
+  hostedCuratorOff?: boolean;
+  /** A local fake model provider, per provider (`HIPPO_LLM_ANTHROPIC_URL`, `HIPPO_LLM_MISTRAL_URL`). Loopback Workers only. */
+  llmUrls?: Partial<Record<HostedProvider, string>>;
 }
+
+/** Whether this instance can curate with an owner's key: it has a key to seal it with, and the operator hasn't switched it off. */
+export const hostedCurationAvailable = (s: Pick<HostedSettings, "tokenKey" | "hostedCuratorOff">) => !!s.tokenKey && !s.hostedCuratorOff;
 
 export interface GitLabSettings {
   /** Web origin of the GitLab instance, no trailing slash (default `https://gitlab.com`). */
@@ -52,6 +60,11 @@ export interface HostedVars {
   GITLAB_CLIENT_ID?: string;
   GITLAB_CLIENT_SECRET?: string;
   HIPPO_TOKEN_KEY?: string;
+  /** `off` stops hosted curation (the operator's kill switch). */
+  HIPPO_HOSTED_CURATOR?: string;
+  /** Only for local development against a fake model provider. */
+  HIPPO_LLM_ANTHROPIC_URL?: string;
+  HIPPO_LLM_MISTRAL_URL?: string;
 }
 
 const REQUIRED = [
@@ -85,6 +98,13 @@ export function hostedSettings(env: HostedVars): HostedSettings {
   // These send the app's client secret and JWTs elsewhere, so they're for a fake GitHub on this machine only.
   const overrides = (["GITHUB_API_URL", "GITHUB_OAUTH_URL"] as const).filter((k) => env[k]?.trim());
   if (overrides.length && !local) throw new Error(`Unset ${overrides.join(" and ")}: only local development against a fake GitHub uses them`);
+  // These would send an owner's model key elsewhere, so they're for a fake provider on this machine only.
+  const llm = (["HIPPO_LLM_ANTHROPIC_URL", "HIPPO_LLM_MISTRAL_URL"] as const).filter((k) => env[k]?.trim());
+  if (llm.length && !local) throw new Error(`Unset ${llm.join(" and ")}: only local development against a fake model provider uses them`);
+  const anthropic = trimSlash(env.HIPPO_LLM_ANTHROPIC_URL);
+  const mistral = trimSlash(env.HIPPO_LLM_MISTRAL_URL);
+  // Only `off` means anything: a typo must not take the app down, and leaves curation as it was.
+  const curator = env.HIPPO_HOSTED_CURATOR?.trim().toLowerCase();
   return {
     publicUrl: publicUrl.origin,
     appId: env.GITHUB_APP_ID!.trim(),
@@ -98,6 +118,8 @@ export function hostedSettings(env: HostedVars): HostedSettings {
     oauthUrl: trimSlash(env.GITHUB_OAUTH_URL),
     gitlab: gitlabSettings(env),
     tokenKey: tokenKey(env),
+    ...(curator === "off" ? { hostedCuratorOff: true } : {}),
+    ...(anthropic || mistral ? { llmUrls: { ...(anthropic ? { anthropic } : {}), ...(mistral ? { mistral } : {}) } } : {}),
   };
 }
 

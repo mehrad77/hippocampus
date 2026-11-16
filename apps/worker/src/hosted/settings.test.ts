@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hostedSettings, type HostedVars } from "./settings.ts";
+import { hostedCurationAvailable, hostedSettings, type HostedVars } from "./settings.ts";
 import { APP, ORIGIN } from "./testing.ts";
 
 const env = (vars: HostedVars = {}): HostedVars => ({
@@ -47,6 +47,32 @@ describe("hostedSettings", () => {
     expect(hostedSettings(env()).tokenKey).toBeUndefined();
     expect(() => hostedSettings(env({ HIPPO_TOKEN_KEY: "c2hvcnQ=" }))).toThrow("HIPPO_TOKEN_KEY must be 32 bytes");
     expect(hostedSettings(env({ HIPPO_TOKEN_KEY: key, GITLAB_CLIENT_ID: "id", GITLAB_CLIENT_SECRET: "s" })).gitlab).toMatchObject({ clientId: "id", tokenKey: key });
+  });
+
+  it("turns hosted curation off only with HIPPO_HOSTED_CURATOR=off, and on only with a token key", () => {
+    const key = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+    expect(hostedCurationAvailable(hostedSettings(env({ HIPPO_TOKEN_KEY: key })))).toBe(true);
+    expect(hostedCurationAvailable(hostedSettings(env()))).toBe(false);
+    expect(hostedSettings(env({ HIPPO_TOKEN_KEY: key, HIPPO_HOSTED_CURATOR: " OFF " }))).toMatchObject({ hostedCuratorOff: true });
+    expect(hostedCurationAvailable(hostedSettings(env({ HIPPO_TOKEN_KEY: key, HIPPO_HOSTED_CURATOR: "off" })))).toBe(false);
+    // Anything else leaves it as it was: a typo mustn't take the app down.
+    expect(hostedSettings(env({ HIPPO_TOKEN_KEY: key, HIPPO_HOSTED_CURATOR: "of" })).hostedCuratorOff).toBeUndefined();
+  });
+
+  it("sends model calls to a fake provider only for local development, without echoing the address", () => {
+    const fake = { HIPPO_LLM_ANTHROPIC_URL: "http://127.0.0.1:8788/v1/", HIPPO_LLM_MISTRAL_URL: "http://127.0.0.1:8788/v1" };
+    expect(hostedSettings(env({ HIPPO_PUBLIC_URL: "http://127.0.0.1:8787", ...fake })).llmUrls).toEqual({ anthropic: "http://127.0.0.1:8788/v1", mistral: "http://127.0.0.1:8788/v1" });
+    expect(() => hostedSettings(env(fake))).toThrow("Unset HIPPO_LLM_ANTHROPIC_URL and HIPPO_LLM_MISTRAL_URL");
+    const err = (() => {
+      try {
+        hostedSettings(env({ HIPPO_LLM_MISTRAL_URL: "https://elsewhere.test" }));
+      } catch (e) {
+        return String(e);
+      }
+    })();
+    expect(err).toContain("Unset HIPPO_LLM_MISTRAL_URL:");
+    expect(err).not.toContain("elsewhere");
+    expect(hostedSettings(env()).llmUrls).toBeUndefined();
   });
 
   it("still refuses a half-configured GitLab client", () => {
