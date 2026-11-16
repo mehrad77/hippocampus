@@ -142,7 +142,7 @@ Tools: `onboard`, `introduce`, `remember`, `recall`, `get`, `neighbors`, `ask_ca
 
 **Confidential** values stay in your notes but out of search, summaries, the chronicle and every agent's view, except an agent bound to its id (a single-agent key, an OAuth connection, `serve --agent`) with authority over them. The curator sees them while curating. For remote agents and Claude.ai or ChatGPT connectors, use the hosted app (§8).
 
-Agent ids are exact: lowercase letters, digits and dashes, matching `party/<id>.md`. Your humans' ids (the config's `humans:`) and the reserved ids `human`, `curator`, `unknown` and `hippocampus` are refused. An agent without a party sheet can still write, but its memories count as rumors until you approve it (§6). One `remember` call takes at most 8 KB; split longer memories.
+Agent ids are exact: lowercase letters, digits and dashes, matching `party/<id>.md`. Your humans' ids (the config's `humans:`) and the reserved ids `human`, `curator`, `unknown`, `hippocampus` and `hosted` are refused. An agent without a party sheet can still write, but its memories count as rumors until you approve it (§6). One `remember` call takes at most 8 KB; split longer memories.
 
 **Inbox files (local tools without MCP):** a tool that can't speak MCP may write one new file per memory to `inbox/<its-id>/`, in the format `HANDBOOK.md` shows. It must never edit other files. The vault's `AGENTS.md` tells agents to use MCP instead, since the tools run the checks.
 
@@ -269,12 +269,11 @@ The tool refuses to write to a vault whose format version differs from its own. 
 
 ### Using a hosted instance
 
-1. **Sign in** with GitHub on the instance's welcome page and ask for access, with an optional note. An admin approves accounts by hand; the setup page unlocks once you're in.
-2. **Create a private repo.** The setup page opens GitHub's form, filled in (`vault`, private). It must be empty, or hold only a README, LICENSE or .gitignore. A repo that already holds a Hippocampus vault is adopted instead: only missing guardrail files are added.
-3. **Install the app** on that repo only. GitHub asks you to authorize it, then sends you back.
-4. **Pick the repo and name the vault:** your id, time zone and domains, optionally the fictional example campaign and presets. A key for secret facts is made in your browser; download the key file and keep it safe. Only its public half goes into the vault.
-5. **Set up the vault.** One commit puts the template into the repo.
-6. **Connect agents** (below) and **set up a curator** (§5).
+1. **Request access.** Sign in with GitHub on the instance's welcome page and ask for access, with an optional note. An admin approves accounts by hand; the setup page unlocks once you're in. (Approved and invited people skip this step.)
+2. **Repository.** Create a private repo (the setup page opens GitHub's form, filled in: `vault`, private), install the app on that repo only (GitHub sends you back), and pick it; the only usable repo is picked for you. It must be empty, or hold only a README, LICENSE or .gitignore. A repo that already holds a Hippocampus vault is adopted instead (your own disconnected vault shows **Reconnect**): only missing guardrail files are added.
+3. **Your vault:** a name. Your id, time zone, domains, presets and the fictional example campaign are under **More options**. A key for secret facts is made in your browser, preselected: download the key file, keep it safe and tick that you saved it, or choose **Not now**. Only its public half goes into the vault. **Create the vault** makes one commit.
+4. **Add your first agent:** paste the setup prompt into it (below).
+5. **Curation:** one of your agents, or a cron line or GitHub Actions (§5). **Finish** lands on Home.
 
 **Several vaults.** Add another from the vault menu at the top of the sidebar, or **Setup → Your vaults → Add a vault**: the same steps, for another repo (add it to the GitHub App's installation, or pick another GitLab project). Each vault has its own keys, its own curator and its own MCP address, `https://<your-instance>/mcp/<vault id>`. The vault menu switches the dashboard between them; each browser tab keeps its own, and a new tab opens the one you used last. **Remove** forgets a vault here (its keys, connected apps, index and cache); its repo stays where it is, and you can add it again.
 
@@ -290,7 +289,7 @@ The tool refuses to write to a vault whose format version differs from its own. 
 
 **Inviting people to the app.** Anyone approved can invite someone to the hosted app itself (**Setup → Invite someone to Hippocampus**): it lets them in without the waitlist and shares nothing. Ten open invites at a time; admins have no cap, and can turn a person's invites off.
 
-**Connecting apps.** **Setup → Connected apps → Connect an app** asks only which app. The app gets one key (`read`, `remember`, `goal`), and the agents in it name themselves on each call, so one key can carry several. It shows the snippet for that app with the key in it, once (only a hash is stored), then waits for the app's first call. A key opens only its own vault: used at another vault's address, it's refused (`403 wrong_vault`), so a mixed-up config fails loudly instead of writing to the wrong vault. The list shows every connection, keys and sign-in apps alike, and disconnects any of them at once.
+**Connecting apps.** **Setup → Connected apps → Connect an app** first offers the setup prompt: paste it into an agent that can run commands, and it connects itself with device sign-in (you approve it at `/dashboard/connect/`), adds the memory routine and checks who curates. For any other app, **Another app: get its config snippet** asks only which app. The app gets one key (`read`, `remember`, `goal`), and the agents in it name themselves on each call, so one key can carry several. It shows the snippet for that app with the key in it, once (only a hash is stored), then waits for the app's first call. A key opens only its own vault: used at another vault's address, it's refused (`403 wrong_vault`), so a mixed-up config fails loudly instead of writing to the wrong vault. The list shows every connection, keys and sign-in apps alike, and disconnects any of them at once.
 
 | Kind | Scopes | For |
 | --- | --- | --- |

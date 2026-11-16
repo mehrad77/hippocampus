@@ -75,7 +75,7 @@ export function VaultItems({ vaults, onPick }: { vaults: HostedVaults; onPick: (
       ))}
       {ownedCount(vaults.vaults) < vaults.limit && (
         <li>
-          <a href={`${href.page("setup")}?add#create`} onClick={onPick}>
+          <a href={`${href.page("setup")}?add#repo`} onClick={onPick}>
             <Icon name="plus" size={18} /> {v("Add a vault", "Open another campaign")}
           </a>
         </li>

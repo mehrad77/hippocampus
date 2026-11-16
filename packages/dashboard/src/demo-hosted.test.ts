@@ -6,8 +6,8 @@ import type { DashboardSource } from "./source.ts";
 const ORIGIN = "http://127.0.0.1:4339";
 const source = { info: async () => ({ mode: "demo", vault: { kind: "memory" }, campaign: "lisbon-arc", human: "player", actor: { kind: "human", id: "player" } }) } as unknown as DashboardSource;
 
-function client() {
-  const demo = hostedDemo({ base: "/dashboard", source, approveAfter: 0, initDelay: 0, firstCallAfter: 0 });
+function client(extra: { bootstrapFor?: number } = {}) {
+  const demo = hostedDemo({ base: "/dashboard", source, approveAfter: 0, initDelay: 0, firstCallAfter: 0, ...extra });
   const call = async (path: string, body?: unknown, headers: Record<string, string> = {}) => {
     const res = await demo(new Request(`${ORIGIN}${path}`, body === undefined ? { headers } : { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }));
     return { status: res?.status, body: res && res.headers.get("content-type")?.includes("json") ? await res.json() : undefined, location: res?.headers.get("location") };
@@ -136,6 +136,86 @@ describe("hosted demo", () => {
     expect(((await api("setup/status")).body as HostedSetupStatus).gitlab?.connected).toBe(true);
     await api("__demo/stage?to=ready&provider=gitlab");
     expect(((await api("setup/status")).body as HostedSetupStatus).vault).toMatchObject({ provider: "gitlab" });
+  });
+
+  it("clears the browser's setup drafts on a stage jump, then goes on", async () => {
+    const { demo } = client();
+    const res = (await demo(new Request(`${ORIGIN}/dashboard/api/__demo/stage?to=fresh`)))!;
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-demo-next")).toBe("/dashboard/setup/");
+    const html = await res.text();
+    expect(html).toContain("hippo:hosted-draft:");
+    expect(html).toContain("hippo:adding-vault");
+    expect(html).toContain('location.replace("/dashboard/setup/")');
+    // Only that one script runs: it's allowed by its hash.
+    expect(res.headers.get("content-security-policy")).toMatch(/script-src 'sha256-[A-Za-z0-9+/=]+'/);
+    expect((await demo(new Request(`${ORIGIN}/dashboard/api/__demo/stage?to=nowhere`)))!.status).toBe(400);
+  });
+
+  it("has a stage for every onboarding state: denied, fresh, disconnected, bootstrapping", async () => {
+    const { api } = client({ bootstrapFor: 5 });
+    await api("__demo/stage?to=denied");
+    expect(((await api("setup/status")).body as HostedSetupStatus).account.status).toBe("denied");
+
+    await api("__demo/stage?to=fresh");
+    const fresh = (await api("setup/status")).body as HostedSetupStatus;
+    expect(fresh.account.status).toBe("approved");
+    expect(fresh.installation).toBeUndefined();
+    expect(fresh.vaults).toEqual([]);
+
+    // A vault of your own, cut off, with the app installed again: its repo is offered to reconnect.
+    await api("__demo/stage?to=disconnected");
+    const gone = (await api("setup/status")).body as HostedSetupStatus;
+    expect(gone.vault).toMatchObject({ fullName: "player/lisbon-arc", status: "disconnected" });
+    const { repos } = (await api("setup/repos")).body as { repos: { fullName: string; adoptable?: boolean }[] };
+    expect(repos.find((r) => r.fullName === "player/lisbon-arc")).toMatchObject({ adoptable: true });
+    const back = (await api("setup/init", { repoId: 502, adopt: true })).body as { vault: { id: string; status: string }; mode: string };
+    expect(back).toMatchObject({ mode: "adopted", vault: { id: gone.vault!.id, status: "ready" } });
+
+    await api("__demo/stage?to=disconnected&provider=gitlab");
+    const lab = (await api("setup/status")).body as HostedSetupStatus;
+    expect(lab.vault).toMatchObject({ provider: "gitlab", status: "disconnected" });
+    expect((await api("setup/init", { provider: "gitlab", repoId: 704, adopt: true })).body).toMatchObject({ mode: "adopted", vault: { id: lab.vault!.id, status: "ready" } });
+
+    await api("__demo/stage?to=bootstrapping");
+    expect(((await api("setup/status")).body as HostedSetupStatus).vault?.status).toBe("bootstrapping");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(((await api("setup/status")).body as HostedSetupStatus).vault?.status).toBe("ready");
+  });
+
+  it("offers an existing vault among the GitLab projects, checked by the repo list", async () => {
+    const { api } = client();
+    await api("__demo/stage?to=installed&provider=gitlab");
+    const { repos } = (await api("setup/repos?provider=gitlab")).body as { repos: { id: number; adoptable?: boolean }[] };
+    expect(repos.find((r) => r.id === 704)).toMatchObject({ adoptable: true });
+  });
+
+  it("plays device sign-in: an agent asks, the person approves on the connect page, and it calls in", async () => {
+    const { call, api } = client();
+    await api("__demo/stage?to=ready");
+    const started = await api("__demo/device");
+    const code = new URL(started.location!, ORIGIN).searchParams.get("code")!;
+    expect(started.location).toBe(`/dashboard/connect/?code=${code}`);
+    expect(code).toMatch(/^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/);
+    const asked = (await api(`connect?code=${code}`)).body as { client: string; access: string; vaults: { id: string }[]; current?: string };
+    expect(asked).toMatchObject({ client: "Claude Code", access: "remember" });
+    expect(asked.vaults).toHaveLength(2);
+    expect((await api("connect/approve", { code, vault: asked.vaults[0]!.id })).body).toEqual({ ok: true });
+    // Once answered, the code is spent.
+    expect((await api(`connect?code=${code}`)).status).toBe(410);
+    await new Promise((r) => setTimeout(r, 5));
+    const keys = (await api("setup/keys", undefined, { [VAULT_HEADER]: asked.vaults[0]!.id })).body as { keys: { kind: string; label: string; lastUsed?: string }[]; agents?: { agent: string }[] };
+    expect(keys.keys).toEqual([expect.objectContaining({ kind: "agent", label: "Claude Code", lastUsed: expect.any(String) })]);
+    expect(keys.agents?.map((a) => a.agent)).toEqual(["claude-code-home-finder"]);
+
+    // A curator asks for curate, and gets a curator key; a refusal makes nothing.
+    const curator = new URL((await api("__demo/device?access=curate")).location!, ORIGIN).searchParams.get("code")!;
+    await api("connect/approve", { code: curator, vault: asked.vaults[0]!.id });
+    const refused = new URL((await api("__demo/device")).location!, ORIGIN).searchParams.get("code")!;
+    expect((await api("connect/deny", { code: refused })).body).toEqual({ ok: true });
+    const after = (await api("setup/keys", undefined, { [VAULT_HEADER]: asked.vaults[0]!.id })).body as { keys: { kind: string }[] };
+    expect(after.keys.map((k) => k.kind)).toEqual(["agent", "curator"]);
+    expect((await call("/dashboard/api/__demo/device")).location).toMatch(/^\/dashboard\/connect\/\?code=/);
   });
 
   it("deletes the account only with the typed login, and signs out", async () => {

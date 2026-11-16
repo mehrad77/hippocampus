@@ -1,6 +1,40 @@
 import { describe, expect, it } from "vitest";
-import type { HostedStatus } from "../../lib/types.ts";
-import { canAddVault, connectionRows, freeHumans, humanIdFor, inviteProblem, draftProblems, draftReady, forNewVault, hostedDefaultStep, hostedLock, hostedNeighbors, hostedProvider, hostedRepos, hostedStepDef, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, outcomeTone, pickedAdoptable, repoVerdict, type HostedContext } from "./hosted.ts";
+import type { HostedConnectedApp } from "@hippocampus/dashboard";
+// The pretend hosted app's stages, so every one of them gets its steps checked.
+import { DEMO_STAGES, hostedDemo, type HostedDemoStage } from "../../../../../packages/dashboard/src/demo-hosted.ts";
+import type { HostedRepoView, HostedStatus } from "../../lib/types.ts";
+import {
+  arrival,
+  canAddVault,
+  connectionRows,
+  freeHumans,
+  humanIdFor,
+  inviteProblem,
+  draftProblems,
+  draftReady,
+  forNewVault,
+  hostedDefaultStep,
+  hostedIndex,
+  hostedLock,
+  hostedNeighbors,
+  hostedProvider,
+  hostedRepos,
+  hostedStepDef,
+  hostedStepState,
+  identityFileName,
+  identityFileText,
+  initRequest,
+  newDraft,
+  outcomeTone,
+  parseHostedStep,
+  pickedAdoptable,
+  preselectRepo,
+  repoVerdict,
+  resolveSetupHash,
+  SETUP_SECTIONS,
+  visibleSteps,
+  type HostedContext,
+} from "./hosted.ts";
 
 const base: HostedStatus = {
   kind: "hosted",
@@ -15,43 +49,174 @@ const approved: HostedStatus = { ...base, account: { ...base.account, status: "a
 const installed: HostedStatus = { ...approved, installation: { id: 7, repos: [{ id: 1, fullName: "player/lisbon-arc", private: true }] } };
 const ready: HostedStatus = { ...approved, vault: { id: "v1", fullName: "player/lisbon-arc", branch: "main", status: "ready" } };
 const ctx = (status: HostedStatus, extra: Partial<HostedContext> = {}): HostedContext => ({ status, draftReady: false, ...extra });
+const app = (extra: Partial<HostedConnectedApp> = {}): HostedConnectedApp => ({ id: "g1", client: "Claude", scopes: ["read", "remember", "goal"], vault: "v1", created: "2026-10-04T00:00:00Z", curate: false, mayCurate: true, ...extra });
 
 describe("hosted onboarding steps", () => {
+  it("has five steps, and shows Access only until the account is approved", () => {
+    expect(visibleSteps(ctx(base)).map((s) => s.id)).toEqual(["access", "repo", "vault", "agent", "curate"]);
+    expect(visibleSteps(ctx(approved)).map((s) => s.id)).toEqual(["repo", "vault", "agent", "curate"]);
+    expect(visibleSteps(ctx({ ...base, account: { ...base.account, status: "denied" } })).map((s) => s.id)[0]).toBe("access");
+    // Step numbers count what's shown.
+    expect(hostedIndex("repo", visibleSteps(ctx(approved)))).toBe(0);
+    expect(hostedNeighbors("repo", visibleSteps(ctx(approved)))).toEqual({ prev: undefined, next: expect.objectContaining({ id: "vault" }) });
+  });
+
   it("starts on the waitlist, and everything past access is locked until approval", () => {
     expect(hostedDefaultStep(ctx(base))).toBe("access");
     expect(hostedStepState("access", ctx(base))).toBe("todo");
     expect(hostedStepState("access", ctx({ ...base, account: { ...base.account, requested: true } }))).toBe("wait");
-    for (const id of ["create", "install", "repo", "campaign", "init", "agents", "curator", "done"] as const) expect(hostedStepState(id, ctx(base))).toBe("locked");
+    for (const id of ["repo", "vault", "agent", "curate"] as const) expect(hostedStepState(id, ctx(base))).toBe("locked");
   });
 
-  it("walks an approved account through create, install, pick, name and set up", () => {
-    expect(hostedDefaultStep(ctx(approved))).toBe("create");
-    expect(hostedLock("repo", ctx(approved))).toBeDefined();
-    expect(hostedStepState("campaign", ctx(approved))).toBe("todo");
+  it("walks an approved account through the repo (create, install, pick) and the vault", () => {
+    expect(hostedDefaultStep(ctx(approved))).toBe("repo");
+    expect(hostedLock("vault", ctx(approved))).toEqual(["Install the app on your repo first.", "Install the app on your repo first."]);
     expect(hostedDefaultStep(ctx(installed))).toBe("repo");
-    expect(hostedStepState("install", ctx(installed))).toBe("done");
-    expect(hostedStepState("init", ctx(installed, { picked: 1 }))).toBe("locked");
-    expect(hostedDefaultStep(ctx(installed, { picked: 1 }))).toBe("campaign");
-    expect(hostedDefaultStep(ctx(installed, { picked: 1, draftReady: true }))).toBe("init");
-    expect(hostedStepState("init", ctx(installed, { picked: 1, draftReady: true }))).toBe("todo");
+    expect(hostedStepState("repo", ctx(installed))).toBe("todo");
+    expect(hostedLock("vault", ctx(installed))).toEqual(["Pick the repo first.", "Pick the repo first."]);
+    expect(hostedStepState("repo", ctx(installed, { picked: 1 }))).toBe("done");
+    expect(hostedDefaultStep(ctx(installed, { picked: 1 }))).toBe("vault");
+    expect(hostedStepState("vault", ctx(installed, { picked: 1 }))).toBe("todo");
     // A repo the installation can no longer see doesn't count as picked.
     expect(hostedStepState("repo", ctx(installed, { picked: 99 }))).toBe("todo");
   });
 
-  it("unlocks agents and the curator once the vault is ready", () => {
-    expect(hostedStepState("agents", ctx(installed))).toBe("locked");
-    expect(hostedDefaultStep(ctx(ready))).toBe("agents");
+  it("unlocks the agent and curation once the vault is ready", () => {
+    expect(hostedStepState("agent", ctx(installed))).toBe("locked");
+    expect(hostedDefaultStep(ctx(ready))).toBe("agent");
     const withAgent: HostedStatus = { ...ready, keys: [{ id: "a".repeat(64), kind: "agent", scopes: ["read"], label: "Agents", created: "2026-10-01T00:00:00Z" }] };
-    expect(hostedStepState("agents", ctx(withAgent))).toBe("done");
-    expect(hostedDefaultStep(ctx(withAgent))).toBe("curator");
-    expect(hostedDefaultStep(ctx({ ...withAgent, curatorActions: true }))).toBe("done");
+    expect(hostedStepState("agent", ctx(withAgent))).toBe("done");
+    expect(hostedDefaultStep(ctx(withAgent))).toBe("curate");
+    expect(hostedStepState("curate", ctx(withAgent))).toBe("todo");
+    expect(hostedStepState("curate", ctx({ ...withAgent, curatorActions: true }))).toBe("done");
   });
 
-  it("sends a disconnected vault back to installing the app", () => {
+  it("counts a sign-in app as the agent, and one that may curate as the curator", () => {
+    expect(hostedStepState("agent", ctx(ready, { apps: [app()] }))).toBe("done");
+    expect(hostedStepState("curate", ctx(ready, { apps: [app()] }))).toBe("todo");
+    expect(hostedDefaultStep(ctx(ready, { apps: [app()] }))).toBe("curate");
+    expect(hostedStepState("curate", ctx(ready, { apps: [app({ curate: true })] }))).toBe("done");
+    // Another vault's grant counts for neither.
+    expect(hostedStepState("agent", ctx(ready, { apps: [app({ vault: "v2", curate: true })] }))).toBe("todo");
+    expect(hostedStepState("curate", ctx(ready, { apps: [app({ vault: "v2", curate: true })] }))).toBe("todo");
+  });
+
+  it("sends a disconnected vault back to the repo step", () => {
     const gone: HostedStatus = { ...approved, vault: { id: "v1", fullName: "player/lisbon-arc", branch: "main", status: "disconnected", reason: "uninstalled" } };
-    expect(hostedDefaultStep(ctx(gone))).toBe("install");
-    expect(hostedStepState("install", ctx(gone))).toBe("error");
-    expect(hostedStepState("init", ctx(gone))).toBe("locked");
+    expect(hostedDefaultStep(ctx(gone))).toBe("repo");
+    expect(hostedStepState("repo", ctx(gone))).toBe("error");
+    expect(hostedStepState("vault", ctx(gone))).toBe("locked");
+    expect(hostedLock("vault", ctx(gone))).toEqual(["Install the app on your repo again first.", "Install the app on your repo again first."]);
+  });
+
+  it("waits on a vault being set up", () => {
+    const busy: HostedStatus = { ...approved, vault: { id: "v1", fullName: "player/vault", branch: "main", status: "bootstrapping" } };
+    expect(hostedDefaultStep(ctx(busy))).toBe("vault");
+    expect(hostedStepState("vault", ctx(busy))).toBe("wait");
+    expect(hostedStepState("repo", ctx(busy))).toBe("done");
+  });
+});
+
+describe("setup page anchors", () => {
+  const steps = (ready: boolean, adding = false) => (h: string) => resolveSetupHash(h, { ready, adding });
+
+  it("keeps every old step id as an alias of its new step while setting up", () => {
+    const at = steps(false);
+    expect(at("#create")).toEqual({ step: "repo", alias: true });
+    expect(at("#install")).toEqual({ step: "repo", alias: true });
+    // Where the GitHub App install and GitLab connect send people back (SETUP_REPO): a step id of its own.
+    expect(at("#repo")).toEqual({ step: "repo", alias: false });
+    expect(at("#campaign")).toEqual({ step: "vault", alias: true });
+    expect(at("#init")).toEqual({ step: "vault", alias: true });
+    expect(at("#agents")).toEqual({ step: "agent", alias: true });
+    expect(at("#curator")).toEqual({ step: "curate", alias: true });
+    expect(at("#done")).toEqual({ step: "curate", alias: true });
+    expect(at("#account")).toEqual({ anchor: "account", alias: false });
+    expect(at("#personalization")).toEqual({ anchor: "personalization", alias: false });
+    expect(at("")).toBeUndefined();
+    expect(at("#somewhere")).toBeUndefined();
+    expect(parseHostedStep("toString")).toBeUndefined();
+  });
+
+  it("sends old step hashes on a ready vault to their section, and keeps the section anchors", () => {
+    const at = steps(true);
+    expect(at("#curator")).toEqual({ anchor: "curation", alias: true });
+    expect(at("#agents")).toEqual({ anchor: "setup-agents", alias: true });
+    expect(at("#repo")).toEqual({ anchor: "sz-repo", alias: true });
+    expect(at("#create")).toEqual({ anchor: "sz-repo", alias: true });
+    expect(at("#init")).toEqual({ anchor: "sz-repo", alias: true });
+    expect(at("#access")).toEqual({ anchor: "account", alias: true });
+    expect(at("#done")).toEqual({ anchor: "setup-vault", alias: true });
+    // The anchors in use: curationNote (#curation), CURATION_CONTROL (#connections), the SECTION map, the user menu and privacy notice.
+    for (const a of ["curation", "connections", "account", "sz-repo", "secrets", "vaults", "people", "invite", "personalization", "setup-vault"]) expect(at(`#${a}`)).toEqual({ anchor: a, alias: false });
+    // Steps 4 and 5 are still the wizard on a ready vault: init lands on #agent.
+    expect(at("#agent")).toEqual({ step: "agent", alias: false });
+    expect(at("#curate")).toEqual({ step: "curate", alias: false });
+    expect(at("#vault")).toEqual({ step: "vault", alias: false });
+  });
+
+  it("keeps the add-a-vault flow's step hashes, beside a ready vault", () => {
+    const at = steps(true, true);
+    for (const h of ["create", "install", "repo"]) expect(at(`#${h}`)).toMatchObject({ step: "repo" });
+    for (const h of ["campaign", "init", "vault"]) expect(at(`#${h}`)).toMatchObject({ step: "vault" });
+  });
+
+  it("has a section for each part of Setup & health, none named like an anchor inside it", () => {
+    expect(SETUP_SECTIONS.map((s) => s.title[0])).toEqual(["Vault", "Agents", "Curation", "People", "Account"]);
+    for (const s of SETUP_SECTIONS) expect(resolveSetupHash(`#${s.id}`, { ready: true })).toEqual({ anchor: s.id, alias: false });
+    expect(SETUP_SECTIONS.map((s) => s.id)).not.toContain("curation");
+  });
+});
+
+describe("every demo stage", () => {
+  const source = { info: async () => ({ mode: "demo", vault: { kind: "memory" }, campaign: "lisbon-arc", human: "player", actor: { kind: "human", id: "player" } }) } as never;
+  async function at(stage: HostedDemoStage, provider?: "gitlab") {
+    const demo = hostedDemo({ base: "/dashboard", source, approveAfter: 0, initDelay: 0, firstCallAfter: 0, bootstrapFor: 60_000 });
+    const get = async (path: string) => (await demo(new Request(`http://127.0.0.1/dashboard/api/${path}`)))!;
+    await get(`__demo/stage?to=${stage}${provider ? `&provider=${provider}` : ""}`);
+    const status = (await get("setup/status")).status === 200 ? ((await (await get("setup/status")).json()) as HostedStatus) : undefined;
+    const apps = status?.vault?.status === "ready" ? ((await (await get("account/apps")).json()) as { apps: HostedConnectedApp[] }).apps : [];
+    return { status, apps };
+  }
+  const expected: Record<HostedDemoStage, string | undefined> = {
+    "signed-out": undefined,
+    waitlisted: "access",
+    requested: "access",
+    denied: "access",
+    fresh: "repo",
+    approved: "repo",
+    installed: "repo",
+    disconnected: "repo",
+    bootstrapping: "vault",
+    ready: "curate",
+  };
+
+  it.each(DEMO_STAGES)("%s lands on its step", async (stage) => {
+    const { status, apps } = await at(stage);
+    if (!status) return expect(expected[stage]).toBeUndefined();
+    const c = ctx(status, { apps });
+    expect(hostedDefaultStep(c)).toBe(expected[stage]);
+    // No step is ever stuck: the one landed on is never locked.
+    expect(hostedStepState(hostedDefaultStep(c), c)).not.toBe("locked");
+  });
+
+  it("offers the disconnected vault's repo to reconnect, preselected", async () => {
+    const { status } = await at("disconnected");
+    // The picker's checked list says it holds a vault (the status lists repos unchecked).
+    const repos: HostedRepoView[] = status!.installation!.repos.map((r) => (r.fullName === "player/lisbon-arc" ? { ...r, adoptable: true } : r));
+    const c = ctx({ ...status!, installation: { ...status!.installation!, repos } });
+    expect(preselectRepo(c)).toBe(502);
+    expect(repoVerdict(hostedRepos(c).find((r) => r.id === 502)!)).toMatchObject({ tag: "Reconnect" });
+    expect(pickedAdoptable({ ...c, picked: 502 })).toBe(true);
+  });
+
+  it("on GitLab: connected, an existing vault among the projects, and ready", async () => {
+    const lab = await at("installed", "gitlab");
+    expect(hostedProvider(ctx(lab.status!))).toBe("gitlab");
+    expect(hostedDefaultStep(ctx(lab.status!))).toBe("repo");
+    expect(hostedDefaultStep(ctx(lab.status!, { picked: 701 }))).toBe("vault");
+    const done = await at("ready", "gitlab");
+    expect(hostedDefaultStep(ctx(done.status!, { apps: done.apps }))).toBe("curate");
   });
 });
 
@@ -72,32 +237,33 @@ describe("hosted onboarding on GitLab", () => {
     expect(hostedProvider(ctx(onGitHub, { provider: "gitlab" }))).toBe("github");
   });
 
-  it("unlocks the repo step once GitLab is connected, and picks from its projects", () => {
+  it("unlocks the vault step once GitLab is connected and a project picked", () => {
     const c = ctx(offered, { provider: "gitlab" });
-    expect(hostedLock("repo", c)).toEqual(["Connect GitLab first.", "Connect GitLab first."]);
-    expect(hostedStepState("install", c)).toBe("todo");
+    expect(hostedLock("vault", c)).toEqual(["Connect GitLab first.", "Connect GitLab first."]);
+    expect(hostedStepState("repo", c)).toBe("todo");
     const done = ctx(connected, { picked: 555 });
     expect(hostedRepos(done).map((r) => r.id)).toEqual([555]);
-    expect(hostedStepState("install", done)).toBe("done");
-    expect(hostedStepState("create", done)).toBe("done");
+    expect(hostedStepState("repo", done)).toBe("done");
     expect(hostedDefaultStep(ctx(connected))).toBe("repo");
-    expect(hostedDefaultStep(done)).toBe("campaign");
-    expect(hostedDefaultStep({ ...done, draftReady: true })).toBe("init");
+    expect(hostedLock("vault", ctx(connected))).toEqual(["Pick the project first.", "Pick the project first."]);
+    expect(hostedDefaultStep(done)).toBe("vault");
+    // The only project that can be the vault is preselected.
+    expect(preselectRepo(ctx(connected))).toBe(555);
     // A project GitLab no longer lists doesn't count as picked, and neither does a GitHub repo's id.
     expect(hostedStepState("repo", ctx(connected, { picked: 1 }))).toBe("todo");
   });
 
   it("sends a revoked connection back to connecting", () => {
     const revoked: HostedStatus = { ...offered, gitlab: { ...offered.gitlab!, connected: false, login: "player", error: "GitLab no longer accepts the connection; connect it again." }, vault: { id: "v1", fullName: "player/vault", branch: "main", status: "disconnected", reason: "token_revoked", provider: "gitlab" } };
-    expect(hostedDefaultStep(ctx(revoked))).toBe("install");
-    expect(hostedStepState("install", ctx(revoked))).toBe("error");
-    expect(hostedLock("repo", ctx(revoked))).toEqual(["Connect GitLab again first.", "Connect GitLab again first."]);
+    expect(hostedDefaultStep(ctx(revoked))).toBe("repo");
+    expect(hostedStepState("repo", ctx(revoked))).toBe("error");
+    expect(hostedLock("vault", ctx(revoked))).toEqual(["Connect GitLab again first.", "Connect GitLab again first."]);
   });
 
   it("words the steps for GitLab", () => {
-    expect(hostedStepDef("install", "gitlab").title[0]).toBe("Connect GitLab");
-    expect(hostedStepDef("create", "gitlab").lede[0]).toMatch(/GitLab project/);
-    expect(hostedStepDef("agents", "gitlab")).toEqual(hostedStepDef("agents"));
+    expect(hostedStepDef("repo", "gitlab").title[0]).toBe("Project");
+    expect(hostedStepDef("repo", "gitlab").lede[0]).toMatch(/GitLab project/);
+    expect(hostedStepDef("agent", "gitlab")).toEqual(hostedStepDef("agent"));
   });
 
   it("asks for the provider only when it is GitLab", () => {
@@ -125,6 +291,13 @@ describe("repo picker", () => {
     expect(repoVerdict({ id: 4, fullName: "player/maybe", private: true, empty: false })).toMatchObject({ usable: true, tone: "warn" });
     expect(repoVerdict({ id: 5, fullName: "player/unchecked", private: true })).toMatchObject({ usable: true, tag: "Not checked" });
   });
+
+  it("preselects only when there's no real choice", () => {
+    const two: HostedStatus = { ...approved, installation: { id: 7, repos: [{ id: 1, fullName: "player/vault", private: true, empty: true }, { id: 2, fullName: "player/notes", private: false }] } };
+    expect(preselectRepo(ctx(two))).toBe(1);
+    const choice: HostedStatus = { ...two, installation: { id: 7, repos: [...two.installation!.repos, { id: 3, fullName: "player/other", private: true, empty: true }] } };
+    expect(preselectRepo(ctx(choice))).toBeUndefined();
+  });
 });
 
 describe("reconnecting a repo that already holds a vault", () => {
@@ -133,25 +306,19 @@ describe("reconnecting a repo that already holds a vault", () => {
   const fresh = { id: 2, fullName: "player/harbor-notes", private: true, empty: true };
   const reinstalled: HostedStatus = { ...approved, installation: { id: 8, repos: [existing, fresh] }, vault, vaults: [vault] };
 
-  it("skips the naming step: an existing vault keeps its own settings", () => {
+  it("asks nothing in the vault step: an existing vault keeps its own settings", () => {
     const resume = ctx(reinstalled, { picked: 1 });
     expect(pickedAdoptable(resume)).toBe(true);
-    expect(hostedStepState("campaign", resume)).toBe("na");
-    expect(hostedLock("init", resume)).toBeUndefined();
-    expect(hostedStepState("init", resume)).toBe("todo");
-    expect(hostedDefaultStep(resume)).toBe("init");
-    // A new repo still goes through the form, and nothing picked means nothing adopted.
+    expect(hostedLock("vault", resume)).toBeUndefined();
+    expect(hostedStepState("vault", resume)).toBe("todo");
+    expect(hostedDefaultStep(resume)).toBe("vault");
+    // A new repo goes through the name, and nothing picked means nothing adopted.
     const created = ctx(reinstalled, { picked: 2 });
     expect(pickedAdoptable(created)).toBe(false);
-    expect(hostedStepState("campaign", created)).toBe("todo");
-    expect(hostedLock("init", created)).toBeDefined();
-    expect(hostedDefaultStep(created)).toBe("campaign");
+    expect(hostedStepState("vault", created)).toBe("error");
     expect(pickedAdoptable(ctx(reinstalled))).toBe(false);
-    // The footer steps over the naming step both ways, and the naming step itself still has its neighbours.
-    expect(hostedNeighbors("repo", "campaign").next?.id).toBe("init");
-    expect(hostedNeighbors("init", "campaign").prev?.id).toBe("repo");
-    expect(hostedNeighbors("campaign", "campaign")).toMatchObject({ prev: { id: "repo" }, next: { id: "init" } });
-    expect(hostedNeighbors("repo").next?.id).toBe("campaign");
+    // The disconnected vault's own repo is the one preselected.
+    expect(preselectRepo(ctx(reinstalled))).toBe(1);
   });
 
   it("offers a disconnected vault's repo again, while a connected one stays taken", () => {
@@ -197,7 +364,7 @@ describe("adding another vault", () => {
     expect(fresh.keys).toBeUndefined();
     expect(fresh.items.map((i) => i.id)).toEqual(["access"]);
     expect(hostedDefaultStep(ctx(fresh))).toBe("repo");
-    expect(hostedStepState("agents", ctx(fresh))).toBe("locked");
+    expect(hostedStepState("agent", ctx(fresh))).toBe("locked");
   });
 
   it("marks repos that are vaults already, and refuses them", () => {
@@ -207,6 +374,7 @@ describe("adding another vault", () => {
       ["player/harbor-notes", false],
     ]);
     expect(repoVerdict(repos[0]!)).toMatchObject({ usable: false, tag: "Already yours" });
+    expect(preselectRepo(ctx(forNewVault(two)))).toBe(2);
   });
 
   it("stops at the limit, and before approval", () => {
@@ -218,20 +386,24 @@ describe("adding another vault", () => {
   });
 });
 
-describe("campaign draft", () => {
-  it("needs a name, a valid id and zone, and a saved key unless skipped", () => {
-    const d = { ...newDraft("Europe/Lisbon"), campaign: "Lisbon Arc" };
-    expect(draftProblems(d).secrets).toMatch(/key/);
-    expect(draftReady({ ...d, secrets: "skip" })).toBe(true);
-    expect(draftReady({ ...d, recipient: "age1example", saved: false })).toBe(false);
-    expect(draftReady({ ...d, recipient: "age1example", saved: true })).toBe(true);
+describe("the vault draft", () => {
+  it("needs only a name: your id comes from your login, and the key never blocks", () => {
+    const d = { ...newDraft("Europe/Lisbon", "Player_One"), campaign: "Lisbon Arc" };
+    expect(d.human).toBe("player-one");
+    expect(newDraft("UTC").human).toBe("player");
+    expect(d.secrets).toBe("create");
+    expect(draftReady(d)).toBe(true);
+    expect(draftReady({ ...d, campaign: " " })).toBe(false);
+    expect(draftReady({ ...d, recipient: "age1example", saved: false })).toBe(true);
     expect(draftProblems({ ...d, human: "Player" }).human).toBeDefined();
     expect(draftProblems({ ...d, timezone: "Mars/Olympus" }).timezone).toBeDefined();
   });
 
-  it("sends only the public key, and the seed only when asked", () => {
+  it("sends the public key only once its file is saved, and the seed only when asked", () => {
     const d = { ...newDraft("Europe/Lisbon"), campaign: " Lisbon Arc ", recipient: "age1example", saved: true };
     expect(initRequest(d, 1)).toEqual({ repoId: 1, campaign: "Lisbon Arc", human: "player", timezone: "Europe/Lisbon", domains: ["admin", "housing", "career", "finance", "health", "story"], recipient: "age1example" });
+    // A key whose file wasn't saved would lock secrets nobody can read: the vault starts without it.
+    expect(initRequest({ ...d, saved: false }, 1)).not.toHaveProperty("recipient");
     expect(initRequest({ ...d, seed: true, secrets: "skip" }, 1)).toMatchObject({ seed: "example-relocation" });
     expect(initRequest({ ...d, presets: ["people", "student"] }, 1)).toMatchObject({ presets: ["people", "student"] });
     // An existing vault is adopted as it is.
@@ -239,11 +411,28 @@ describe("campaign draft", () => {
     expect(initRequest({ ...d, secrets: "skip" }, 1)).not.toHaveProperty("recipient");
   });
 
-  it("names the key file after the campaign and writes only the identity", () => {
+  it("names the key file after the vault and writes only the identity", () => {
     expect(identityFileName("Lisbon Arc")).toBe("hippocampus-lisbon-arc.agekey");
     expect(identityFileName("Ação!")).toBe("hippocampus-acao.agekey");
     expect(identityFileName("")).toBe("hippocampus-vault.agekey");
     expect(identityFileText("AGE-SECRET-KEY-1EXAMPLE \n")).toBe("AGE-SECRET-KEY-1EXAMPLE\n");
+  });
+});
+
+describe("an agent arriving", () => {
+  const key = (id: string, extra: object = {}) => ({ id, kind: "agent" as const, scopes: ["read", "remember", "goal"], label: "Claude Code", created: "2026-10-01T00:00:00Z", ...extra });
+
+  it("waits, then sees the connection approved, then its first call and the agent's name", () => {
+    const before = new Set(["old"]);
+    expect(arrival(connectionRows([key("old", { lastUsed: "2026-10-01T01:00:00Z" })], [], "v1"), before)).toEqual({ state: "waiting" });
+    expect(arrival(connectionRows([key("old"), key("new")], [], "v1"), before)).toEqual({ state: "approved", name: "Claude Code" });
+    const called = connectionRows([key("new", { lastUsed: "2026-10-02T00:00:00Z" })], [], "v1", [{ agent: "claude-code-home-finder", credential: "key:new", since: "2026-10-02T00:00:00Z" }]);
+    expect(arrival(called, before)).toEqual({ state: "connected", name: "Claude Code", agent: "claude-code-home-finder" });
+  });
+
+  it("counts a sign-in app at once, and never the curator's own connection", () => {
+    expect(arrival(connectionRows([], [app({ agent: "claude-web" })], "v1"), new Set())).toEqual({ state: "connected", name: "Claude", agent: "claude-web" });
+    expect(arrival(connectionRows([{ ...key("c"), kind: "curator", scopes: ["read", "curate"], lastUsed: "2026-10-02T00:00:00Z" }], [], "v1"), new Set())).toEqual({ state: "waiting" });
   });
 });
 

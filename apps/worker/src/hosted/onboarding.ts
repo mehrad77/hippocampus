@@ -2,6 +2,7 @@ import { AGE_RECIPIENT, SLUG, presetCatalog, validTimezone, type HumanSetting, t
 import { HttpError, byRecentPush, type HostedGitLab, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSetupPort, type HostedSetupStatus, type HostedVault, type SetupItem } from "@hippocampus/dashboard";
 import { isConnectApp, keySnippets } from "@hippocampus/dashboard/connect";
 import { EmptyRepositoryError, GitHubStore } from "@hippocampus/store-github";
+import { GitLabStore } from "@hippocampus/store-gitlab";
 import { PRESETS, SEEDS } from "@hippocampus/template";
 import { TOKEN_ID } from "../auth.ts";
 import { keyCredential } from "../oauth.ts";
@@ -128,6 +129,29 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
   }
 
   const gitlabRepo = (p: GitLabProject): HostedRepo => ({ id: p.id, fullName: p.fullName, private: p.visibility === "private", ...(p.visibility === "private" ? { empty: p.empty } : {}) });
+
+  /**
+   * The person's GitLab projects, each private one that has files (the first few, and always their
+   * disconnected GitLab vaults) saying whether it already holds a vault, so picking it adopts or
+   * reconnects it as it is: the plan `bootstrapVault` makes, as for GitHub's `listRepos`.
+   */
+  async function checkedGitLabRepos(projects: readonly GitLabProject[]): Promise<HostedRepo[]> {
+    const g = needGitLab();
+    const token = g.tokenFor(account.id);
+    const lost = new Set(vaults.filter((v) => v.provider === "gitlab" && v.status === "disconnected").map((v) => v.repoId));
+    let checked = 0;
+    return Promise.all(
+      projects.map(async (p): Promise<HostedRepo> => {
+        const base = gitlabRepo(p);
+        if (p.visibility !== "private" || p.empty || (!lost.has(p.id) && checked++ >= MAX_CHECKED)) return base;
+        const store = new GitLabStore({ project: p.id, branch: p.defaultBranch, token, fetch: g.fetch, apiUrl: g.client.apiUrl });
+        const paths = await store.list().catch(() => undefined);
+        if (!paths) return base;
+        const found = plan(paths);
+        return found.mode === "adopt" ? { ...base, adoptable: true } : found.mode === "initialize" ? { ...base, empty: true } : { ...base, adoptable: false };
+      }),
+    );
+  }
 
   async function gitlabStatus(): Promise<HostedGitLab> {
     const base = { connectUrl: GITLAB_CONNECT_PATH, newRepoUrl: `${settings.gitlab!.url}/projects/new` };
@@ -265,7 +289,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       if (path === "repos" && method === "GET" && url?.searchParams.get("provider") === "gitlab") {
         const found = await gitlabProjects();
         if (!found) throw new HttpError(409, "Connect your GitLab account first.", "NO_GITLAB_CONNECTION");
-        return { gitlab: { login: found.login }, repos: found.projects.map(gitlabRepo) };
+        return { gitlab: { login: found.login }, repos: await checkedGitLabRepos(found.projects) };
       }
       if (path === "gitlab/disconnect" && method === "POST") {
         const onGitLab = vaults.find((v) => v.provider === "gitlab" && v.status === "ready");
@@ -467,8 +491,9 @@ function items(s: HostedSetupStatus): SetupItem[] {
   else if (v.status === "bootstrapping") out.push({ id: "vault", title: "Vault", state: "warn", detail: `Setting up ${v.fullName}…`, how: "performed" });
   else out.push({ id: "vault", title: "Vault", state: "error", detail: `${v.fullName} is disconnected: ${REASONS[v.reason as DisconnectReason] ?? "reconnect it"}`, how: "guided" });
   if (ready) {
-    const n = s.keys?.length ?? 0;
-    out.push({ id: "keys", title: "Agent keys", state: n ? "done" : "todo", detail: n ? `${n} ${n === 1 ? "key" : "keys"} issued` : "Mint a key for your agents (or connect Claude.ai or ChatGPT with the connector URL)", how: "performed" });
+    // The curator's keys aren't agents' connections: they count under curation.
+    const n = (s.keys ?? []).filter((k) => k.kind !== "curator").length;
+    out.push({ id: "keys", title: "Connected apps", state: n ? "done" : "todo", detail: n ? `${n} ${n === 1 ? "app" : "apps"} connected with a key` : "Add your first agent: paste the setup prompt into it (or connect Claude.ai or ChatGPT with the connector address)", how: "performed" });
     if (s.curatorActions !== undefined)
       out.push(
         s.curatorActions

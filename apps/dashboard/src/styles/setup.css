@@ -1556,3 +1556,58 @@
   border: 1px solid var(--rule-strong);
   background: var(--surface-sunk);
 }
+
+/* ── Setup & health in sections, with a sticky in-page nav ─────────────── */
+
+.sz-secnav {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin-inline: calc(-1 * var(--space-2));
+  padding: var(--space-2);
+  background: color-mix(in oklab, var(--bg) 92%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--rule);
+}
+
+.sz-secnav ul {
+  display: flex;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.sz-secnav a {
+  display: inline-block;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-s);
+  white-space: nowrap;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.sz-secnav a:hover,
+.sz-secnav a:focus-visible {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+/* Anchors land below the sticky nav (and the phone top bar), not under it. */
+.sz-section,
+.sz [id] {
+  scroll-margin-top: 4.5rem;
+}
+
+@media (max-width: 960px) {
+  .sz-secnav {
+    top: 52px;
+  }
+
+  .sz-section,
+  .sz [id] {
+    scroll-margin-top: 8rem;
+  }
+}
