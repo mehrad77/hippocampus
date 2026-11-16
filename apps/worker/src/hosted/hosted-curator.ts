@@ -39,7 +39,7 @@ export interface HostedCuratorDeps {
   db: SqlDriver;
   /** The account that owns the vault (`vaults.account_id`). */
   accountOf(vaultId: string): Promise<number | undefined>;
-  /** The operator's kill switch (`HIPPO_HOSTED_CURATOR=off`). */
+  /** The operator hasn't turned hosted curation on (`HIPPO_HOSTED_CURATOR=on`), or turned it off again. */
   off?: boolean;
   /** A local fake provider, on a loopback Worker only (settings.ts). */
   urls?: Partial<Record<HostedProvider, string>>;

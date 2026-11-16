@@ -238,4 +238,8 @@ Run it in `apps/worker`. It can't cross a Durable Object class migration.
 
 KV writes run out first: each sign-in, OAuth client registration and token refresh writes one, and Free allows 1,000 a day.
 
-Hosted curation (the owner's own model key) needs Workers Paid: move the instance first. It is on wherever `HIPPO_TOKEN_KEY` is set. On an instance without GitLab, set `HIPPO_TOKEN_KEY` only after the release with hosted curation is deployed and healthy. An earlier Worker accepts the key only together with the GitLab settings, so a rollback past that release with the key alone set fails to start. `HIPPO_HOSTED_CURATOR=off` switches hosted curation off without a deploy.
+Hosted curation (the owner's own model key) is opt-in: it's offered only once `HIPPO_HOSTED_CURATOR=on` is set, with `HIPPO_TOKEN_KEY`. Before setting it:
+- move the instance to Workers Paid;
+- run the curator eval and record its mixes in `RECOMMENDED` (`packages/curator/src/pricing.ts`), so owners start from tested models.
+
+On an instance without GitLab, set `HIPPO_TOKEN_KEY` only after the release with hosted curation is deployed and healthy. An earlier Worker accepts the key only together with the GitLab settings, so a rollback past that release with the key alone set fails to start. Removing `HIPPO_HOSTED_CURATOR=on` turns hosted curation off without a deploy: no run starts, and an open one closes at its next alarm.

@@ -25,14 +25,18 @@ export interface HostedSettings {
   gitlab?: GitLabSettings;
   /** Seals secrets kept in the registry (`HIPPO_TOKEN_KEY`). GitLab needs it, but it can be set without GitLab. */
   tokenKey?: string;
-  /** `HIPPO_HOSTED_CURATOR=off`: the operator's kill switch. No hosted run starts, and an open one closes at its next alarm. */
-  hostedCuratorOff?: boolean;
+  /**
+   * `HIPPO_HOSTED_CURATOR=on`: the operator offers hosted curation. Opt-in, because `HIPPO_TOKEN_KEY` is
+   * already set wherever GitLab is: turning it on is a decision (Workers Paid, the eval's models), not a
+   * side effect. Unset again, no hosted run starts, and an open one closes at its next alarm.
+   */
+  hostedCuratorOn?: boolean;
   /** A local fake model provider, per provider (`HIPPO_LLM_ANTHROPIC_URL`, `HIPPO_LLM_MISTRAL_URL`). Loopback Workers only. */
   llmUrls?: Partial<Record<HostedProvider, string>>;
 }
 
-/** Whether this instance can curate with an owner's key: it has a key to seal it with, and the operator hasn't switched it off. */
-export const hostedCurationAvailable = (s: Pick<HostedSettings, "tokenKey" | "hostedCuratorOff">) => !!s.tokenKey && !s.hostedCuratorOff;
+/** Whether this instance can curate with an owner's key: the operator turned it on, and it has a key to seal it with. */
+export const hostedCurationAvailable = (s: Pick<HostedSettings, "tokenKey" | "hostedCuratorOn">) => !!s.tokenKey && !!s.hostedCuratorOn;
 
 export interface GitLabSettings {
   /** Web origin of the GitLab instance, no trailing slash (default `https://gitlab.com`). */
@@ -103,7 +107,7 @@ export function hostedSettings(env: HostedVars): HostedSettings {
   if (llm.length && !local) throw new Error(`Unset ${llm.join(" and ")}: only local development against a fake model provider uses them`);
   const anthropic = trimSlash(env.HIPPO_LLM_ANTHROPIC_URL);
   const mistral = trimSlash(env.HIPPO_LLM_MISTRAL_URL);
-  // Only `off` means anything: a typo must not take the app down, and leaves curation as it was.
+  // Only `on` turns it on; anything else (a typo too) leaves it off, and never stops the app.
   const curator = env.HIPPO_HOSTED_CURATOR?.trim().toLowerCase();
   return {
     publicUrl: publicUrl.origin,
@@ -118,7 +122,7 @@ export function hostedSettings(env: HostedVars): HostedSettings {
     oauthUrl: trimSlash(env.GITHUB_OAUTH_URL),
     gitlab: gitlabSettings(env),
     tokenKey: tokenKey(env),
-    ...(curator === "off" ? { hostedCuratorOff: true } : {}),
+    ...(curator === "on" ? { hostedCuratorOn: true } : {}),
     ...(anthropic || mistral ? { llmUrls: { ...(anthropic ? { anthropic } : {}), ...(mistral ? { mistral } : {}) } } : {}),
   };
 }

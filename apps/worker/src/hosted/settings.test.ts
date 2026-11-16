@@ -49,14 +49,15 @@ describe("hostedSettings", () => {
     expect(hostedSettings(env({ HIPPO_TOKEN_KEY: key, GITLAB_CLIENT_ID: "id", GITLAB_CLIENT_SECRET: "s" })).gitlab).toMatchObject({ clientId: "id", tokenKey: key });
   });
 
-  it("turns hosted curation off only with HIPPO_HOSTED_CURATOR=off, and on only with a token key", () => {
+  it("offers hosted curation only when the operator turns it on, and has a token key to seal with", () => {
     const key = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
-    expect(hostedCurationAvailable(hostedSettings(env({ HIPPO_TOKEN_KEY: key })))).toBe(true);
-    expect(hostedCurationAvailable(hostedSettings(env()))).toBe(false);
-    expect(hostedSettings(env({ HIPPO_TOKEN_KEY: key, HIPPO_HOSTED_CURATOR: " OFF " }))).toMatchObject({ hostedCuratorOff: true });
+    // A token key alone (any instance with GitLab has one) doesn't turn it on.
+    expect(hostedCurationAvailable(hostedSettings(env({ HIPPO_TOKEN_KEY: key })))).toBe(false);
+    expect(hostedCurationAvailable(hostedSettings(env({ HIPPO_TOKEN_KEY: key, HIPPO_HOSTED_CURATOR: " ON " })))).toBe(true);
+    expect(hostedCurationAvailable(hostedSettings(env({ HIPPO_HOSTED_CURATOR: "on" })))).toBe(false);
     expect(hostedCurationAvailable(hostedSettings(env({ HIPPO_TOKEN_KEY: key, HIPPO_HOSTED_CURATOR: "off" })))).toBe(false);
-    // Anything else leaves it as it was: a typo mustn't take the app down.
-    expect(hostedSettings(env({ HIPPO_TOKEN_KEY: key, HIPPO_HOSTED_CURATOR: "of" })).hostedCuratorOff).toBeUndefined();
+    // Anything else leaves it off, and a typo mustn't take the app down.
+    expect(hostedSettings(env({ HIPPO_TOKEN_KEY: key, HIPPO_HOSTED_CURATOR: "yes" })).hostedCuratorOn).toBeUndefined();
   });
 
   it("sends model calls to a fake provider only for local development, without echoing the address", () => {

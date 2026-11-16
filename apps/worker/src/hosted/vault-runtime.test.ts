@@ -957,7 +957,7 @@ describe("VaultRuntime: hosted curation with the owner's key", () => {
     await on.remember();
     expect(await on.runtime.runHostedCuratorNow()).toMatchObject({ run: expect.stringMatching(/^run-/) });
 
-    // The same object after a deploy with HIPPO_HOSTED_CURATOR=off.
+    // The same object after a deploy without HIPPO_HOSTED_CURATOR=on.
     const off = new VaultRuntime({ ...on.deps, hosted: { ...on.deps.hosted!, off: true }, storage: on.storage, meta: on.meta });
     await off.alarm();
     const { run, history } = await off.relay.status();

@@ -21,7 +21,7 @@ const save = (o: Record<string, unknown> = {}) => ({ provider: "anthropic", mode
 
 async function owner(opts: { off?: boolean } = {}) {
   const calls: string[] = [];
-  const h = await hostedApp({ settings: { tokenKey: TEST_TOKEN_KEY, ...(opts.off ? { hostedCuratorOff: true } : {}) }, llm: anthropic(calls) });
+  const h = await hostedApp({ settings: { tokenKey: TEST_TOKEN_KEY, ...(opts.off ? {} : { hostedCuratorOn: true }) }, llm: anthropic(calls) });
   const player = await h.readyAccount(PLAYER);
   const status = async () => ((await (await h.api(player.visit, "setup/status")).json()) as HostedSetupStatus).hostedCurator;
   return { h, ...player, calls, status };

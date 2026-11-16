@@ -217,7 +217,7 @@ Unless its owner turns on hosted curation (§4c), the hosted app has no model of
 
 ## 4c. Hosted curation with the owner's key
 
-On an instance with `HIPPO_TOKEN_KEY` (and `HIPPO_HOSTED_CURATOR` not `off`), an owner can have the Worker run sleep itself (Setup → Nightly curation → "Hippocampus runs it with your key"):
+On an instance whose operator set `HIPPO_HOSTED_CURATOR=on` (with `HIPPO_TOKEN_KEY` to seal keys), an owner can have the Worker run sleep itself (Setup → Nightly curation → "Hippocampus runs it with your key"):
 
 - **The key.** The account's Anthropic or Mistral API key is checked with the provider (listing its models, which costs nothing), sealed in the registry under `HIPPO_TOKEN_KEY` and bound to the account (`llm-access.ts`). Only its last four characters come back. Requests go to the provider's own API; there is no base-URL field.
 - **Models.** Each curator step (mentions, match, claims, summary) has its own model (`stepLLM`). The default mix is the curator eval's recommendation (`RECOMMENDED` in `pricing.ts`), per step the cheapest model that passes the step's hard gates within a margin of the best; until the eval has run, the owner picks one model for every step. A model without a row in the dated price table can't be metered, so it is refused.

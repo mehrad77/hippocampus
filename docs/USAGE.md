@@ -381,7 +381,7 @@ Until they're all set, the Worker answers with a page naming the missing ones (n
 
 All three must be set together or the Worker says what's missing. One GitLab host per instance. A Cron Trigger (`wrangler.jsonc`) checks GitLab vaults every six hours.
 
-**3c. Hosted curation (optional).** `HIPPO_TOKEN_KEY` alone (made as above) turns on **Hippocampus runs it with your key**: owners save their own model key, which it seals. An instance with GitLab already has the key, so it offers hosted curation as soon as it runs this version. It needs the Workers paid plan. `HIPPO_HOSTED_CURATOR=off` switches it off for everyone at once: no run starts, and an open one closes at its next alarm. Saved keys stay sealed until it's back on.
+**3c. Hosted curation (optional).** To offer **Hippocampus runs it with your key**, set `HIPPO_HOSTED_CURATOR=on` together with `HIPPO_TOKEN_KEY` (made as above), which seals the keys owners save. It's off until you do, even on an instance that already has the key for GitLab. It needs the Workers paid plan. Removing the setting switches it off for everyone at once: no run starts, and an open one closes at its next alarm. Saved keys stay sealed until it's back on.
 
 **4. Deploy.** From the repository root. This builds the dashboard, applies the registry's migrations (`apps/worker/migrations/`), then deploys:
 

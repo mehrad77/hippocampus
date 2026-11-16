@@ -30,7 +30,7 @@ export interface HostedEnv {
   GITLAB_CLIENT_ID?: string;
   GITLAB_CLIENT_SECRET?: string;
   HIPPO_TOKEN_KEY?: string;
-  /** `off`: the operator's kill switch for hosted curation. */
+  /** `on`: the operator offers hosted curation (needs `HIPPO_TOKEN_KEY` too). Anything else, or unset, is off. */
   HIPPO_HOSTED_CURATOR?: string;
   /** Only for local development against a fake model provider (a loopback HIPPO_PUBLIC_URL). */
   HIPPO_LLM_ANTHROPIC_URL?: string;

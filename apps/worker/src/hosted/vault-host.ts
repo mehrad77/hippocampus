@@ -52,7 +52,7 @@ export class VaultHost extends DurableObject<HostedEnv> {
                 access: new LlmAccess(db, s.tokenKey),
                 db,
                 accountOf: async (vaultId: string) => (await registry.vault(vaultId))?.accountId,
-                ...(s.hostedCuratorOff ? { off: true } : {}),
+                ...(s.hostedCuratorOn ? {} : { off: true }),
                 ...(s.llmUrls ? { urls: s.llmUrls } : {}),
               },
             }
