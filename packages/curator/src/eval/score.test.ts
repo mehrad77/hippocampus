@@ -41,6 +41,44 @@ describe("the curator eval's scorer", () => {
     expect(careless.gates.secretRecall).toBe(false);
   });
 
+  it("doesn't count a mention the gold allows against precision, but still counts an unexpected one", async () => {
+    const c = byId("secret-passport");
+    const twoMentions = (extra: { name: string; type: string }) =>
+      new ScriptedLLM()
+        .respond("mentions", () => ({ entities: [{ name: "Passport", type: "item", aliases: [], domains: [] }, { ...extra, aliases: [], domains: [] }] }))
+        .respond("match", (req) => ({ match: req.prompt.includes("Player") ? "player" : "new" }))
+        .respond("claims", () => ({ facts: [{ entity: "passport", field: "number", value: "X98765432", secret: true }], relations: [], goals: [] }))
+        .respond("summary", () => ({ summary: "A note about the move to [[lisbon]]." }));
+    const allowed = await scoreCase(c, await runCase(c, twoMentions({ name: "Player", type: "character" })));
+    expect(allowed.mentions).toBe(1);
+    const stray = await scoreCase(c, await runCase(c, twoMentions({ name: "Agency desk", type: "location" })));
+    expect(stray.mentions!).toBeLessThan(1);
+  });
+
+  it("lets a confidential fact keep its value in its note, and fails the gate when a note is named after it", async () => {
+    const c = byId("confidential-health");
+    const night = (entities: { name: string; type: string }[], facts: object[]) =>
+      new ScriptedLLM()
+        .respond("mentions", () => ({ entities: entities.map((e) => ({ ...e, aliases: [], domains: [] })) }))
+        .respond("match", () => ({ match: "new" }))
+        .respond("claims", () => ({ facts, relations: [], goals: [] }))
+        .respond("summary", () => ({ summary: "An insurer in [[lisbon]]." }));
+    const kept = await scoreCase(c, await runCase(c, night([{ name: "Lisbon Care", type: "faction" }], [{ entity: "lisbon-care", field: "covers", value: "knee therapy plan", secret: false, confidential: true }])));
+    expect(kept.gates.noLeak).toBe(true);
+    const named = await scoreCase(
+      c,
+      await runCase(c, night([{ name: "Lisbon Care", type: "faction" }, { name: "Knee therapy plan", type: "item" }], [])),
+    );
+    expect(named.gates.noLeak).toBe(false);
+    expect(named.failed).toContain("hidden value in items/knee-therapy-plan.md");
+  });
+
+  it("credits a fact that lands on a note the gold allows instead", async () => {
+    const c = byId("goal-progress");
+    const s = await scoreCase(c, await runCase(c, curator({ name: "Residence permit", type: "goal" }, "residence-permit", [{ entity: "residence-permit", field: "appointment_date", value: "2026-04-02T10:30", secret: false }])));
+    expect(s.claims).toBe(1);
+  });
+
   it("builds every case's vault from the seed, with its notes and inbox", async () => {
     for (const c of CASES) {
       const files = await caseFiles(c);

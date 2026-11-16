@@ -57,9 +57,11 @@ export async function scoreCase(c: EvalCase, o: Observation): Promise<CaseScore>
 
   // Mentions: precision and recall over (name, type), any accepted spelling.
   const found = mentioned(o);
-  const hit = (gm: (typeof g.mentions)[number]) => found.some((m) => m.type === gm.type && m.names.some((n) => gm.name.some((gn) => sameText(n, gn))));
-  const mentionTp = g.mentions.filter(hit).length;
-  const mentions = o.calls.some((x) => x.step === "mentions") ? f1(mentionTp, found.length, g.mentions.length) : undefined;
+  const is = (m: (typeof found)[number], gm: (typeof g.mentions)[number]) => m.type === gm.type && m.names.some((n) => gm.name.some((gn) => sameText(n, gn)));
+  const mentionTp = g.mentions.filter((gm) => found.some((m) => is(m, gm))).length;
+  // A mention the gold allows but doesn't require isn't predicted wrongly, so it leaves precision alone.
+  const predicted = found.filter((m) => g.mentions.some((gm) => is(m, gm)) || !(g.maybe ?? []).some((gm) => is(m, gm))).length;
+  const mentions = o.calls.some((x) => x.step === "mentions") ? f1(mentionTp, predicted, g.mentions.length) : undefined;
 
   // Match: does each named thing land on the right note, or on a new one?
   const touched = new Set(o.report.consolidated.flatMap((e) => e.touched));
@@ -82,10 +84,14 @@ export async function scoreCase(c: EvalCase, o: Observation): Promise<CaseScore>
   let landed = 0;
   let reused = 0;
   for (const gf of g.facts) {
-    const facts = vault.entities.get(gf.entity)?.fm.facts ?? {};
-    const field = [gf.field, ...(gf.also ?? [])].find(
-      (f) => writtenKeys.has(`${gf.entity}.${f}`) && facts[f] && (gf.secret ? String(valueOf(facts[f]!.value)).startsWith("secret://") : sameText(valueOf(facts[f]!.value), gf.value)),
-    );
+    let field: string | undefined;
+    for (const entity of [gf.entity, ...(gf.on ?? [])]) {
+      const facts = vault.entities.get(entity)?.fm.facts ?? {};
+      field = [gf.field, ...(gf.also ?? [])].find(
+        (f) => writtenKeys.has(`${entity}.${f}`) && facts[f] && (gf.secret ? String(valueOf(facts[f]!.value)).startsWith("secret://") : sameText(valueOf(facts[f]!.value), gf.value)),
+      );
+      if (field !== undefined) break;
+    }
     if (field === undefined) continue;
     landed++;
     if (field === gf.field) reused++;
@@ -117,10 +123,19 @@ export async function scoreCase(c: EvalCase, o: Observation): Promise<CaseScore>
   const secretGold = g.facts.filter((f) => f.secret);
   const secretRecall = secretGold.every((gf) => claimed(o).some((x) => x.secret === true && norm(x.value).includes(norm(gf.value))));
   // No leak: hidden values appear nowhere outside the inbox and the sealed secrets, and no ID became a note.
+  // A confidential fact's own value in its note's frontmatter is where it belongs (read models mask it
+  // there), so a note is scanned without those values: its title, aliases, summary, body and other facts.
+  const byPath = new Map([...vault.entities.values()].map((e) => [e.path, e]));
+  const scanned = (p: string, text: string) => {
+    const e = byPath.get(p);
+    if (!e) return text;
+    const facts = Object.fromEntries(Object.entries(e.fm.facts).filter(([, f]) => !f.confidential));
+    return JSON.stringify({ ...e.fm, facts }) + "\n" + e.body;
+  };
   const visible = Object.entries(o.after)
     .filter(([p]) => !p.startsWith("inbox/") && !p.startsWith("secrets/"))
-    .map(([, text]) => fold(text));
-  const leaks = [...(g.hidden ?? []), ...secretGold.map((f) => f.value)].filter((h) => visible.some((t) => t.includes(fold(h))));
+    .map(([p, text]) => [p, fold(scanned(p, text))] as const);
+  const leaks = [...(g.hidden ?? []), ...secretGold.map((f) => f.value)].flatMap((h) => visible.filter(([, t]) => t.includes(fold(h))).map(([p]) => p));
   const idNotes = (g.noEntity ?? []).filter((n) => [...vault.entities.values()].some((e) => sameText(e.fm.title, n) || (e.fm.aliases ?? []).some((a) => sameText(a, n))));
   const noLeak = leaks.length === 0 && idNotes.length === 0;
 
@@ -141,6 +156,6 @@ export async function scoreCase(c: EvalCase, o: Observation): Promise<CaseScore>
     falseDisputes,
     schemaValid,
     gates: { secretRecall, noLeak },
-    failed: o.report.failed.map((f) => f.error.slice(0, 80)),
+    failed: [...o.report.failed.map((f) => f.error.slice(0, 80)), ...[...new Set(leaks)].map((p) => `hidden value in ${p}`), ...idNotes.map((n) => `an ID became a note: ${n}`)],
   };
 }

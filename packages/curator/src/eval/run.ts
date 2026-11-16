@@ -100,7 +100,11 @@ async function main(): Promise<void> {
   if (missing.length) throw new Error(`no model for ${missing.join(", ")}: pass --model or --step`);
   const key = provider === "anthropic" ? process.env.ANTHROPIC_API_KEY : process.env.MISTRAL_API_KEY;
   if (!key) throw new Error(`set ${provider === "anthropic" ? "ANTHROPIC_API_KEY" : "MISTRAL_API_KEY"} in the environment (never on the command line)`);
-  const cases = values.cases ? CASES.filter((c) => values.cases!.split(",").includes(c.id)) : CASES;
+  const wanted = values.cases?.split(",").map((s) => s.trim()).filter(Boolean);
+  const unknown = (wanted ?? []).filter((id) => !CASES.some((c) => c.id === id));
+  // An unknown id would otherwise run nothing and write an empty result that looks like a pass.
+  if (unknown.length) throw new Error(`unknown case ${unknown.join(", ")}: ${CASES.map((c) => c.id).join(", ")}`);
+  const cases = wanted ? CASES.filter((c) => wanted.includes(c.id)) : CASES;
   const repeat = Math.max(1, Number(values.repeat));
 
   const cacheDir = join(EVAL_DIR, "cache");
