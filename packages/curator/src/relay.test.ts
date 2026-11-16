@@ -577,3 +577,39 @@ describe("the standby gate", () => {
     expect((await relay.start({ curator: "archivist", model: "scripted", force: true })).state).toBe("ask");
   });
 });
+
+describe("how many episodes a run takes", () => {
+  /** The night's three episodes plus `extra` more, with the vault's `batch_size` set when given. */
+  async function inbox(extra: number, batchSize?: number) {
+    const { store } = await setup();
+    for (let i = 0; i < extra; i++)
+      await store.write(`inbox/home-finder/2026-09-27T13${String(i).padStart(2, "0")}00-viewing.md`, episode("home-finder", "2026-09-27T13:00:00Z", `Viewing ${i + 1} of a flat in Lisbon.`));
+    if (batchSize !== undefined) await store.write("_hippo/config.yaml", `${(await store.read("_hippo/config.yaml"))!}curator:\n  batch_size: ${batchSize}\n`);
+    return store;
+  }
+
+  it("takes the vault's whole batch_size, not ten", async () => {
+    const { relay } = relayOver(await inbox(12));
+    const step = await relay.start({ curator: "archivist", model: "scripted" });
+    expect(step.state === "ask" && step.progress.total).toBe(15);
+  });
+
+  it("records a full batch in the review, so the rest read as next rather than failed", async () => {
+    const store = await inbox(2, 3);
+    const { relay } = relayOver(store);
+    const first = await relay.start({ curator: "archivist", model: "scripted" });
+    expect(first.state === "ask" && first.progress.total).toBe(3);
+    const { report } = await runToEnd(relay, first, script());
+    expect(report.remaining).toBe(2);
+    const review = (await store.read("_hippo/review.md"))!;
+    expect(parseDoc(review).data.batch_full).toBe(3);
+    expect(review).toContain("2 still in the inbox (this run took its limit of 3; the rest are next)");
+  });
+
+  it("records no full batch when everything fit", async () => {
+    const store = await inbox(0);
+    const { relay } = relayOver(store);
+    await runToEnd(relay, await relay.start({ curator: "archivist", model: "scripted" }), script());
+    expect(parseDoc((await store.read("_hippo/review.md"))!).data.batch_full).toBeUndefined();
+  });
+});

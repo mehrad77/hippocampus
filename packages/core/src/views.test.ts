@@ -4,7 +4,9 @@ import { parseDoc } from "./markdown.ts";
 import { applyQuestUpdate } from "./ops.ts";
 import { HippoService, parseChronicle } from "./service.ts";
 import { Vault } from "./vault.ts";
-import { parseChronicleDay } from "./views.ts";
+import { episodeView, parseChronicleDay } from "./views.ts";
+import type { Episode } from "./episode.ts";
+import { ulid } from "./text.ts";
 
 const now = () => new Date("2026-09-27T12:00:00.000Z");
 
@@ -226,5 +228,24 @@ describe("human actions", () => {
     ]);
     expect(quest.fm.progress).toEqual({ done: 4, total: 4 });
     expect(quest.fm.updated_by).toBe("player");
+  });
+});
+
+describe("an inbox episode that sat through a sleep", () => {
+  const lastSleep = "2026-11-16T12:49:00.000Z";
+  const arrivedAt = (iso: string, at: string) =>
+    ({ id: `ep-${ulid(Date.parse(iso))}`, path: "inbox/home-finder/x.md", agent: "home-finder", kind: "fact", at, about: [], text: "A flat in Lisbon." }) as unknown as Episode;
+
+  it("goes by when it arrived, not the time the agent wrote on it", () => {
+    expect(episodeView(arrivedAt("2026-11-16T13:00:00Z", "2026-11-01T09:00:00Z"), lastSleep).waitedThroughSleep).toBe(false);
+    expect(episodeView(arrivedAt("2026-11-16T11:00:00Z", "2026-11-16T14:00:00Z"), lastSleep).waitedThroughSleep).toBe(true);
+  });
+
+  it("is next, not failed, when the last sleep took a full batch", () => {
+    const ep = arrivedAt("2026-11-16T11:00:00Z", "2026-11-16T11:00:00Z");
+    expect(episodeView(ep, lastSleep, undefined, 10).batchFull).toBe(10);
+    expect(episodeView(ep, lastSleep).batchFull).toBeUndefined();
+    expect(episodeView(ep, lastSleep, { attempts: 1, reason: "a rule" }, 10).batchFull).toBeUndefined();
+    expect(episodeView(arrivedAt("2026-11-16T13:00:00Z", "2026-11-16T13:00:00Z"), lastSleep, undefined, 10).batchFull).toBeUndefined();
   });
 });

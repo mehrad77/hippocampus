@@ -382,7 +382,7 @@ const ConfigObject = z.object({
     .object({
       /** Distinct sources needed to promote a rumor to canon. */
       canon_threshold: z.number().int().positive().default(2),
-      batch_size: z.number().int().positive().default(25),
+      batch_size: z.number().int().positive().default(100),
       summaries: z.boolean().default(true),
       /** Days after which a fact is considered stale and flagged for re-verification. */
       stale_after_days: z.number().int().positive().default(60),

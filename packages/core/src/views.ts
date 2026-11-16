@@ -10,7 +10,7 @@ import { isSecretField } from "./ops.ts";
 import { FactStatus, type Behaviour, type Capability, type DecisionEntry, type DisputeKind, type EpisodeKind, type Fact, type FactValue, type FieldDef, type Guideline, type ProposalState, type QuestionEntry, type Stats } from "./schema.ts";
 import type { ResolvedKind, ResolvedType } from "./schema-registry.ts";
 import { isSecretRef } from "./secrets.ts";
-import { fromLocal, localParts, parseFactKey } from "./text.ts";
+import { fromLocal, localParts, parseFactKey, ulidTime } from "./text.ts";
 import type { Authority, Dispute, Vault } from "./vault.ts";
 import type { VaultStore } from "./store.ts";
 
@@ -166,8 +166,10 @@ export interface EpisodeView {
   confidential?: boolean;
   about: string[];
   confidence?: number;
-  /** Older than the last sleep: it failed or didn't fit the batch. */
+  /** Arrived before the last sleep: it failed or didn't fit the batch. */
   waitedThroughSleep: boolean;
+  /** Set when it waited and the last sleep took a full batch of this many: it's simply next, not failed. */
+  batchFull?: number;
   /** How many nights in a row it failed to consolidate, and why (the rule, never a value). Read from the review. */
   failure?: { attempts: number; reason: string };
 }
@@ -658,7 +660,17 @@ export function disputeView(ctx: ViewContext, d: Dispute): DisputeView {
   };
 }
 
-export function episodeView(ep: Episode, lastSleep?: string, failure?: { attempts: number; reason: string }): EpisodeView {
+/**
+ * When an episode reached the inbox: the time in its id (`ep-<ulid>`), not `at`, which the agent sets to
+ * when the thing happened. A hand-written episode has no ULID, so `at` is all there is.
+ */
+function arrived(ep: Episode): string {
+  const t = ep.id.startsWith("ep-") ? ulidTime(ep.id.slice(3)) : undefined;
+  return t === undefined ? ep.at : new Date(t).toISOString();
+}
+
+export function episodeView(ep: Episode, lastSleep?: string, failure?: { attempts: number; reason: string }, batchFull?: number): EpisodeView {
+  const waited = !!lastSleep && Date.parse(arrived(ep)) < Date.parse(lastSleep);
   return {
     id: ep.id,
     agent: ep.agent,
@@ -670,7 +682,8 @@ export function episodeView(ep: Episode, lastSleep?: string, failure?: { attempt
     ...(ep.confidential ? { confidential: true } : {}),
     about: ep.secret || ep.confidential ? [] : ep.about,
     confidence: ep.confidence,
-    waitedThroughSleep: !!lastSleep && ep.at < lastSleep,
+    waitedThroughSleep: waited,
+    ...(waited && !failure && batchFull ? { batchFull } : {}),
     ...(failure ? { failure } : {}),
   };
 }
@@ -747,7 +760,7 @@ export async function readFailures(store: Pick<VaultStore, "read">): Promise<Fai
  * What the morning review's frontmatter says: when the last sleep ran, and the domains it suggested
  * that the config still lacks (one added since drops out at once). The file is the vault's, so only ids pass.
  */
-async function readReview(vault: Vault): Promise<{ generated?: string; suggestedDomains: string[]; failures: Failures }> {
+async function readReview(vault: Vault): Promise<{ generated?: string; suggestedDomains: string[]; failures: Failures; batchFull?: number }> {
   const raw = await vault.store.read(REVIEW_PATH);
   if (!raw) return { suggestedDomains: [], failures: {} };
   const data = parseDoc(raw).data;
@@ -755,7 +768,8 @@ async function readReview(vault: Vault): Promise<{ generated?: string; suggested
   const known = new Set(vault.config.domains.map((d) => d.toLowerCase()));
   const listed = Array.isArray(data.suggested_domains) ? data.suggested_domains : [];
   const suggestedDomains = [...new Set(listed.filter((d): d is string => typeof d === "string").map((d) => d.toLowerCase()))].filter((d) => SLUG.test(d) && !known.has(d));
-  return { generated, suggestedDomains, failures: failuresOf(data.failures) };
+  const batchFull = typeof data.batch_full === "number" && Number.isInteger(data.batch_full) && data.batch_full > 0 ? data.batch_full : undefined;
+  return { generated, suggestedDomains, failures: failuresOf(data.failures), ...(batchFull ? { batchFull } : {}) };
 }
 
 // ── Findings shared with the morning review ─────────────────────────────────────
@@ -976,7 +990,7 @@ export async function overview(vault: Vault, read: ReadAs = {}): Promise<Overvie
   const lastSleep = review.generated;
   const from30 = addDays(ctx.today, -29);
   const chronicle30d = await readChronicle(vault, from30, ctx.today);
-  const inbox = vault.episodes.map((ep) => episodeView(ep, lastSleep, review.failures[ep.id]));
+  const inbox = vault.episodes.map((ep) => episodeView(ep, lastSleep, review.failures[ep.id], review.batchFull));
 
   const byType: Record<string, number> = {};
   const facts = emptyStatusCounts();
@@ -1059,7 +1073,8 @@ export function catalog(vault: Vault, read: ReadAs = {}): Catalog {
 
 export async function entityDetail(vault: Vault, e: Entity, read: ReadAs = {}): Promise<EntityDetail> {
   const ctx = viewContext(vault, read);
-  const lastSleep = await lastSleepAt(vault);
+  const review = await readReview(vault);
+  const lastSleep = review.generated;
   const chronicle = await readChronicle(vault, addDays(ctx.today, -89), ctx.today);
   const isParty = vault.schema.has(e.fm.type, "actor");
   const relations = [
@@ -1086,7 +1101,7 @@ export async function entityDetail(vault: Vault, e: Entity, read: ReadAs = {}): 
     quest: goal,
     party: isParty ? partyMembers(ctx, chronicle.filter((c) => c.day >= addDays(ctx.today, -29))).find((p) => p.slug === e.slug) : undefined,
     mentions: chronicle.filter((c) => c.touched.includes(e.slug) || (isParty && c.agent === e.slug)).reverse().slice(0, 50),
-    pending: vault.episodes.filter(aboutMe).map((ep) => episodeView(ep, lastSleep)),
+    pending: vault.episodes.filter(aboutMe).map((ep) => episodeView(ep, lastSleep, review.failures[ep.id], review.batchFull)),
     ...(human || own.length || inherited.length
       ? {
           guidelines: {

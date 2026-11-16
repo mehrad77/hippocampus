@@ -21,7 +21,7 @@ All of them follow the same steps and the same rules, and all commit as *Hippoca
 ## Step by step
 
 1. **Rulings.** Every open dispute with a `ruling:` becomes canon by you, before anything else.
-2. **Batch.** Up to `batch_size` episodes (25 by default), oldest first.
+2. **Batch.** Up to `batch_size` episodes (100 by default), oldest first. The rest wait for the next run, and the Inbox shows them as next, not failed.
 3. **For each episode:**
    - **Hints**: names and links in `about` are matched to notes directly, with no model involved.
    - **Mentions**: the curator lists the entities the episode talks about.
