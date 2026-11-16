@@ -49,6 +49,7 @@ import {
   setSummary,
   slugify,
   truncate,
+  ulidTime,
   unwrapLink,
   validateShapes,
   viewContext,
@@ -232,22 +233,16 @@ export function pickBatch(vault: Vault, limit?: number, failures: Failures = {})
   return ordered.slice(0, limit ?? vault.config.curator.batch_size);
 }
 
-const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-
 /**
  * When an episode reached the inbox: the time in its id (`ep-<ulid>`). Not `at`, which says when the thing
  * happened and is the agent's to set, so a back-dated memory would look long overdue the moment it lands.
  * An episode written by hand has no ULID (`ep-<hash of its path>`); for those, `at` is all there is.
  */
 export function arrivedAt(e: Pick<Episode, "id" | "at">): Date | undefined {
-  const m = /^ep-([0-9A-HJKMNP-TV-Z]{10})[0-9A-HJKMNP-TV-Z]{16}$/.exec(e.id);
-  if (!m) {
-    const at = new Date(e.at);
-    return Number.isNaN(at.getTime()) ? undefined : at;
-  }
-  let t = 0;
-  for (const c of m[1]!) t = t * 32 + CROCKFORD.indexOf(c);
-  return new Date(t);
+  const t = e.id.startsWith("ep-") ? ulidTime(e.id.slice(3)) : undefined;
+  if (t !== undefined) return new Date(t);
+  const at = new Date(e.at);
+  return Number.isNaN(at.getTime()) ? undefined : at;
 }
 
 /** Dispute notes the next run acts on without a model: a human's ruling, or a declined proposal or merge. */

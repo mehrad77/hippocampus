@@ -14,6 +14,7 @@ import {
   ESTIMATE_ASSUMES,
   ESTIMATE_PROMPT_TOKENS,
   estimatePer100,
+  ESTIMATE_CALLS,
   hourOptions,
   isUniform,
   keyNeeded,
@@ -544,8 +545,9 @@ describe("hosted curation", () => {
 
   it("estimates 100 memories high: one call per step, a full prompt, and every output token allowed", () => {
     // Haiku: 4 calls × 4,000 tokens × $0.1/M, plus 7,680 output tokens × $0.5/M = $0.00544 a memory.
-    expect(estimatePer100(uniformMix("claude-haiku-5-5"), models, "anthropic")).toBeCloseTo(0.544, 6);
-    const per = (step: keyof typeof STEP_MAX_OUTPUT, input: number, output: number) => (ESTIMATE_PROMPT_TOKENS * input + STEP_MAX_OUTPUT[step] * output) / 1e6;
+    // Haiku for every step: 1 mentions + 3 match + 1 claims + 2 summary calls per memory.
+    expect(estimatePer100(uniformMix("claude-haiku-5-5"), models, "anthropic")).toBeCloseTo(0.7664, 6);
+    const per = (step: keyof typeof STEP_MAX_OUTPUT, input: number, output: number) => (ESTIMATE_CALLS[step] * (ESTIMATE_PROMPT_TOKENS * input + STEP_MAX_OUTPUT[step] * output)) / 1e6;
     expect(estimatePer100(rec, models, "anthropic")).toBeCloseTo(100 * (per("mentions", 0.1, 0.5) + per("match", 0.1, 0.5) + per("claims", 2, 10) + per("summary", 0.1, 0.5)), 6);
     // A model without a price gives no estimate.
     expect(estimatePer100(uniformMix("unknown"), models, "anthropic")).toBeUndefined();

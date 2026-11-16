@@ -92,7 +92,8 @@ const WHY: Record<Unhealthy, string> = {
   no_account: "the vault's account wasn't found",
   no_key: "no model key is saved",
   paused: "it is paused",
-  budget: "the monthly budget is reached",
+  // A refused reservation is the next call's worst case not fitting, so a little may be left unspent.
+  budget: "the monthly budget is spent, or what's left can't cover another memory",
 };
 
 const PAUSE_WORDS: Record<string, string> = { auth: "the model key was refused", credit: "the model provider's credit ran out" };
@@ -205,8 +206,9 @@ export class HostedCurator {
     }
     if (!h.schedule) return { needed: true };
     const last = await this.lastHosted();
+    const next = this.nextRunIso();
     const verdict: GateVerdict = standbyVerdict(
-      { healthy: !h.why, ...(last ? { lastRun: last.ended } : {}), ...(this.nextRunIso() ? { nextRun: this.nextRunIso() } : {}) },
+      { healthy: !h.why, ...(last ? { lastRun: last.ended } : {}), ...(next ? { nextRun: next } : {}) },
       waitingWork(vault, failures),
       now,
     );
@@ -252,7 +254,9 @@ export class HostedCurator {
 
   /** One plain line about who curates, for every connection's `onboard`. No model calls, no memory content. */
   async curationState(): Promise<string | undefined> {
-    const h = await this.health();
+    // Known to be off (the owner's last change, or the last read, said so): no registry reads on every onboard.
+    const [cached] = this.rows<{ hour_utc: number | null }>("SELECT hour_utc FROM hosted_schedule WHERE id = 1");
+    const h: Health = cached && cached.hour_utc === null ? {} : await this.health();
     const history = await this.o.runs.history();
     const date = (iso: string) => iso.slice(0, 10);
     if (h.schedule) {

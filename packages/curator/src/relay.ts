@@ -479,18 +479,13 @@ export class SleepRelay {
 
   /** Values may be JSON or a JSON string. An empty list just shows the open questions again. */
   answer(i: { runId: string; answers: { questionId: string; value: unknown }[] }): Promise<RelayStep> {
-    return this.exclusive(async () => {
-      const state = await this.live(i.runId);
-      if (state.hosted) throw new VaultError(HOSTED_ONLY);
-      return this.drive(state, pass(i.answers));
-    });
+    return this.exclusive(async () => this.drive(await this.live(i.runId), pass(i.answers)));
   }
 
   /** Skips the current episode (it stays in the inbox), or during the finish the summary being asked. */
   skip(i: { runId: string; reason: string }): Promise<RelayStep> {
     return this.exclusive(async () => {
       const state = await this.live(i.runId);
-      if (state.hosted) throw new VaultError(HOSTED_ONLY);
       const reason = i.reason.replace(/\s+/g, " ").trim().slice(0, 300) || "no reason given";
       if (state.phase === "episodes") {
         const id = state.batch[state.cursor]!;
@@ -712,12 +707,16 @@ export class SleepRelay {
     for (const a of keep) await this.d.runs.putAnswer(unit, a);
   }
 
-  /** The open run `runId`, its lease renewed. A lapsed run is finished first, and then isn't open. */
+  /**
+   * The open run `runId`, its lease renewed. A lapsed run is finished first, and then isn't open. A
+   * hosted run is refused before its lease is touched, so an agent's calls can't keep it alive.
+   */
   private async live(runId: string): Promise<RunState> {
     const now = this.clock();
     await this.settle(now);
     const state = await this.d.runs.get();
     if (!state || state.id !== runId) throw this.notOpen(runId, state);
+    if (state.hosted) throw new VaultError(HOSTED_ONLY);
     state.leaseUntil = this.leaseFrom(now);
     await this.d.runs.put(state);
     return state;

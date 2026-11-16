@@ -458,8 +458,14 @@ export const STEP_MAX_OUTPUT: Record<HostedLlmStep, number> = { mentions: 2048, 
 /** The prompt size the estimate assumes for every call: generous, so the estimate errs high. */
 export const ESTIMATE_PROMPT_TOKENS = 4000;
 
+/**
+ * Calls per memory the estimate assumes for each step: a memory makes one match call per new thing it
+ * names, and each note it touches gets a summary, so those steps count more than once.
+ */
+export const ESTIMATE_CALLS: Record<HostedLlmStep, number> = { mentions: 1, match: 3, claims: 1, summary: 2 };
+
 /** The estimate's assumptions, shown next to it. */
-export const ESTIMATE_ASSUMES = `one call per step for every memory, each reading ${ESTIMATE_PROMPT_TOKENS.toLocaleString("en-US")} tokens and writing as much as the step may. Real runs usually cost less.`;
+export const ESTIMATE_ASSUMES = `per memory, one call to find what it names, three to match them to notes, one for its facts and two summaries, each reading ${ESTIMATE_PROMPT_TOKENS.toLocaleString("en-US")} tokens and writing as much as the step may. Real runs usually cost less.`;
 
 export const uniformMix = (model: string): HostedStepMix => ({ mentions: model, match: model, claims: model, summary: model });
 
@@ -496,7 +502,7 @@ export function estimatePer100(mix: HostedStepMix, models: readonly CuratorModel
     const m = models.find((x) => x.provider === provider && x.model === mix[s.id]);
     if (!m) return undefined;
     // USD per million tokens, so tokens × rate / 1e6 per call.
-    usd += (ESTIMATE_PROMPT_TOKENS * m.inputUsdPerMTok + STEP_MAX_OUTPUT[s.id] * m.outputUsdPerMTok) / 1e6;
+    usd += (ESTIMATE_CALLS[s.id] * (ESTIMATE_PROMPT_TOKENS * m.inputUsdPerMTok + STEP_MAX_OUTPUT[s.id] * m.outputUsdPerMTok)) / 1e6;
   }
   return usd * 100;
 }
@@ -543,7 +549,10 @@ export const localHour = (hourUtc: number, at: Date, timeZone?: string) => hourO
 export const PAUSE_WORDS: Record<"auth" | "credit" | "budget", { word: string; fix: string }> = {
   auth: { word: "Paused: the provider refused the key", fix: "Save a new key below. Runs start again with the next night." },
   credit: { word: "Paused: the provider's credit ran out", fix: "Add credit at the provider, or save a key that has some. Saving a key starts runs again." },
-  budget: { word: "Paused: monthly budget reached", fix: "Raise the monthly cap below, or wait for the next month: the budget starts again on the 1st (UTC)." },
+  budget: {
+    word: "Paused: monthly budget reached",
+    fix: "What's left this month can't cover another memory at its most expensive, so a little may stay unspent. Raise the monthly cap below, or wait for the next month: the budget starts again on the 1st (UTC).",
+  },
 };
 
 /** A pause this dashboard doesn't know (a newer Worker's) reads as a plain pause. */

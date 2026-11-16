@@ -87,6 +87,14 @@ export function hash(input: string, seed = 0): string {
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
+/** The time in a ULID (ms since the epoch), or undefined for anything that isn't one. */
+export function ulidTime(id: string): number | undefined {
+  if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(id)) return undefined;
+  let t = 0;
+  for (const c of id.slice(0, 10)) t = t * 32 + CROCKFORD.indexOf(c);
+  return t;
+}
+
 /** ULID: 48-bit time + 80-bit randomness, Crockford base32. */
 export function ulid(now: number = Date.now()): string {
   let time = "";

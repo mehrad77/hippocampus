@@ -30,16 +30,17 @@ export async function monthSpend(db: SqlDriver, accountId: number, at: Date): Pr
  * settled them, and the provider may have billed the call.
  */
 export async function sweepReservations(db: SqlDriver, accountId: number, at: Date): Promise<void> {
-  const expired = await db.all<{ id: string; month: string; micros: number }>("DELETE FROM llm_reservations WHERE account_id = ? AND expires <= ? RETURNING id, month, micros", [accountId, at.toISOString()]);
-  if (!expired.length) return;
-  const byMonth = new Map<string, number>();
-  for (const r of expired) byMonth.set(r.month, (byMonth.get(r.month) ?? 0) + r.micros);
-  await db.batch(
-    [...byMonth].map(([month, micros]) => ({
-      sql: "INSERT INTO llm_spend (account_id, month, micros) VALUES (?, ?, ?) ON CONFLICT (account_id, month) DO UPDATE SET micros = micros + excluded.micros",
-      params: [accountId, month, micros],
-    })),
-  );
+  const cutoff = at.toISOString();
+  // One batch, so a failure between counting and letting go can't lose what was held.
+  await db.batch([
+    {
+      sql: `INSERT INTO llm_spend (account_id, month, micros)
+            SELECT account_id, month, SUM(micros) FROM llm_reservations WHERE account_id = ? AND expires <= ? GROUP BY account_id, month
+            ON CONFLICT (account_id, month) DO UPDATE SET micros = micros + excluded.micros`,
+      params: [accountId, cutoff],
+    },
+    { sql: "DELETE FROM llm_reservations WHERE account_id = ? AND expires <= ?", params: [accountId, cutoff] },
+  ]);
 }
 
 /** The account's meter for one run: the month's cap in the registry, the run's cap in its ledger. */

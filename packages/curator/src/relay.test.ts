@@ -479,11 +479,16 @@ describe("a hosted run", () => {
 
   it("can't be answered or skipped over MCP, only aborted; and only the Worker opens one", async () => {
     const { store } = await setup();
-    const { relay } = relayOver(store);
+    // A clock that moves a minute per read, so a renewed lease would show.
+    let ticks = 0;
+    const { relay } = relayOver(store, { clock: () => new Date(now().getTime() + 60_000 * ticks++) });
     await expect(relay.start({ curator: "hosted", model: "m" })).rejects.toThrow('"hosted" is reserved');
     const run = asking(await relay.start({ curator: "hosted", model: "m", hosted: true })).run;
+    const lease = (await relay.status()).run!.leaseUntil;
     await expect(relay.answer({ runId: run, answers: [] })).rejects.toThrow("can't be answered or skipped");
     await expect(relay.skip({ runId: run, reason: "x" })).rejects.toThrow("can't be answered or skipped");
+    // Refused calls don't keep a hosted run's lease alive.
+    expect((await relay.status()).run!.leaseUntil).toBe(lease);
     expect(await relay.abort(run)).toMatchObject({ history: [{ id: run, outcome: "aborted" }] });
     // An agent's run, whatever it is called, is never driven by the model.
     const agents = asking(await relay.start({ curator: "archivist", model: "m" })).run;
