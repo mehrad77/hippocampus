@@ -6,6 +6,9 @@ import type { HostedEnv } from "./env.ts";
 import { d1 } from "@hippocampus/index";
 import { GitHubApp } from "./github-app.ts";
 import { GitLabAccess } from "./gitlab.ts";
+import type { HostedVaultCurator } from "@hippocampus/dashboard";
+import type { StartResult } from "./hosted-curator.ts";
+import { LlmAccess } from "./llm-access.ts";
 import { Registry } from "./registry.ts";
 import { hostedSettings } from "./settings.ts";
 import { HostedVault, type DashboardUser, type GitLabDeps, type HostDeps, type VaultGrant, type VaultMeta } from "./vault-runtime.ts";
@@ -31,15 +34,29 @@ export class VaultHost extends DurableObject<HostedEnv> {
     this.host = new HostedVault(ctx.storage, () => {
       if (deps) return deps;
       const s = hostedSettings(env);
+      const db = d1(env.REGISTRY);
+      const registry = new Registry(db);
       deps = {
         app: new GitHubApp({ appId: s.appId, privateKey: s.privateKey, apiUrl: s.apiUrl }),
         apiUrl: s.apiUrl,
         webUrl: s.oauthUrl,
         publicUrl: s.publicUrl,
         // The object reads the account's sealed GitLab tokens from the registry, and refreshes them there.
-        ...(s.gitlab ? gitlabDeps(s.gitlab, new GitLabAccess(s.gitlab, new Registry(d1(env.REGISTRY)))) : {}),
+        ...(s.gitlab ? gitlabDeps(s.gitlab, new GitLabAccess(s.gitlab, registry)) : {}),
         embedding: hostedEmbedding(env, { ai: env.AI }),
         jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
+        // Hosted curation reads the account's sealed model key and budget from the registry, like GitLab tokens.
+        ...(s.tokenKey
+          ? {
+              hosted: {
+                access: new LlmAccess(db, s.tokenKey),
+                db,
+                accountOf: async (vaultId: string) => (await registry.vault(vaultId))?.accountId,
+                ...(s.hostedCuratorOn ? {} : { off: true }),
+                ...(s.llmUrls ? { urls: s.llmUrls } : {}),
+              },
+            }
+          : {}),
       };
       return deps;
     });
@@ -95,6 +112,26 @@ export class VaultHost extends DurableObject<HostedEnv> {
     return this.host.curation(credentials);
   }
 
+  /** Hosted curation for this vault: its hour, last run and standby check-in. */
+  hostedCurator(): Promise<HostedVaultCurator> {
+    return this.host.hostedCurator();
+  }
+
+  /** The owner changed the vault's nightly hour in the registry (null: off). */
+  setHostedSchedule(hourUtc: number | null): Promise<HostedVaultCurator> {
+    return this.host.setHostedSchedule(hourUtc);
+  }
+
+  /** The owner's Run now. */
+  runHostedCuratorNow(): Promise<StartResult> {
+    return this.host.runHostedCuratorNow();
+  }
+
+  /** The Cron's backstop: re-arms a missing or late alarm. */
+  ensureAlarm(): Promise<boolean> {
+    return this.host.ensureAlarm();
+  }
+
   /** Stop serving; storage stays until `destroy`. */
   disconnect(reason: string): Promise<void> {
     return this.host.disconnect(reason);
@@ -105,7 +142,7 @@ export class VaultHost extends DurableObject<HostedEnv> {
     return this.host.destroy();
   }
 
-  /** Finishes a sleep run whose lease passed, and garbage-collects cached blobs. */
+  /** Every job on the object's one alarm: a lapsed lease, the blob GC, a hosted night and its slices. */
   override alarm(): Promise<void> {
     return this.host.alarm();
   }

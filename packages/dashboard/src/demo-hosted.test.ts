@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { hostedDemo } from "./demo-hosted.ts";
-import { VAULT_HEADER, type AdminReferrals, type HostedInvites, type HostedMembers, type HostedNewInvite, type HostedSetupStatus, type HostedVaults } from "./setup.ts";
+import { VAULT_HEADER, type HostedActionsSecretsResult, type HostedCuratorActionsState, type AdminReferrals, type HostedInvites, type HostedMembers, type HostedNewInvite, type HostedSetupStatus, type HostedVaults } from "./setup.ts";
 import type { DashboardSource } from "./source.ts";
+// The demo's copy of the price list, checked against the real one.
+import { PRICES } from "../../curator/src/pricing.ts";
 
 const ORIGIN = "http://127.0.0.1:4339";
 const source = { info: async () => ({ mode: "demo", vault: { kind: "memory" }, campaign: "lisbon-arc", human: "player", actor: { kind: "human", id: "player" } }) } as unknown as DashboardSource;
 
-function client() {
-  const demo = hostedDemo({ base: "/dashboard", source, approveAfter: 0, initDelay: 0, firstCallAfter: 0 });
+function client(extra: { bootstrapFor?: number } = {}) {
+  const demo = hostedDemo({ base: "/dashboard", source, approveAfter: 0, initDelay: 0, firstCallAfter: 0, ...extra });
   const call = async (path: string, body?: unknown, headers: Record<string, string> = {}) => {
     const res = await demo(new Request(`${ORIGIN}${path}`, body === undefined ? { headers } : { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }));
     return { status: res?.status, body: res && res.headers.get("content-type")?.includes("json") ? await res.json() : undefined, location: res?.headers.get("location") };
@@ -138,12 +140,192 @@ describe("hosted demo", () => {
     expect(((await api("setup/status")).body as HostedSetupStatus).vault).toMatchObject({ provider: "gitlab" });
   });
 
+  it("clears the browser's setup drafts on a stage jump, then goes on", async () => {
+    const { demo } = client();
+    const res = (await demo(new Request(`${ORIGIN}/dashboard/api/__demo/stage?to=fresh`)))!;
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-demo-next")).toBe("/dashboard/setup/");
+    const html = await res.text();
+    expect(html).toContain("hippo:hosted-draft:");
+    expect(html).toContain("hippo:adding-vault");
+    expect(html).toContain('location.replace("/dashboard/setup/")');
+    // Only that one script runs: it's allowed by its hash.
+    expect(res.headers.get("content-security-policy")).toMatch(/script-src 'sha256-[A-Za-z0-9+/=]+'/);
+    expect((await demo(new Request(`${ORIGIN}/dashboard/api/__demo/stage?to=nowhere`)))!.status).toBe(400);
+  });
+
+  it("has a stage for every onboarding state: denied, fresh, disconnected, bootstrapping", async () => {
+    const { api } = client({ bootstrapFor: 5 });
+    await api("__demo/stage?to=denied");
+    expect(((await api("setup/status")).body as HostedSetupStatus).account.status).toBe("denied");
+
+    await api("__demo/stage?to=fresh");
+    const fresh = (await api("setup/status")).body as HostedSetupStatus;
+    expect(fresh.account.status).toBe("approved");
+    expect(fresh.installation).toBeUndefined();
+    expect(fresh.vaults).toEqual([]);
+
+    // A vault of your own, cut off, with the app installed again: its repo is offered to reconnect.
+    await api("__demo/stage?to=disconnected");
+    const gone = (await api("setup/status")).body as HostedSetupStatus;
+    expect(gone.vault).toMatchObject({ fullName: "player/lisbon-arc", status: "disconnected" });
+    const { repos } = (await api("setup/repos")).body as { repos: { fullName: string; adoptable?: boolean }[] };
+    expect(repos.find((r) => r.fullName === "player/lisbon-arc")).toMatchObject({ adoptable: true });
+    const back = (await api("setup/init", { repoId: 502, adopt: true })).body as { vault: { id: string; status: string }; mode: string };
+    expect(back).toMatchObject({ mode: "adopted", vault: { id: gone.vault!.id, status: "ready" } });
+
+    await api("__demo/stage?to=disconnected&provider=gitlab");
+    const lab = (await api("setup/status")).body as HostedSetupStatus;
+    expect(lab.vault).toMatchObject({ provider: "gitlab", status: "disconnected" });
+    expect((await api("setup/init", { provider: "gitlab", repoId: 704, adopt: true })).body).toMatchObject({ mode: "adopted", vault: { id: lab.vault!.id, status: "ready" } });
+
+    await api("__demo/stage?to=bootstrapping");
+    expect(((await api("setup/status")).body as HostedSetupStatus).vault?.status).toBe("bootstrapping");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(((await api("setup/status")).body as HostedSetupStatus).vault?.status).toBe("ready");
+  });
+
+  it("offers an existing vault among the GitLab projects, checked by the repo list", async () => {
+    const { api } = client();
+    await api("__demo/stage?to=installed&provider=gitlab");
+    const { repos } = (await api("setup/repos?provider=gitlab")).body as { repos: { id: number; adoptable?: boolean }[] };
+    expect(repos.find((r) => r.id === 704)).toMatchObject({ adoptable: true });
+  });
+
+  it("plays device sign-in: an agent asks, the person approves on the connect page, and it calls in", async () => {
+    const { call, api } = client();
+    await api("__demo/stage?to=ready");
+    const started = await api("__demo/device");
+    const code = new URL(started.location!, ORIGIN).searchParams.get("code")!;
+    expect(started.location).toBe(`/dashboard/connect/?code=${code}`);
+    expect(code).toMatch(/^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$/);
+    const asked = (await api(`connect?code=${code}`)).body as { client: string; access: string; vaults: { id: string }[]; current?: string };
+    expect(asked).toMatchObject({ client: "Claude Code", access: "remember" });
+    expect(asked.vaults).toHaveLength(2);
+    expect((await api("connect/approve", { code, vault: asked.vaults[0]!.id })).body).toEqual({ ok: true });
+    // Once answered, the code is spent.
+    expect((await api(`connect?code=${code}`)).status).toBe(410);
+    await new Promise((r) => setTimeout(r, 5));
+    const keys = (await api("setup/keys", undefined, { [VAULT_HEADER]: asked.vaults[0]!.id })).body as { keys: { kind: string; label: string; lastUsed?: string }[]; agents?: { agent: string }[] };
+    expect(keys.keys).toEqual([expect.objectContaining({ kind: "agent", label: "Claude Code", lastUsed: expect.any(String) })]);
+    expect(keys.agents?.map((a) => a.agent)).toEqual(["claude-code-home-finder"]);
+
+    // A curator asks for curate, and gets a curator key; a refusal makes nothing.
+    const curator = new URL((await api("__demo/device?access=curate")).location!, ORIGIN).searchParams.get("code")!;
+    await api("connect/approve", { code: curator, vault: asked.vaults[0]!.id });
+    const refused = new URL((await api("__demo/device")).location!, ORIGIN).searchParams.get("code")!;
+    expect((await api("connect/deny", { code: refused })).body).toEqual({ ok: true });
+    const after = (await api("setup/keys", undefined, { [VAULT_HEADER]: asked.vaults[0]!.id })).body as { keys: { kind: string }[] };
+    expect(after.keys.map((k) => k.kind)).toEqual(["agent", "curator"]);
+    expect((await call("/dashboard/api/__demo/device")).location).toMatch(/^\/dashboard\/connect\/\?code=/);
+  });
+
   it("deletes the account only with the typed login, and signs out", async () => {
     const { api } = client();
     await api("__demo/stage?to=ready");
     expect((await api("account/delete", { confirm: "someone" })).body).toMatchObject({ code: "CONFIRM" });
     expect((await api("account/delete", { confirm: "@player" })).body).toEqual({ ok: true });
     expect((await api("session")).status).toBe(401);
+  });
+
+  it("curates with the owner's key: write-only, capped, scheduled, and run now until the budget pauses it", async () => {
+    const { api } = client();
+    await api("__demo/stage?to=ready");
+    const start = ((await api("setup/status")).body as HostedSetupStatus).hostedCurator!;
+    expect(start).toMatchObject({ available: true, spentThisMonthUsd: 0, vault: { enabled: false, standby: { curator: "archivist", decision: "needed" } } });
+    expect(start.keyHint).toBeUndefined();
+    expect(start.recommended.mistral).toBeUndefined();
+    // Nothing runs, or gets an hour, before a key is saved.
+    expect((await api("setup/curator-llm/vault", { hourUtc: 2 })).body).toMatchObject({ code: "NO_KEY" });
+    expect((await api("setup/curator-llm/run", {})).body).toMatchObject({ code: "NO_KEY" });
+    expect((await api("setup/curator-llm", { provider: "anthropic", monthCapUsd: 0.5, runCapUsd: 0.5 })).body).toMatchObject({ code: "INVALID" });
+    expect((await api("setup/curator-llm", { provider: "anthropic", model: "gpt-x", key: "sk-ant-demo-0000", monthCapUsd: 0.5, runCapUsd: 0.5 })).body).toMatchObject({ code: "INVALID" });
+    expect((await api("setup/curator-llm", { provider: "anthropic", key: "sk-ant-refused", monthCapUsd: 0.5, runCapUsd: 0.5 })).body).toMatchObject({ code: "KEY_AUTH" });
+
+    const key = "sk-ant-demo-secret-7Hq2";
+    const saved = await api("setup/curator-llm", { provider: "anthropic", key, monthCapUsd: 0.5, runCapUsd: 0.5 });
+    expect(saved.body).toMatchObject({ provider: "anthropic", keyHint: "…7Hq2", monthCapUsd: 0.5, runCapUsd: 0.5, steps: { claims: "claude-sonnet-5-5" } });
+    // The key never comes back, in any answer.
+    const status = await api("setup/status");
+    for (const r of [saved, status]) expect(JSON.stringify(r.body)).not.toContain(key);
+    // Saving again keeps the key; a new provider needs its own.
+    expect((await api("setup/curator-llm", { provider: "anthropic", model: "claude-haiku-5-5", monthCapUsd: 0.5, runCapUsd: 0.5 })).body).toMatchObject({ keyHint: "…7Hq2", steps: { claims: "claude-haiku-5-5" } });
+    expect((await api("setup/curator-llm", { provider: "mistral", model: "mistral-small-2603", monthCapUsd: 0.5, runCapUsd: 0.5 })).body).toMatchObject({ code: "INVALID" });
+
+    expect((await api("setup/curator-llm/vault", { hourUtc: 24 })).body).toMatchObject({ code: "INVALID" });
+    expect((await api("setup/curator-llm/vault", { hourUtc: 2 })).body).toMatchObject({ enabled: true, hourUtc: 2, nextRun: expect.any(String) });
+    const ran = (await api("setup/curator-llm/run", {})).body as { run: string };
+    expect(ran.run).toMatch(/^run-h/);
+    const after = ((await api("setup/status")).body as HostedSetupStatus).hostedCurator!;
+    expect(after.spentThisMonthUsd).toBeCloseTo(0.37);
+    expect(after.vault?.lastRun).toMatchObject({ outcome: "done", consolidated: 7, costUsd: 0.37 });
+    // The second run reaches the month's cap: it stops there, and the account pauses.
+    await api("setup/curator-llm/run", {});
+    const history = ((await api("curator")).body as { history: { curator: string; outcome: string; stop?: string; cost?: { micros: number } }[] }).history;
+    expect(history[0]).toMatchObject({ curator: "hosted", outcome: "aborted", stop: "budget", cost: { micros: 500_000 - 370_000 } });
+    expect(((await api("setup/status")).body as HostedSetupStatus).hostedCurator).toMatchObject({ spentThisMonthUsd: 0.5, paused: { reason: "budget" } });
+    expect((await api("setup/curator-llm/run", {})).body).toMatchObject({ code: "BUDGET" });
+    // Raising the cap lifts the pause; a refused key pauses it until a new key is saved.
+    expect((await api("setup/curator-llm", { provider: "anthropic", model: "claude-haiku-5-5", monthCapUsd: 5, runCapUsd: 0.5 })).body).not.toHaveProperty("paused");
+    await api("__demo/curator?pause=auth&standby=claude-code-curator");
+    expect(((await api("setup/status")).body as HostedSetupStatus).hostedCurator).toMatchObject({ paused: { reason: "auth" }, vault: { standby: { curator: "claude-code-curator", decision: "needed" } } });
+    expect((await api("setup/curator-llm/run", {})).body).toMatchObject({ code: "PAUSED" });
+    expect((await api("setup/curator-llm", { provider: "anthropic", model: "claude-haiku-5-5", key: "sk-ant-demo-new-9kLm", monthCapUsd: 5, runCapUsd: 0.5 })).body).toMatchObject({ keyHint: "…9kLm" });
+    await api("__demo/curator?standby=none");
+    expect(((await api("setup/status")).body as HostedSetupStatus).hostedCurator?.vault?.standby).toBeUndefined();
+    expect((await api("setup/curator-llm/vault", { hourUtc: null })).body).toMatchObject({ enabled: false, lastRun: { stop: "budget" } });
+    expect((await api("setup/curator-llm/vault", { hourUtc: null })).body).not.toHaveProperty("hourUtc");
+  });
+
+  it("lets GitHub Actions curate: secrets by name only, the model, runs with a failure, Run now, and a missing permission", async () => {
+    const { api } = client();
+    await api("__demo/stage?to=ready");
+    const state = async () => (await api("setup/curator-actions/state")).body as HostedCuratorActionsState;
+    const first = await state();
+    expect(first).toMatchObject({ enabled: false, secrets: [], runs: [] });
+    expect(first).not.toHaveProperty("workflow");
+    expect((await api("setup/curator-actions/run", {})).body).toMatchObject({ code: "NOT_ENABLED" });
+    expect((await api("setup/curator-actions", { enable: true })).body).toMatchObject({ enabled: true, model: "sonnet" });
+    const runs = (await state()).runs!;
+    expect(runs.map((r) => r.conclusion)).toEqual(["success", "failure", "success"]);
+
+    const saved = (await api("setup/curator-actions/secrets", { claudeToken: "sk-ant-oat01-demo", model: "opus" })).body as HostedActionsSecretsResult;
+    expect(saved).toEqual({ saved: ["CLAUDE_CODE_OAUTH_TOKEN", "HIPPO_CURATOR_KEY"], removed: [], curatorKey: "replaced", model: "opus" });
+    const swapped = (await api("setup/curator-actions/secrets", { apiKey: "sk-ant-api03-demo" })).body as HostedActionsSecretsResult;
+    expect(swapped).toMatchObject({ removed: ["CLAUDE_CODE_OAUTH_TOKEN"], curatorKey: "replaced" });
+    expect((await api("setup/curator-actions/secrets", { model: "sonnet" })).body).toMatchObject({ curatorKey: "kept", saved: [] });
+    const after = await state();
+    expect(after.secrets!.sort()).toEqual(["ANTHROPIC_API_KEY", "HIPPO_CURATOR_KEY"]);
+    expect(after.workflow).toEqual({ mcpUrl: after.mcpUrl, model: "sonnet" });
+    // Off, a model has nowhere to go; turning it on takes it.
+    await api("setup/curator-actions", { enable: false });
+    expect((await api("setup/curator-actions/secrets", { model: "opus" })).body).not.toHaveProperty("model");
+    expect((await api("setup/curator-actions", { enable: true, model: "opus" })).body).toMatchObject({ model: "opus" });
+    expect((await state()).workflow?.model).toBe("opus");
+    // One curator key for Actions, replaced rather than piled up; nothing pasted is kept.
+    const keys = ((await api("setup/keys")).body as { keys: { app?: string }[] }).keys;
+    expect(keys.filter((k) => k.app === "github-actions")).toHaveLength(1);
+    expect(JSON.stringify(after)).not.toContain("sk-ant");
+    expect((await api("setup/curator-actions/secrets", { claudeToken: "a", apiKey: "b" })).body).toMatchObject({ code: "INVALID" });
+
+    expect((await api("setup/curator-actions/run", {})).body).toEqual({ queued: true });
+    expect((await state()).runs![0]).toMatchObject({ status: "queued", conclusion: null, event: "workflow_dispatch" });
+
+    expect((await api("__demo/actions?permission=missing")).location).toBe("/dashboard/setup/#curation");
+    const refused = await state();
+    expect(refused).toMatchObject({ enabled: true, needsPermission: { repo: "player/vault", settingsUrl: "/dashboard/api/__demo/actions?permission=granted", who: "owner" } });
+    expect(refused).not.toHaveProperty("secrets");
+    expect((await api("setup/curator-actions/secrets", { claudeToken: "sk-ant-oat01-demo" })).body).toMatchObject({ code: "NEEDS_PERMISSION" });
+    expect((await api("setup/curator-actions/run", {})).body).toMatchObject({ code: "NEEDS_PERMISSION" });
+    await api("__demo/actions?permission=granted");
+    expect((await state()).needsPermission).toBeUndefined();
+  });
+
+  it("prices the same models as hosted curation", async () => {
+    const { api } = client();
+    await api("__demo/stage?to=ready");
+    const models = ((await api("setup/status")).body as HostedSetupStatus).hostedCurator!.models;
+    expect(models).toEqual(PRICES.map((p) => ({ provider: p.provider, model: p.model, inputUsdPerMTok: p.input, outputUsdPerMTok: p.output })));
   });
 
   it("leaves everything else to the regular demo API", async () => {

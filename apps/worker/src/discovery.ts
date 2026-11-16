@@ -81,6 +81,12 @@ The person approves on the dashboard; you never see their password. The shapes a
 3. \`POST ${publicUrl}${DEVICE_TOKEN_PATH}\` with \`grant_type=${DEVICE_GRANT}\` and \`device_code\`, every \`interval\` seconds. You get \`authorization_pending\`, \`slow_down\`, \`access_denied\` or \`expired_token\`, then once: \`access_token\` (the key), \`mcp_url\`, \`server_name\`, \`vault\`, \`agent\` (for a read-only key), and \`claude_code\` (a ready \`claude mcp add\` line).
 4. Configure your MCP client with \`mcp_url\` and the header \`Authorization: Bearer <access_token>\`, then call \`onboard\` with your agent id.
 
+## After connecting
+
+- Ask the person whether to add a short memory routine to your persistent instructions: \`onboard\` and \`recall\` before acting on their plans, people, places or projects; \`remember\` durable things one per call, with exact values, \`secret: true\` for IDs and credentials, \`confidential: true\` for private matters.
+- \`onboard\` ends with who curates this vault. If nobody does, offer to set up a curator: a second connection with \`access=curate\`, and a daily task that runs the sleep.
+- If Hippocampus curates the vault itself with the person's model key, a curator is only a standby: \`sleep_start\` answers \`{ "state": "not_needed" }\` while that works, and starts a run when it pauses or memories wait over 36 hours. \`force: true\` runs anyway; use it only when the person asks for a run now.
+
 ## Guide a person to connect an app
 
 1. They open ${publicUrl}/dashboard/setup/ and sign in with GitHub (new accounts may wait for an admin, unless someone invited them).

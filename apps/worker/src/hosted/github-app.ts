@@ -152,6 +152,18 @@ export class GitHubApp {
     };
   }
 
+  /** What an installation has approved, and what the app itself asks for: to tell why GitHub refused a narrowed token. */
+  async grantedPermissions(installationId: number): Promise<{ installation: Record<string, string>; app: Record<string, string>; account?: { login: string; type: string } }> {
+    const jwt = await this.jwt();
+    const [installation, app] = await Promise.all([
+      this.call("GET", `/app/installations/${installationId}`, jwt).then((r) => ok(r, APP_AUTH)),
+      this.call("GET", "/app", jwt).then((r) => ok(r, APP_AUTH)),
+    ]);
+    const inst = installation as { permissions?: Record<string, string>; account?: { login?: unknown; type?: unknown } };
+    const account = typeof inst.account?.login === "string" && typeof inst.account.type === "string" ? { login: inst.account.login, type: inst.account.type } : undefined;
+    return { installation: inst.permissions ?? {}, app: (app as { permissions?: Record<string, string> }).permissions ?? {}, ...(account ? { account } : {}) };
+  }
+
   /** Uninstall the app (account deletion). Already gone counts as done. */
   async deleteInstallation(installationId: number): Promise<void> {
     const res = await this.call("DELETE", `/app/installations/${installationId}`, await this.jwt());

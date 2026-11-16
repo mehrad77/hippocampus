@@ -220,6 +220,31 @@ describe("a vault on GitLab", () => {
     expect(Object.keys(gl.files("main", project)).filter((p) => p.startsWith(".github/"))).toEqual([]);
   });
 
+  it("says which projects already hold a vault, so picking one adopts it with nothing to fill in", async () => {
+    const { h, gl, visit } = await setup();
+    const built = await buildVaultFiles(TEMPLATE, { ...SETTINGS, human: "player" });
+    await gl.addProject({ fullName: "player/old", id: 601, files: Object.fromEntries(Object.entries(built).filter(([p]) => !p.startsWith(".github/"))) });
+    await gl.addProject({ fullName: "player/busy", id: 602, files: { "src/app.ts": "x" } });
+    await h.connectGitLab(visit, "player");
+    const { repos } = (await (await h.api(visit, "setup/repos?provider=gitlab")).json()) as { repos: { id: number; empty?: boolean; adoptable?: boolean }[] };
+    expect(repos.find((r) => r.id === 601)).toMatchObject({ adoptable: true });
+    expect(repos.find((r) => r.id === 602)).toMatchObject({ adoptable: false });
+    expect(repos.find((r) => r.id === 555)).toMatchObject({ empty: true });
+    expect(repos.find((r) => r.id === 555)).not.toHaveProperty("adoptable");
+  });
+
+  it("reconnects a disconnected vault as it is, keeping its id", async () => {
+    const { h, visit } = await setup();
+    await h.connectGitLab(visit, "player");
+    const made = (await (await init(h, visit, { repoId: 555 })).json()) as { vault: { id: string } };
+    await h.registry.setVaultStatus(made.vault.id, "disconnected", "token_revoked");
+    const { repos } = (await (await h.api(visit, "setup/repos?provider=gitlab")).json()) as { repos: { id: number; adoptable?: boolean }[] };
+    expect(repos.find((r) => r.id === 555)).toMatchObject({ adoptable: true });
+    const res = await h.post(visit, "setup/init", { provider: "gitlab", repoId: 555, adopt: true });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ mode: "adopted", vault: { id: made.vault.id, status: "ready" } });
+  });
+
   it("refuses a project with other files in it", async () => {
     const { h, gl, visit } = await setup();
     await gl.addProject({ fullName: "player/busy", id: 602, files: { "src/app.ts": "x" } });
@@ -235,6 +260,9 @@ describe("a vault on GitLab", () => {
     expect(res.status).toBe(409);
     expect(((await res.json()) as { code: string }).code).toBe("GITHUB_ONLY");
     expect((await status(h, visit)).curatorActions).toBeUndefined();
+    // Nor its secrets, state or runs.
+    for (const r of [await h.post(visit, "setup/curator-actions/secrets", { claudeToken: "sk-ant-oat01-example" }), await h.post(visit, "setup/curator-actions/run", {}), await h.api(visit, "setup/curator-actions/state")])
+      expect(((await r.json()) as { code: string }).code).toBe("GITHUB_ONLY");
   });
 });
 

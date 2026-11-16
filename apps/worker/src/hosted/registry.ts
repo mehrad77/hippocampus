@@ -564,6 +564,10 @@ export class Registry {
       { sql: "DELETE FROM vaults WHERE account_id = ?", params: [id] },
       { sql: "DELETE FROM gitlab_credentials WHERE account_id = ?", params: [id] },
       { sql: "DELETE FROM identities WHERE provider = 'gitlab' AND user_id = (SELECT id FROM users WHERE legacy_account = ?)", params: [id] },
+      // The model key and its ledger (hosted curation).
+      { sql: "DELETE FROM llm_reservations WHERE account_id = ?", params: [id] },
+      { sql: "DELETE FROM llm_spend WHERE account_id = ?", params: [id] },
+      { sql: "DELETE FROM llm_credentials WHERE account_id = ?", params: [id] },
       { sql: "UPDATE users SET last_vault = NULL WHERE legacy_account = ?", params: [id] },
       { sql: "UPDATE accounts SET status = 'deleted', note = NULL, session_epoch = session_epoch + 1, updated = ? WHERE id = ?", params: [this.stamp(), id] },
       { sql: SYNC_USER, params: [id] },

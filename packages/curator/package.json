@@ -16,7 +16,11 @@
     "@ai-sdk/openai-compatible": "^3.0.57",
     "@ai-sdk/anthropic": "^4.0.65",
     "@ai-sdk/xai": "^5.0.10",
+    "@ai-sdk/mistral": "^4.0.52",
     "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@hippocampus/template": "workspace:*"
   },
   "license": "AGPL-3.0-only"
 }

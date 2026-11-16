@@ -25,7 +25,7 @@ relations: [member_of, part_of, located_in, owns, handles, requires, blocks, inv
 
 curator:
   canon_threshold: 2      # distinct agents needed to promote a rumor to canon
-  batch_size: 25          # max episodes per sleep
+  batch_size: 100         # max episodes per sleep
   summaries: true         # maintain an LLM summary paragraph per touched note
   stale_after_days: 60    # canon not re-confirmed for this long shows up in the morning review
 

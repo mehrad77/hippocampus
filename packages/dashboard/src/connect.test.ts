@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accessOf, CONNECT_APPS, connectSnippet, connectSnippets, curatorSnippets, keySnippets, mcpServerName, type ConnectAppId } from "./connect.ts";
+import { accessOf, CONNECT_APPS, connectSnippet, connectSnippets, curatorSnippets, keySnippets, mcpServerName, MEMORY_ROUTINE, setupPrompt, SLEEP_PROMPT, type ConnectAppId } from "./connect.ts";
 
 const t = { url: "https://hippo.test/mcp/01J9Z8D3M0V000000000000001", key: "hippo_secret", server: "hippo-lisbon-vault" };
 
@@ -47,6 +47,26 @@ describe("connecting an app", () => {
     ]);
     const actions = curatorSnippets({ ...t, server: "hippo-vault-curator", repo: "player/vault" }).at(-1)!;
     expect(actions.code).toContain("gh secret set HIPPO_CURATOR_KEY --repo player/vault");
-    expect(actions.code).toContain("gh variable set HIPPO_MCP_URL");
+    // The address is baked into the workflow: no repository variables.
+    expect(actions.code).not.toContain("gh variable set");
+  });
+});
+
+describe("the setup and sleep prompts", () => {
+  it("names the vault and the address, carries the routine and the curation step, and no key", () => {
+    const p = setupPrompt({ publicUrl: "https://hippo.test", vault: "player/vault" });
+    expect(p).toContain('"player/vault"');
+    expect(p).toContain("https://hippo.test/llms.txt");
+    expect(p).toContain(MEMORY_ROUTINE);
+    expect(p).toContain("access=curate");
+    expect(p).toContain("stand by");
+    expect(p).toContain(SLEEP_PROMPT);
+    expect(p).not.toMatch(/hippo_[A-Za-z0-9]|Bearer/);
+  });
+
+  it("tells a scheduled curator to stop on not_needed, and keeps force for the person's ask", () => {
+    expect(SLEEP_PROMPT).toContain('"not_needed"');
+    expect(SLEEP_PROMPT).toContain("force: true");
+    expect(curatorSnippets({ ...t }).find((s) => s.label.startsWith("The sleep prompt"))!.code).toBe(SLEEP_PROMPT);
   });
 });

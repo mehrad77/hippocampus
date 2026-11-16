@@ -3,7 +3,7 @@ import { FakeGitLab } from "@hippocampus/store-gitlab/testing";
 import { createHostedApp, type HostedAppDeps } from "../app.ts";
 import { keyRequest } from "../hosted/registry.ts";
 import { APP, GITLAB, ORIGIN, appKeyPair, hostedGitHub, registryDb, testSettings } from "../hosted/testing.ts";
-import type { AgentClaim, DashboardUser, PartyMember, VaultGrant, VaultHosts, VaultMeta, VaultStub } from "../hosted/vault-port.ts";
+import type { AgentClaim, DashboardUser, PartyMember, StartResult, VaultGrant, VaultHosts, VaultMeta, VaultStub } from "../hosted/vault-port.ts";
 import { browser } from "./browser.ts";
 import { MemoryKV } from "./memory-kv.ts";
 
@@ -20,7 +20,24 @@ export type Visit = ReturnType<typeof browser>;
 
 export interface StubCall {
   vault: string;
-  method: "configure" | "mcp" | "dashboard" | "party" | "addParty" | "linkHuman" | "releaseClaims" | "claims" | "setCurate" | "curation" | "disconnect" | "destroy";
+  method:
+    | "configure"
+    | "mcp"
+    | "dashboard"
+    | "party"
+    | "addParty"
+    | "linkHuman"
+    | "releaseClaims"
+    | "claims"
+    | "setCurate"
+    | "curation"
+    | "hostedCurator"
+    | "setHostedSchedule"
+    | "runHostedCuratorNow"
+    | "ensureAlarm"
+    | "disconnect"
+    | "destroy";
+  hourUtc?: number | null;
   meta?: VaultMeta;
   grant?: VaultGrant;
   user?: DashboardUser;
@@ -47,6 +64,10 @@ export class FakeVaults implements VaultHosts {
   readonly claimed = new Map<string, AgentClaim[]>();
   /** What each vault's switches say, by credential. */
   readonly curating = new Map<string, Record<string, boolean>>();
+  /** Each vault's hosted nightly hour, as its object was told. */
+  readonly hours = new Map<string, number>();
+  /** What Run now answers, per vault (a run by default). */
+  readonly runNow = new Map<string, StartResult>();
 
   get(vault: string): VaultStub {
     const seen = (call: Omit<StubCall, "vault">) => void this.calls.push({ vault, ...call });
@@ -93,6 +114,25 @@ export class FakeVaults implements VaultHosts {
         const all = this.curating.get(vault) ?? {};
         return Object.fromEntries(credentials.filter((c) => c in all).map((c) => [c, all[c]!]));
       },
+      hostedCurator: async () => {
+        seen({ method: "hostedCurator" });
+        const hourUtc = this.hours.get(vault);
+        return hourUtc === undefined ? { enabled: false } : { enabled: true, hourUtc };
+      },
+      setHostedSchedule: async (hourUtc) => {
+        seen({ method: "setHostedSchedule", hourUtc });
+        if (hourUtc === null) this.hours.delete(vault);
+        else this.hours.set(vault, hourUtc);
+        return hourUtc === null ? { enabled: false } : { enabled: true, hourUtc };
+      },
+      runHostedCuratorNow: async () => {
+        seen({ method: "runHostedCuratorNow" });
+        return this.runNow.get(vault) ?? { run: "run-01hosted" };
+      },
+      ensureAlarm: async () => {
+        seen({ method: "ensureAlarm" });
+        return true;
+      },
       disconnect: async (reason) => seen({ method: "disconnect", reason }),
       destroy: async () => seen({ method: "destroy" }),
     };
@@ -120,7 +160,20 @@ export function fakeAssets(files: Record<string, string>) {
 
 let keyPair: ReturnType<typeof appKeyPair> | undefined;
 
-export async function hostedApp(opts: { limits?: HostedAppDeps["limits"]; gitlab?: boolean; now?: () => Date } = {}) {
+/** A `HIPPO_TOKEN_KEY` for tests (32 bytes). */
+export const TEST_TOKEN_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(3)));
+
+export async function hostedApp(
+  opts: {
+    limits?: HostedAppDeps["limits"];
+    gitlab?: boolean;
+    now?: () => Date;
+    /** Overrides of the settings, like `tokenKey` for hosted curation. */
+    settings?: Partial<HostedAppDeps["settings"]>;
+    /** The model providers' APIs (api.anthropic.com, api.mistral.ai), for checking keys. */
+    llm?: (request: Request) => Response | Promise<Response>;
+  } = {},
+) {
   const keys = await (keyPair ??= appKeyPair());
   const github = await hostedGitHub(keys);
   const { gh } = github;
@@ -138,13 +191,17 @@ export async function hostedApp(opts: { limits?: HostedAppDeps["limits"]; gitlab
   }
   const fetchAny = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    if (url.host === "api.anthropic.com" || url.host === "api.mistral.ai") {
+      if (!opts.llm) throw new Error(`no fake model provider for ${url.host}`);
+      return opts.llm(new Request(input, init));
+    }
     return gl && url.host === "gitlab.test" ? gl.fetch(input, init) : github.fetch(input, init);
   };
   const kv = new MemoryKV();
   const vaults = new FakeVaults();
   const logs: string[] = [];
   const app = createHostedApp({
-    settings: testSettings(keys.privateKeyPem, [GM.id], gl ? GITLAB : undefined),
+    settings: { ...testSettings(keys.privateKeyPem, [GM.id], gl ? GITLAB : undefined), ...opts.settings },
     kv,
     registry: await registryDb(),
     vaults,

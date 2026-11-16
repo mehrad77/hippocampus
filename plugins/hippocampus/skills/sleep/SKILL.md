@@ -12,6 +12,8 @@ The connection needs a **curator key** (the `curate` scope). If there are no `sl
 ## Steps
 
 1. Call `sleep_start` with `model` set to your exact model name and `curator` set to a short name for yourself.
+   - If `state` is `"not_needed"`, stop and tell the person why in one line, from its `message`: Hippocampus curates this vault itself and is working, or nothing is waiting. You're the standby curator; the server wakes you when hosted curation pauses or memories wait too long.
+   - Pass `force: true` only when the person asked for a run now, never on a schedule.
    - If a run is already in progress, call `sleep_status`, report it, and stop.
 2. Each response has `questions`. For each one:
    - Follow its `system` text as your instructions, read its `prompt`, and answer with one JSON value matching its `schema`. No prose, no code fences.

@@ -37,7 +37,7 @@ Run the CLI from source (tsx, no build):
 Use these for UI work, screenshots and bug reports. Everything in them is fictional.
 
 - `pnpm dev:dashboard` runs the dashboard UI with hot reload against the demo campaign, under `/dashboard/` (not `/`). `HIPPO_VAULT=<dir> pnpm dev:dashboard` uses a local vault instead, which is private data: never commit or share what it shows.
-- `HIPPO_DEMO_HOSTED=1 pnpm dev:dashboard` puts a pretend hosted app in front of the demo: sign-in, waitlist, GitHub App install, vault setup, keys, curator, admin and account pages, with nothing touching GitHub. `GET /dashboard/api/__demo/stage?to=<stage>` jumps to a stage (`signed-out`, `waitlisted`, `requested`, `approved`, `installed`, `ready`); add `&provider=gitlab` to walk the GitLab path.
+- `HIPPO_DEMO_HOSTED=1 pnpm dev:dashboard` puts a pretend hosted app in front of the demo: sign-in, waitlist, GitHub App install, vault setup, keys, curator, admin and account pages, with nothing touching GitHub. `GET /dashboard/api/__demo/stage?to=<stage>` jumps to a stage (`signed-out`, `waitlisted`, `requested`, `denied`, `fresh`, `approved`, `installed`, `disconnected`, `bootstrapping`, `ready`); add `&provider=gitlab` to walk the GitLab path. `__demo/device` plays an agent starting device sign-in (`?access=curate` for a curator). Hosted curation (Setup → Nightly curation) answers with fake spend, a made-up recommended mix and instant runs, and refuses any key containing `refused`; `__demo/curator?pause=budget|auth|credit|none` pauses it, and `?standby=<curator>|none` records or forgets a standby check-in.
 - `.claude/launch.json` names these for preview tools: `dashboard` (port 4400), `dashboard-hosted` (4401, with `HIPPO_DEMO_HOSTED=1`), `fake-github` (8786) and `worker` (8787).
 - `./apps/cli/bin/hippo dashboard --demo` serves the built dashboard with the demo campaign, as users see it.
 
@@ -67,7 +67,7 @@ Open http://127.0.0.1:8787/. `dev` builds the dashboard and applies the registry
 
 To run the dev Worker against real GitHub, use a GitHub App you own for development, never the official instance's App, and a repo you don't use as a vault. The Worker talks to github.com unless `GITHUB_API_URL` and `GITHUB_OAUTH_URL` are set, and it accepts them only on a loopback `HIPPO_PUBLIC_URL`.
 
-1. Create a GitHub App on your personal account. Set its callback URL and setup URL to `http://127.0.0.1:8787/oauth/github/callback`, with "Redirect on update" on. Give it repository permissions for contents and workflows (read and write), and no webhook (leave it inactive; installs and sign-in don't need it).
+1. Create a GitHub App on your personal account. Set its callback URL and setup URL to `http://127.0.0.1:8787/oauth/github/callback`, with "Redirect on update" on. Give it repository permissions for contents and workflows (read and write), and for secrets and actions (read and write; the Actions curator's card uses them), and no webhook (leave it inactive; installs and sign-in don't need it).
 2. Generate a private key and convert it to PKCS#8 (see [USAGE.md §8](USAGE.md#running-your-own-instance), step 1). Create a client secret.
 3. Write `apps/worker/.dev.vars` (gitignored) by hand, with your App's values and your GitHub user id in `HIPPO_ADMINS` (find it at `https://api.github.com/users/<login>`). Leave out `GITHUB_API_URL` and `GITHUB_OAUTH_URL`. Start with `HIPPO_PUBLIC_URL=http://127.0.0.1:8787`, and set `GITHUB_APP_SLUG` to the App's URL name.
 4. Run only `pnpm --filter @hippocampus/worker dev`, then open http://127.0.0.1:8787/ and sign in. Install the App on your account, choosing a test repo.
@@ -109,7 +109,18 @@ If your coding agent is also connected to your Hippocampus MCP server or your va
 
 ## Evals
 
-- **Public:** fictional golden tests only. Optionally, a fictional episode set for running real models.
+- **Public:** fictional golden tests only, and the curator eval (`packages/curator/src/eval/`): fictional nights on the example vault, scored against what a careful curator would do. It picks hosted curation's default models.
+- **Running the curator eval** costs money and needs a key, in the environment only. Each run uses hosted settings, answers are cached by model and question, and results and the cache go to `~/.cache/hippocampus/eval/` (never the repo: the privacy guard scans untracked files).
+
+  ```bash
+  ANTHROPIC_API_KEY=… node_modules/.bin/tsx packages/curator/src/eval/run.ts --provider anthropic --model claude-haiku-5-5
+  ```
+
+  ```bash
+  node_modules/.bin/tsx packages/curator/src/eval/compare.ts --margin 0.03
+  ```
+
+  Run each candidate model alone for every step (`--model`), three repeats (the default), then `compare.ts`. It prints each step's models with their gates, score, $ per 100 memories and time, and the recommended mix: per step, the cheapest model that passes the step's hard gates (secrets flagged, nothing leaked, answers that parse) within the margin of the best. Run that mix end to end (`--step mentions=… --step claims=…`); it's accepted when it scores within the margin of the best single model. Record it, dated, in `RECOMMENDED` in `packages/curator/src/pricing.ts`. Prices there come from each provider's page, with the source, never from memory.
 - **Private:** keep evals built from your real memos inside your vault, e.g. `_hippo/evals/`. The vault loader ignores that folder. Run a new version or model against a copy of your vault before trusting it.
 
 ## Changing the vault format
@@ -226,3 +237,9 @@ Run it in `apps/worker`. It can't cross a Durable Object class migration.
 - requests nearing 100,000 a day.
 
 KV writes run out first: each sign-in, OAuth client registration and token refresh writes one, and Free allows 1,000 a day.
+
+Hosted curation (the owner's own model key) is opt-in: it's offered only once `HIPPO_HOSTED_CURATOR=on` is set, with `HIPPO_TOKEN_KEY`. Before setting it:
+- move the instance to Workers Paid;
+- run the curator eval and record its mixes in `RECOMMENDED` (`packages/curator/src/pricing.ts`), so owners start from tested models.
+
+On an instance without GitLab, set `HIPPO_TOKEN_KEY` only after the release with hosted curation is deployed and healthy. An earlier Worker accepts the key only together with the GitLab settings, so a rollback past that release with the key alone set fails to start. Removing `HIPPO_HOSTED_CURATOR=on` turns hosted curation off without a deploy: no run starts, and an open one closes at its next alarm.

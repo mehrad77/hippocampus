@@ -872,11 +872,16 @@ function Pending({ episodes, refs, voice: { v } }: { episodes: EpisodeView[]; re
               <AgentLink agent={ep.agent} refs={refs} />
               <span className="chip">{kindLabel(ep.kind)}</span>
               <RelTime at={ep.at} />
-              {ep.waitedThroughSleep && (
-                <span className="flag flag--stale" title={v("Older than the last nightly update: it failed or didn't fit in that run", "Older than the last sleep: it failed or didn't fit the batch")}>
-                  <Icon name="hourglass" /> {v("delayed", "waited")}
-                </span>
-              )}
+              {ep.waitedThroughSleep &&
+                (ep.batchFull !== undefined ? (
+                  <span className="flag" title={v(`The last nightly update handled its limit of ${ep.batchFull}; this one is next`, `The last sleep took its full batch of ${ep.batchFull}; this one is next`)}>
+                    <Icon name="hourglass" /> {v("next", "next")}
+                  </span>
+                ) : (
+                  <span className="flag flag--stale" title={v("Arrived before the last nightly update: it failed or didn't fit in that run", "Arrived before the last sleep: it failed or didn't fit the batch")}>
+                    <Icon name="hourglass" /> {v("delayed", "waited")}
+                  </span>
+                ))}
             </div>
             {ep.confidential && !ep.secret ? (
               <span className="episode--sealed">

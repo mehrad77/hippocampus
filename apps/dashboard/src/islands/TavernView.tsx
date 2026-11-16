@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useResource } from "../lib/cache.ts";
 import { emit } from "../lib/events.ts";
 import { daysLeftLabel, fieldLabel, plural, relTime, shortDate, titleCase, urgency } from "../lib/format.ts";
@@ -14,6 +15,34 @@ import { ProgressBar } from "../ui/ProgressBar.tsx";
 import { GoalSeal } from "../ui/play/Bits.tsx";
 import { goalsOf, kindLabel } from "../ui/play/model.ts";
 import { Value } from "../ui/Value.tsx";
+
+/** Onboarding's last step lands here with `#all-set`: say so once, then take the hash away so a reload doesn't repeat it. */
+function AllSet() {
+  const { t, v } = useTerms();
+  const [shown, setShown] = useState(() => location.hash === "#all-set");
+  useEffect(() => {
+    if (shown) history.replaceState(history.state, "", `${location.pathname}${location.search}`);
+  }, []);
+  if (!shown) return null;
+  return (
+    <div className="callout callout--ok" role="status">
+      <Icon name="check" />
+      <div className="stack sz-tight">
+        <strong>{v("You're all set.", "The table is set.")}</strong>
+        <span>
+          {v(
+            "From here on, agents send notes about what they learn, the curator turns them into confirmed records, and this is where you read everything, decide disputes and track goals. ",
+            "From here on, the party files what it learns, the curator turns it into canon, and this is where you read the campaign, rule on disputes and steer quests. ",
+          )}
+          <a href={href.page("party")}>{v("Approve your agents", "Seat your party")} on the {t("party")} page</a>, or change anything under <a href={href.page("setup")}>{t("setup")}</a>.
+        </span>
+      </div>
+      <button type="button" className="btn btn--ghost btn--icon" onClick={() => setShown(false)} aria-label="Dismiss">
+        <Icon name="close" />
+      </button>
+    </div>
+  );
+}
 
 export default function TavernView() {
   return <PageGate>{(session) => <Tavern session={session} />}</PageGate>;
@@ -58,6 +87,8 @@ function Tavern({ session }: { session: SessionInfo }) {
           </button>
         )}
       </header>
+
+      <AllSet />
 
       <div className="stats">
         <Stat label="Open disputes" value={o.counts.disputes} note={o.counts.disputes ? v("need your decision", "await your ruling") : v("none open", "all settled")} href={href.page("council")} tone={o.counts.disputes ? "danger" : undefined} />

@@ -1,58 +1,73 @@
 import { useEffect, useState } from "react";
 import { postJson } from "../../lib/api.ts";
-import { clearCache } from "../../lib/cache.ts";
+import { clearCache, useResource } from "../../lib/cache.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
 import { repoLinks } from "../../lib/vaultLinks.ts";
 import { addingVaultNow, stopAddingVault } from "../../lib/vault.ts";
 import { signOut } from "../../lib/session.ts";
-import type { HostedStatus, SessionInfo } from "../../lib/types.ts";
+import type { AccountApp, HostedStatus, SessionInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Panel } from "../../ui/Parts.tsx";
 import { Personalization } from "../../ui/Personalization.tsx";
 import { ConfirmDialog, CopyLine, ErrorCallout, Facts, Field, ToneTag, useAction, useHash, useScrollToHash } from "./common.tsx";
 import { CuratorRuns } from "./Curator.tsx";
 import { HealthChecklist } from "./Health.tsx";
-import { forNewVault, parseHostedStep, VAULT_TONE } from "./hosted.ts";
+import { forNewVault, hasCurator, resolveSetupHash, SETUP_SECTIONS, VAULT_TONE, type SetupSectionId } from "./hosted.ts";
 import { ConnectionsPanel, CurationSetup } from "./Connections.tsx";
+import { HostedCurator } from "./HostedCurator.tsx";
 import { HostedOnboarding } from "./HostedOnboarding.tsx";
 import { AppInvitesPanel, IncomingInvites, MembersPanel } from "./HostedSharing.tsx";
 import { HostedVaultsPanel } from "./HostedVaults.tsx";
 import { SecretsPanel } from "./SecretsPanel.tsx";
 
-const SECTION: Record<string, string> = { access: "#account", install: "#sz-repo", vault: "#sz-repo", keys: "#connections", curator: "#curation", secrets: "#secrets" };
+/** Where each health item is fixed. Its keys are health-item ids, not anchors. */
+const SECTION: Record<string, string> = { access: "#account", install: "#sz-repo", vault: "#sz-repo", keys: "#connections", curator: "#curation" };
 
 /**
- * Setup on the hosted app. Until the vault is ready it's the onboarding wizard; after that it's the
- * vault's keys, apps, curator and the account, with the wizard's later steps still a hash away.
+ * Setup on the hosted app. Until the vault is ready it's the onboarding wizard; after that it's Setup &
+ * health in sections, with the wizard's last steps (the first agent, curation) still a hash away. Old step
+ * hashes land on their step, or on a ready vault on their section, and the address shows the real id.
  */
 export function HostedSetup({ session, status }: { session: SessionInfo; status: HostedStatus }) {
   const hash = useHash();
   const ready = status.vault?.status === "ready";
+  const adding = addingVaultNow(location.search, hash);
+  const target = resolveSetupHash(hash, { ready, adding });
+  const real = target ? ("step" in target ? target.step : target.anchor) : undefined;
+  useEffect(() => {
+    if (target?.alias && real) history.replaceState(history.state, "", `${location.pathname}${location.search}#${real}`);
+  }, [hash]);
   const footer = (
     <>
       {status.account.status === "approved" && <AppInvitesPanel />}
       <AccountPanel session={session} status={status} />
+      <Personalization />
     </>
   );
-  if (addingVaultNow(location.search, hash)) return <HostedOnboarding session={session} status={forNewVault(status)} adding footer={footer} />;
-  if (ready && !parseHostedStep(hash)) return <HostedManage session={session} status={status} hash={hash} />;
+  if (adding) return <HostedOnboarding session={session} status={forNewVault(status)} adding footer={footer} />;
+  if (ready && !(target && "step" in target)) return <HostedManage session={session} status={status} anchor={target && "anchor" in target ? target.anchor : ""} />;
   return (
     <>
       <IncomingInvites />
-      <HostedOnboarding session={session} status={status} footer={footer} />
+      <HostedOnboarding session={session} status={status} footer={footer} hostedCuration={status.hostedCurator?.available ? <HostedCurator status={status} compact /> : undefined} />
     </>
   );
 }
 
-function HostedManage({ session, status, hash }: { session: SessionInfo; status: HostedStatus; hash: string }) {
+function HostedManage({ session, status, anchor }: { session: SessionInfo; status: HostedStatus; anchor: string }) {
   const { t, v } = useTerms();
   const vault = status.vault!;
   const tone = VAULT_TONE[vault.status];
   const links = repoLinks({ kind: vault.provider ?? "github", repo: vault.fullName, branch: vault.branch, url: vault.url });
-  useScrollToHash(hash, false);
+  const owner = vault.role === "owner";
+  // A sign-in app the owner let curate counts as the curator, so the setup folds away under the runs.
+  const apps = useResource<{ apps: AccountApp[] }>(owner ? "/account/apps" : null);
+  useScrollToHash(anchor, false);
   // Back on the plain setup page: whatever vault was being added, that's over.
   useEffect(stopAddingVault, []);
+  // Members don't curate or hold the secrets key; viewers connect nothing.
+  const shown = new Set<SetupSectionId>(["setup-vault", "setup-people", "setup-account", ...(vault.role !== "viewer" ? (["setup-agents"] as const) : []), ...(owner ? (["setup-curation"] as const) : [])]);
   return (
     <div className="stack sz">
       <header className="page-head">
@@ -63,7 +78,7 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
           </div>
           <h1>Setup & health</h1>
           <p className="page-head__lede">
-            {v("Your vault, the keys to it, the apps connected to it, the curator, and your account.", "The campaign's vault, the keys to it, the apps at the table, the curator, and your account.")}
+            {v("Your vault, the agents connected to it, curation, the people you share it with, and your account.", "The campaign's vault, the party at the table, the sleep, the players you share it with, and your account.")}
           </p>
         </div>
         <span className="chip sz-where" title={`Signed in with GitHub as @${status.account.login}`}>
@@ -74,48 +89,63 @@ function HostedManage({ session, status, hash }: { session: SessionInfo; status:
       <IncomingInvites />
       {status.items.length > 0 && <HealthChecklist items={status.items} linkFor={(id) => SECTION[id]} defaultOpen={false} />}
 
-      <div className="grid grid--2">
+      <nav className="sz-secnav" aria-label="Sections of Setup & health">
+        <ul>
+          {SETUP_SECTIONS.filter((s) => shown.has(s.id)).map((s) => (
+            <li key={s.id}>
+              <a href={`#${s.id}`}>{v(s.title[0], s.title[1])}</a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
+      <section className="sz-section stack" id="setup-vault" aria-label={v("Vault", "The vault")}>
+        <div className="grid grid--2">
         <Panel title={v("Vault repository", "The vault")} icon="github" id="sz-repo">
-          <Facts
-            rows={[
-              [
-                "Repository",
-                <a className="mono sz-break" href={href.repo(vault)} rel="noopener noreferrer">
-                  {vault.fullName}
-                </a>,
-              ],
-              ["Branch", <span className="mono">{vault.branch}</span>],
-              ["State", <ToneTag tone={tone.tone} word={tone.word} compact />],
-              ["Private", vault.provider === "gitlab" ? "Yes: only you and your GitLab connection can read it" : "Yes: only you and the app can read it"],
-            ]}
-          />
-          <p className="small muted">It's your repository: clone it, open it in Obsidian, or back it up like any other. Deleting your account here leaves it untouched.</p>
-        </Panel>
-        <Panel title="Connect" icon="link" id="sz-connect">
           <div className="stack sz-tight">
-            <p className="small">This vault's own address. Apps use it with a key, which names this vault and no other; Claude.ai and ChatGPT can sign in with it instead (beta).</p>
-            <CopyLine value={status.mcpUrl} label="MCP URL" />
-            <p className="small">
-              {vault.role !== "viewer" && <a href="#connections">Connect an app</a>}
-              {vault.role === "owner" && (
-                <>
-                  {" · "}
-                  <a href="#curation">{v("Set up nightly curation", "Appoint a curator")}</a>
-                </>
-              )}
-            </p>
+            <Facts
+              rows={[
+                [
+                  "Repository",
+                  <a className="mono sz-break" href={href.repo(vault)} rel="noopener noreferrer">
+                    {vault.fullName}
+                  </a>,
+                ],
+                ["Branch", <span className="mono">{vault.branch}</span>],
+                ["State", <ToneTag tone={tone.tone} word={tone.word} compact />],
+                ["Private", vault.provider === "gitlab" ? "Yes: only you and your GitLab connection can read it" : "Yes: only you and the app can read it"],
+              ]}
+            />
+            <CopyLine value={status.mcpUrl} label="This vault's MCP address" />
+            <p className="small muted">The vault's own address: a key for it names this vault and no other. It's your repository: clone it, open it in Obsidian, or back it up like any other. Deleting your account here leaves it untouched.</p>
           </div>
         </Panel>
-      </div>
+        {owner && session.capabilities.secrets && <SecretsPanel vaultName={vault.fullName.split("/").pop() ?? vault.fullName} canRotate={!!session.capabilities.reveal} />}
+        </div>
+        <HostedVaultsPanel status={status} />
+      </section>
 
-      {vault.role === "owner" && session.capabilities.secrets && <SecretsPanel vaultName={vault.fullName.split("/").pop() ?? vault.fullName} canRotate={!!session.capabilities.reveal} />}
-      <HostedVaultsPanel status={status} />
-      <MembersPanel session={session} status={status} />
-      {vault.role !== "viewer" && <ConnectionsPanel status={status} />}
-      {vault.role === "owner" && <CurationSetup status={status} runs={session.capabilities.curator ? <CuratorRuns commits={links ? { url: links.commits, host: links.host } : undefined} /> : undefined} />}
-      <AppInvitesPanel />
-      <AccountPanel session={session} status={status} />
-      <Personalization />
+      {shown.has("setup-agents") && (
+        <section className="sz-section stack" id="setup-agents" aria-label={v("Agents", "The party")}>
+          <ConnectionsPanel status={status} />
+        </section>
+      )}
+
+      {shown.has("setup-curation") && (
+        <section className="sz-section stack" id="setup-curation" aria-label={v("Curation", "The sleep")}>
+          <CurationSetup status={status} curated={hasCurator({ status, draftReady: false, apps: apps.data?.apps })} runs={session.capabilities.curator ? <CuratorRuns commits={links ? { url: links.commits, host: links.host } : undefined} /> : undefined} />
+        </section>
+      )}
+
+      <section className="sz-section grid grid--2" id="setup-people" aria-label={v("People", "The table")}>
+        <MembersPanel session={session} status={status} />
+        <AppInvitesPanel />
+      </section>
+
+      <section className="sz-section grid grid--2" id="setup-account" aria-label="Account">
+        <AccountPanel session={session} status={status} />
+        <Personalization />
+      </section>
     </div>
   );
 }
@@ -137,7 +167,6 @@ function AccountPanel({ session, status }: { session: SessionInfo; status: Hoste
           rows={[
             ["Signed in as", <strong>@{login}</strong>],
             ["Access", <ToneTag tone={word.tone} word={word.word} compact />],
-            ...((status.vaults?.length ?? 0) > 0 ? ([["Vaults", <a href="#vaults">{status.vaults!.map((x) => x.fullName).join(", ")}</a>]] as [string, React.ReactNode][]) : []),
             ...((session.account?.admin ?? status.account.admin) ? ([["Admin", <a href={href.page("admin")}>Yes: the admin page</a>]] as [string, React.ReactNode][]) : []),
           ]}
         />

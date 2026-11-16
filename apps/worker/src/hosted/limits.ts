@@ -25,6 +25,8 @@ export interface LogEvent {
   status: number;
   code?: string;
   ms: number;
+  /** What a hosted run's slice spent on models, in micro-dollars. */
+  micros?: number;
 }
 
 /** One JSON line per request. The vault id is hashed (enough to group lines, not to look it up), and anything after `?` is dropped. */
@@ -32,5 +34,6 @@ export async function logEvent(e: LogEvent, log: (line: string) => void = consol
   const line: Record<string, unknown> = { route: e.route.split("?")[0], status: e.status, ms: Math.round(e.ms) };
   if (e.vault) line.vault = (await hashToken(`vault:${e.vault}`)).slice(0, 12);
   if (e.code) line.code = e.code;
+  if (e.micros !== undefined) line.micros = Math.round(e.micros);
   log(JSON.stringify(line));
 }

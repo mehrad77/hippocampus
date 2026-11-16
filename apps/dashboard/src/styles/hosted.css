@@ -201,6 +201,106 @@
   min-width: 0;
 }
 
+/* ── Hosted curation (the owner's model key) ──────────────────────────── */
+
+.hz-hosted p {
+  margin: 0;
+}
+
+.hz-hosted__notes,
+.hz-hosted__mix {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hz-hosted__notes li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.hz-hosted__notes svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--gold);
+}
+
+.hz-hosted__mix {
+  gap: var(--space-1);
+  padding-left: var(--space-5);
+}
+
+.hz-hosted__spend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.hz-hosted__spend progress {
+  flex: 1 1 10rem;
+  max-width: 20rem;
+  height: 8px;
+  accent-color: var(--accent);
+}
+
+.hz-hosted .sz-fieldset select {
+  max-width: 100%;
+}
+
+.hz-hosted__rule {
+  width: 100%;
+  margin: var(--space-1) 0;
+  border: 0;
+  border-top: 1px solid var(--rule);
+}
+
+:root:not([data-style="codex"]) .hz-hosted__notes svg {
+  color: var(--link);
+}
+
+/* ── The GitHub Actions curator ───────────────────────────────────────── */
+
+.hz-actions p {
+  margin: 0;
+}
+
+.hz-actions__checks,
+.hz-actions__runs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hz-actions__checks li,
+.hz-actions__runs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.hz-actions__checks li > span:last-child {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.hz-actions .sz-fieldset:disabled {
+  opacity: 0.6;
+}
+
+.hz-actions select {
+  max-width: 100%;
+}
+
 /* ── Admin ────────────────────────────────────────────────────────────── */
 
 .hz-chip {
@@ -415,4 +515,77 @@
 .hz-approve h1 {
   margin: 0;
   font-size: 1.4rem;
+}
+
+/* ── The repository step's three parts ────────────────────────────────── */
+
+.hz-task {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.hz-task__head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 1rem;
+}
+
+.hz-task__num {
+  display: inline-grid;
+  place-items: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid var(--rule-strong);
+  border-radius: 50%;
+  font-size: 0.8rem;
+  color: var(--ink-2);
+}
+
+.hz-task[data-done] .hz-task__num {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.hz-task__body {
+  padding-left: calc(1.5rem + var(--space-2));
+}
+
+@media (max-width: 600px) {
+  .hz-task__body {
+    padding-left: 0;
+  }
+}
+
+/* ── Adding an agent: one prompt first ────────────────────────────────── */
+
+.hz-add__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.hz-add__more {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* The prompt is prose: it wraps, and a long one scrolls inside its box. */
+.hz-prompt .sz-snippet__code {
+  max-height: 14rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.hz-arrival {
+  align-items: center;
 }

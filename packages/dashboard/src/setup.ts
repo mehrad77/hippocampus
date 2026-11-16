@@ -27,6 +27,9 @@
 //   hosted  POST keys/revoke       { id } → { ok: true }
 //   hosted  POST curator-actions   { enable: boolean } → { enabled, path }  (the vault's nightly sleep on GitHub Actions)
 //   hosted  POST vaults/remove     { id, confirm: fullName } → { ok: true }  (forgets the vault; its repo stays)
+//   hosted  POST curator-llm       HostedCuratorLlmRequest → HostedCuratorStatus  (the account's model key, write-only, and caps; owner)
+//   hosted  POST curator-llm/vault { hourUtc: number | null } → HostedVaultCurator  (the picked vault's nightly hour; owner)
+//   hosted  POST curator-llm/run   {} → HostedCuratorRunResult  (a hosted run now, set-aside memories included; owner)
 //
 // On the hosted app a person can have several vaults. Every request may name one in the `x-hippo-vault`
 // header (VAULT_HEADER); without it the one they used last is meant. Keys, curator-actions and the
@@ -385,6 +388,8 @@ export interface HostedSetupStatus {
   keys?: HostedKeyInfo[];
   /** Whether the vault runs sleep nightly on GitHub Actions (its `.github/workflows/sleep.yml`). Absent when it couldn't be checked, and for GitLab vaults. */
   curatorActions?: boolean;
+  /** Hosted curation with the owner's model key, for approved accounts. */
+  hostedCurator?: HostedCuratorStatus;
   publicUrl: string;
   mcpUrl: string;
   /** Presets a new vault can start with. */
@@ -438,11 +443,156 @@ export interface HostedKeyRequest {
   scopes?: string[];
 }
 
-/** `POST curator-actions`: turn the vault's nightly GitHub Actions curator on or off. */
+/**
+ * `POST curator-actions { enable, model? }`: turn the vault's nightly GitHub Actions curator on or off.
+ * On writes the workflow with the vault's MCP address and `model` (else the one it has, else sonnet)
+ * baked in, in one commit when that changes the file.
+ */
 export interface HostedCuratorActionsResult {
   enabled: boolean;
   /** The workflow file in the vault repo. */
   path: string;
+  /** The model the workflow now runs, when on. */
+  model?: string;
+}
+
+/** The repository secrets the Actions curator's workflow reads. */
+export const ACTIONS_SECRETS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "HIPPO_CURATOR_KEY"] as const;
+export type HostedActionsSecret = (typeof ACTIONS_SECRETS)[number];
+/** The models the dashboard may bake into the workflow. */
+export const ACTIONS_MODELS = ["sonnet", "opus"] as const;
+export type HostedActionsModel = (typeof ACTIONS_MODELS)[number];
+
+/**
+ * `POST curator-actions/secrets` (owner only, GitHub vaults): the app writes the workflow's secrets
+ * through the GitHub App. At most one of `claudeToken` (secret CLAUDE_CODE_OAUTH_TOKEN) and `apiKey`
+ * (secret ANTHROPIC_API_KEY); saving one deletes the other, so only one is ever set. Either also mints
+ * a new curator key for Actions (secret HIPPO_CURATOR_KEY) and revokes the one it replaces; neither, to
+ * change only the model. A model goes into the workflow file itself (one commit, when it differs) if
+ * the workflow is on; otherwise turning it on takes it. Values are write-only: sealed for GitHub on the
+ * way through, never stored, never answered. NEEDS_PERMISSION (403) when the installation hasn't
+ * approved Secrets yet.
+ */
+export interface HostedActionsSecretsRequest {
+  claudeToken?: string;
+  apiKey?: string;
+  model?: HostedActionsModel;
+}
+
+export interface HostedActionsSecretsResult {
+  /** The secrets written just now (names only). */
+  saved: HostedActionsSecret[];
+  /** The secret deleted because the other kind was saved. */
+  removed: HostedActionsSecret[];
+  /** Whether a new curator key went in (and the previous Actions one was revoked). */
+  curatorKey: "replaced" | "kept";
+  /** The model the workflow now runs; absent while it's off. */
+  model?: string;
+}
+
+/** A run of the vault repo's `sleep.yml`, as GitHub reports it. */
+export interface HostedActionsRun {
+  id: number;
+  /** queued, in_progress, completed, … */
+  status: string;
+  /** success, failure, cancelled, … once completed; null before. */
+  conclusion: string | null;
+  created: string;
+  url: string;
+  /** schedule, workflow_dispatch, … */
+  event: string;
+}
+
+/**
+ * `GET curator-actions/state` (owner only, GitHub vaults): the Actions curator's checklist and its
+ * last runs, read from GitHub. Each part is absent when GitHub couldn't be asked just now; with
+ * `needsPermission`, the installation hasn't approved Secrets and Actions yet, and only
+ * `enabled` is known.
+ */
+export interface HostedCuratorActionsState {
+  /** The workflow file is in the repo. */
+  enabled?: boolean;
+  /** It is, but not the current version: turning it on again updates it. */
+  outdated?: boolean;
+  /** `who`: the owner approves on GitHub at `settingsUrl`, or (`operator`) the App itself doesn't ask for the permissions yet. */
+  needsPermission?: { repo: string; settingsUrl: string; who: "owner" | "operator" };
+  /** Which of ACTIONS_SECRETS are set (names only; GitHub never shows values). */
+  secrets?: HostedActionsSecret[];
+  /** What the workflow file has baked in, when it's there: its model and the MCP address it calls. */
+  workflow?: { mcpUrl?: string; model?: string };
+  /** This vault's MCP address, which the workflow should call. */
+  mcpUrl: string;
+  /** Newest first, up to five. */
+  runs?: HostedActionsRun[];
+}
+
+/** `POST curator-actions/run`: GitHub queued the workflow; it shows in the runs within a few seconds. */
+export interface HostedActionsRunResult {
+  queued: true;
+}
+
+export type HostedLlmProvider = "anthropic" | "mistral";
+/** The curator's four model steps. */
+export type HostedLlmStep = "mentions" | "match" | "claims" | "summary";
+/** Which model answers each step. */
+export type HostedStepMix = Record<HostedLlmStep, string>;
+
+/**
+ * Hosted curation for the signed-in account: Hippocampus runs the nightly sleep itself, with the
+ * owner's own model key and under their caps. The key is write-only: only its last four characters
+ * come back. Money is in US dollars.
+ */
+export interface HostedCuratorStatus {
+  /** Whether this instance offers it (it has `HIPPO_TOKEN_KEY` and the operator hasn't switched it off). */
+  available: boolean;
+  /** Absent until the account saved a key. */
+  provider?: HostedLlmProvider;
+  steps?: HostedStepMix;
+  /** The saved key's last four characters, like `…3xQa`. */
+  keyHint?: string;
+  monthCapUsd?: number;
+  runCapUsd?: number;
+  spentThisMonthUsd: number;
+  /** Why runs wait: the key was refused (`auth`), credit ran out (`credit`), or this month's budget is spent (`budget`, until `until`, a `YYYY-MM` month). */
+  paused?: { reason: "auth" | "credit" | "budget"; until?: string };
+  /** The eval's recommended mix per provider; empty until the eval has run. */
+  recommended: Partial<Record<HostedLlmProvider, HostedStepMix>>;
+  /** The models a step can use, each with its price in USD per million tokens. */
+  models: { provider: HostedLlmProvider; model: string; inputUsdPerMTok: number; outputUsdPerMTok: number }[];
+  /** The picked vault's schedule, for its owner. */
+  vault?: HostedVaultCurator;
+}
+
+/** Hosted curation for one vault. */
+export interface HostedVaultCurator {
+  /** Whether Hippocampus runs this vault's sleep nightly. */
+  enabled: boolean;
+  /** The nightly hour, UTC (0-23). */
+  hourUtc?: number;
+  /** When the next night starts, ISO. */
+  nextRun?: string;
+  /** A hosted run is open now. */
+  running?: boolean;
+  /** The last hosted run. `stop` says why one ended early (outcome `aborted`); cost in USD. */
+  lastRun?: { id: string; ended: string; outcome: "done" | "expired" | "aborted"; stop?: string; consolidated: number; costUsd?: number };
+  /** The last check-in of an agent curator standing by: `needed` (it ran), `hosted` or `idle` (it was told it wasn't needed). */
+  standby?: { curator: string; at: string; decision: "needed" | "hosted" | "idle" };
+}
+
+/** `POST curator-llm`: the account's provider, models, key and caps. `key` is required the first time and with a new provider. */
+export interface HostedCuratorLlmRequest {
+  provider: HostedLlmProvider;
+  /** A model per step; without it, the provider's recommended mix, or `model` for every step. */
+  steps?: HostedStepMix;
+  model?: string;
+  key?: string;
+  monthCapUsd: number;
+  runCapUsd: number;
+}
+
+/** `POST curator-llm/run`: a hosted run was started for the picked vault. */
+export interface HostedCuratorRunResult {
+  run: string;
 }
 
 /** An app connected over OAuth (Claude.ai, ChatGPT…), as the account sees it. */

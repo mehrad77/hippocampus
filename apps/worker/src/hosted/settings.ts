@@ -2,6 +2,7 @@
 // approve accounts, and optionally a GitLab OAuth application for vaults on GitLab. Everything
 // but the URLs is a Worker secret.
 
+import type { HostedProvider } from "@hippocampus/curator";
 import { checkTokenKey } from "./token-box.ts";
 
 export interface HostedSettings {
@@ -22,7 +23,20 @@ export interface HostedSettings {
   oauthUrl?: string;
   /** Present when the operator set up a GitLab OAuth application: vaults can then live on GitLab. */
   gitlab?: GitLabSettings;
+  /** Seals secrets kept in the registry (`HIPPO_TOKEN_KEY`). GitLab needs it, but it can be set without GitLab. */
+  tokenKey?: string;
+  /**
+   * `HIPPO_HOSTED_CURATOR=on`: the operator offers hosted curation. Opt-in, because `HIPPO_TOKEN_KEY` is
+   * already set wherever GitLab is: turning it on is a decision (Workers Paid, the eval's models), not a
+   * side effect. Unset again, no hosted run starts, and an open one closes at its next alarm.
+   */
+  hostedCuratorOn?: boolean;
+  /** A local fake model provider, per provider (`HIPPO_LLM_ANTHROPIC_URL`, `HIPPO_LLM_MISTRAL_URL`). Loopback Workers only. */
+  llmUrls?: Partial<Record<HostedProvider, string>>;
 }
+
+/** Whether this instance can curate with an owner's key: the operator turned it on, and it has a key to seal it with. */
+export const hostedCurationAvailable = (s: Pick<HostedSettings, "tokenKey" | "hostedCuratorOn">) => !!s.tokenKey && !!s.hostedCuratorOn;
 
 export interface GitLabSettings {
   /** Web origin of the GitLab instance, no trailing slash (default `https://gitlab.com`). */
@@ -50,6 +64,11 @@ export interface HostedVars {
   GITLAB_CLIENT_ID?: string;
   GITLAB_CLIENT_SECRET?: string;
   HIPPO_TOKEN_KEY?: string;
+  /** `off` stops hosted curation (the operator's kill switch). */
+  HIPPO_HOSTED_CURATOR?: string;
+  /** Only for local development against a fake model provider. */
+  HIPPO_LLM_ANTHROPIC_URL?: string;
+  HIPPO_LLM_MISTRAL_URL?: string;
 }
 
 const REQUIRED = [
@@ -83,6 +102,13 @@ export function hostedSettings(env: HostedVars): HostedSettings {
   // These send the app's client secret and JWTs elsewhere, so they're for a fake GitHub on this machine only.
   const overrides = (["GITHUB_API_URL", "GITHUB_OAUTH_URL"] as const).filter((k) => env[k]?.trim());
   if (overrides.length && !local) throw new Error(`Unset ${overrides.join(" and ")}: only local development against a fake GitHub uses them`);
+  // These would send an owner's model key elsewhere, so they're for a fake provider on this machine only.
+  const llm = (["HIPPO_LLM_ANTHROPIC_URL", "HIPPO_LLM_MISTRAL_URL"] as const).filter((k) => env[k]?.trim());
+  if (llm.length && !local) throw new Error(`Unset ${llm.join(" and ")}: only local development against a fake model provider uses them`);
+  const anthropic = trimSlash(env.HIPPO_LLM_ANTHROPIC_URL);
+  const mistral = trimSlash(env.HIPPO_LLM_MISTRAL_URL);
+  // Only `on` turns it on; anything else (a typo too) leaves it off, and never stops the app.
+  const curator = env.HIPPO_HOSTED_CURATOR?.trim().toLowerCase();
   return {
     publicUrl: publicUrl.origin,
     appId: env.GITHUB_APP_ID!.trim(),
@@ -95,18 +121,31 @@ export function hostedSettings(env: HostedVars): HostedSettings {
     apiUrl: trimSlash(env.GITHUB_API_URL),
     oauthUrl: trimSlash(env.GITHUB_OAUTH_URL),
     gitlab: gitlabSettings(env),
+    tokenKey: tokenKey(env),
+    ...(curator === "on" ? { hostedCuratorOn: true } : {}),
+    ...(anthropic || mistral ? { llmUrls: { ...(anthropic ? { anthropic } : {}), ...(mistral ? { mistral } : {}) } } : {}),
   };
 }
 
-/** The GitLab settings when all of them are set; none when none are; an error for a half-configured set, so a typo doesn't quietly turn GitLab off. */
+/** `HIPPO_TOKEN_KEY` when set, checked, so a malformed key fails at startup rather than at the first seal. */
+export function tokenKey(env: HostedVars): string | undefined {
+  const key = env.HIPPO_TOKEN_KEY?.trim();
+  if (!key) return undefined;
+  checkTokenKey(key);
+  return key;
+}
+
+/**
+ * The GitLab settings when its client is set; none when it isn't (`HIPPO_TOKEN_KEY` alone seals other
+ * secrets); an error for a half-configured client, so a typo doesn't quietly turn GitLab off.
+ */
 export function gitlabSettings(env: HostedVars): GitLabSettings | undefined {
   const id = env.GITLAB_CLIENT_ID?.trim();
   const secret = env.GITLAB_CLIENT_SECRET?.trim();
-  const key = env.HIPPO_TOKEN_KEY?.trim();
-  if (!id && !secret && !key) return undefined;
+  if (!id && !secret) return undefined;
+  const key = tokenKey(env);
   const missing = [!id && "GITLAB_CLIENT_ID", !secret && "GITLAB_CLIENT_SECRET", !key && "HIPPO_TOKEN_KEY"].filter(Boolean);
   if (missing.length) throw new Error(`GitLab needs GITLAB_CLIENT_ID, GITLAB_CLIENT_SECRET and HIPPO_TOKEN_KEY together; missing ${missing.join(", ")}`);
-  checkTokenKey(key!);
   const url = new URL(env.GITLAB_URL?.trim() || "https://gitlab.com");
   if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback(url))) throw new Error("GITLAB_URL must be an https URL");
   return { url: url.origin, clientId: id!, clientSecret: secret!, tokenKey: key! };
@@ -122,6 +161,12 @@ export const oauthUrlOf = (s: Pick<HostedSettings, "oauthUrl">) => s.oauthUrl ??
 
 /** Where a person installs the app (and picks the repo). */
 export const installUrl = (s: Pick<HostedSettings, "appSlug" | "oauthUrl">) => `${oauthUrlOf(s)}/apps/${encodeURIComponent(s.appSlug)}/installations/new`;
+
+/**
+ * An installation's settings on GitHub, where its owner approves new permissions. This is the form for
+ * an installation on a personal account; `ActionsApi` switches to /organizations/<org>/ for an organization.
+ */
+export const installationSettingsUrl = (s: Pick<HostedSettings, "oauthUrl">, installationId: number) => `${oauthUrlOf(s)}/settings/installations/${installationId}`;
 
 /** GitHub's new-repo form, prefilled with a private repo named `vault`. */
 export const newRepoUrl = (s: Pick<HostedSettings, "oauthUrl">) =>

@@ -330,7 +330,8 @@ export interface NewPartyMember {
 export const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 /** Names that stand for the human, the curator or a missing author in provenance, so no agent may file under them. */
-export const RESERVED_AGENT_IDS = ["human", "curator", "unknown", "hippocampus"] as const;
+// `hosted` is the curator id on Hippocampus's own runs (packages/curator/src/relay.ts, HOSTED_CURATOR).
+export const RESERVED_AGENT_IDS = ["human", "curator", "unknown", "hippocampus", "hosted"] as const;
 
 /**
  * How an agent names itself, told to every agent (server instructions, tool descriptions, the
@@ -338,7 +339,7 @@ export const RESERVED_AGENT_IDS = ["human", "curator", "unknown", "hippocampus"]
  * agent's own, not the app's.
  */
 export const AGENT_NAMING =
-  "Name yourself `<platform>-<role>`: lowercase letters, digits and dashes, like `claude-code-home-finder` or `grok-bot-trip-planner`. Use the same id in every session and every call. Never a person's name, `human`, `curator`, `unknown` or `hippocampus`, and never an id another app uses.";
+  "Name yourself `<platform>-<role>`: lowercase letters, digits and dashes, like `claude-code-home-finder` or `grok-bot-trip-planner`. Use the same id in every session and every call. Never a person's name, `human`, `curator`, `unknown`, `hippocampus` or `hosted`, and never an id another app uses.";
 
 /** How many agents may seat themselves (`introduce`): a shared key can invent names, and each makes a card. */
 export const SELF_SEATED_LIMIT = 50;

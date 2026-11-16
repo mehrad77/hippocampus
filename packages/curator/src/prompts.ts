@@ -241,6 +241,7 @@ Rules:
 - Do NOT include the reporting agent, dates, times, amounts, or generic nouns ("the office", "an email") as entities.
 - IDs, numbers, codes, emails, and phone numbers are never entities or aliases. They are facts about an entity (a later step extracts them).
 - If the episode is progress on an existing goal, include that goal by its name.
+- If the episode is confidential, list only the people, organizations and places it involves, never the private matter itself (a condition, treatment, plan or case): a note's name is visible to everyone, so the matter stays a confidential fact on those entities.
 - name: the most specific proper name as written (keep the original-language spelling). Put translations/abbreviations in aliases.
 - domains: choose from [${config.domains.join(", ")}]. Only when the entity clearly belongs to an area of the person's life that none of these covers, add one new area as a short lowercase word with dashes (like health or side-project): never a name, number or private detail. Empty if none apply.
 - Return an empty list if there is nothing durable to remember.`,

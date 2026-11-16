@@ -1,11 +1,13 @@
-import { MemoryStore, StoreConflictError, Vault, decryptSecret, humanText, parseDoc, type Change, type CommitMeta } from "@hippocampus/core";
+import { MemoryStore, StoreConflictError, Vault, decryptSecret, humanText, parseDoc, ulid, type Change, type CommitMeta } from "@hippocampus/core";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
 import { episode, now, script, setup } from "./__fixtures__/night.ts";
-import { ScriptedLLM } from "./llm.ts";
-import { MemoryRunStore, RunBusyError, SleepRelay, type Question, type RelayStep } from "./relay.ts";
-import { CURATOR_AUTHOR, sleep } from "./sleep.ts";
+import { ScriptedLLM, type LLM } from "./llm.ts";
+import { BudgetExhausted, CappedMeter, ProviderStop } from "./meter.ts";
+import type { Price } from "./pricing.ts";
+import { MemoryRunStore, RunBusyError, SleepRelay, standbyVerdict, type Question, type RelayStep, type SleepGate } from "./relay.ts";
+import { CURATOR_AUTHOR, arrivedAt, sleep, waitingWork } from "./sleep.ts";
 
 type Ask = Extract<RelayStep, { state: "ask" }>;
 
@@ -45,6 +47,7 @@ async function runToEnd(relay: SleepRelay, first: RelayStep, agent: ScriptedLLM)
     step = await relay.answer({ runId: step.run, answers: await answers(agent, step.questions) });
     if (step.state === "ask") rejected.push(...(step.rejected ?? []).map((r) => r.questionId));
   }
+  if (step.state !== "done") throw new Error(`expected a run, got ${step.state}`);
   return { report: step.report, seen, rejected };
 }
 
@@ -259,7 +262,7 @@ describe("sleep relay", () => {
     let step: RelayStep = await relay.start({ curator: "archivist", model: "scripted" });
     while (step.state === "ask" && step.questions[0]!.name !== "summary") step = await relay.answer({ runId: step.run, answers: await answers(agent, step.questions) });
     const skipped = asking(step).questions[0]!.prompt.split(" ")[1]!;
-    const next = asking(await relay.skip({ runId: step.run, reason: "nothing worth saying" }));
+    const next = asking(await relay.skip({ runId: asking(step).run, reason: "nothing worth saying" }));
     expect(next.questions[0]!.prompt).not.toContain(`Entity: ${skipped} `);
     const { report } = await runToEnd(relay, next, agent);
     expect(report.summaries).toHaveLength(3);
@@ -354,5 +357,259 @@ describe("sleep relay", () => {
     expect(report.consolidated).toEqual(expected.consolidated);
     expect(report.consolidated[1]).toMatchObject({ agent: "home-finder", stats: ["migration-agency"] });
     expect(await tree(relayed)).toEqual(await tree(classic));
+  });
+});
+
+/** `model`, but the `n`th call named `name` (counting from 1) throws `err` instead of answering. */
+function failing(model: LLM, name: string, n: number, err: () => Error): LLM & { asked: string[] } {
+  let seen = 0;
+  const asked: string[] = [];
+  return {
+    name: model.name,
+    asked,
+    async object(req) {
+      asked.push(req.name);
+      if (req.name === name && ++seen === n) throw err();
+      return model.object(req);
+    },
+  };
+}
+
+const later = () => new Date(now().getTime() + 60 * 60_000);
+const TEST_PRICE: Price = { provider: "anthropic", model: "test", input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25, checked: "2026-11-16", source: "test" };
+
+describe("a hosted run", () => {
+  it("curates like an agent's run, driven by the model, with nothing asked of anyone", async () => {
+    const asAgent = await setup();
+    const hosted = { store: new MemoryStore(Object.fromEntries(asAgent.store.files)), identity: asAgent.identity };
+    const viaAgent = relayOver(committing(asAgent.store).store);
+    await runToEnd(viaAgent.relay, asking(await viaAgent.relay.start({ curator: "archivist", model: "scripted" })), script());
+
+    const { store, commits } = committing(hosted.store);
+    const { relay } = relayOver(store);
+    const opened = asking(await relay.start({ curator: "hosted", model: "scripted", hosted: true }));
+    expect(opened.questions).toEqual([]);
+    const done = await relay.autopilot({ runId: opened.run, answerer: script(), until: later() });
+    expect(done).toMatchObject({ state: "done", report: { failed: [], remaining: 0 } });
+    expect(await tree(hosted)).toEqual(await tree(asAgent));
+    expect(commits).toHaveLength(4);
+    for (const c of commits) expect(c.message).toMatch(/Hippo-Actor: curator\nHippo-Curator: hosted\nHippo-Model: scripted\nHippo-Run: /);
+  });
+
+  it("pauses at its deadline or unit count, and goes on from there", async () => {
+    const { store } = await setup();
+    const { relay } = relayOver(store);
+    const run = asking(await relay.start({ curator: "hosted", model: "m", hosted: true })).run;
+    const answerer = script();
+    expect(await relay.autopilot({ runId: run, answerer, until: later(), units: 2 })).toMatchObject({ state: "paused", progress: { done: 1 } });
+    expect(await relay.autopilot({ runId: run, answerer, until: now() })).toMatchObject({ state: "paused" });
+    expect(await relay.autopilot({ runId: run, answerer, until: later() })).toMatchObject({ state: "done" });
+  });
+
+  it("stops at the budget in episode 2 of 3: episode 1 committed, the rest in the inbox, nothing counted as failed", async () => {
+    const { store } = await setup();
+    const inbox = () => [...store.files.keys()].filter((p) => p.startsWith("inbox/")).sort();
+    // The oldest episode is curated first.
+    const first = "inbox/residency-agent/2026-09-27T100000-agency.md";
+    const before = inbox().filter((p) => p !== first);
+    const { relay, runs } = relayOver(store, { clock: now });
+    const run = asking(await relay.start({ curator: "hosted", model: "m", hosted: true })).run;
+    const answerer = failing(script(), "mentions", 2, () => new BudgetExhausted());
+    const done = await relay.autopilot({ runId: run, answerer, until: later() });
+    expect(done).toMatchObject({ state: "done", stop: "budget", report: { failed: [] } });
+    expect(inbox()).toEqual(before);
+    expect((await runs.history())[0]).toMatchObject({ outcome: "aborted", stop: "budget", consolidated: 1, failed: 0 });
+    const review = store.files.get("_hippo/review.md")!;
+    expect(review).toContain("budget reached: finished without summaries");
+    expect(parseDoc(review).data.failures ?? {}).toEqual({});
+    // No summaries were asked once it stopped.
+    expect(answerer.asked).not.toContain("summary");
+  });
+
+  it("never spends past the cap, whatever the run's size", async () => {
+    for (const cap of [5_000, 20_000, 60_000]) {
+      const { store } = await setup();
+      const { relay } = relayOver(store);
+      const meter = new CappedMeter(cap);
+      const run = asking(await relay.start({ curator: "hosted", model: "m", hosted: true })).run;
+      const done = await relay.autopilot({ runId: run, answerer: script().bill(meter, TEST_PRICE, { input: 1_000, output: 100 }), until: later() });
+      expect(done.state).toBe("done");
+      expect(meter.spent).toBeLessThanOrEqual(cap);
+      expect(meter.held).toBe(0);
+    }
+  });
+
+  it("stops on a refused key, and leaves the episodes in place", async () => {
+    const { store } = await setup();
+    const before = [...store.files.keys()].filter((p) => p.startsWith("inbox/")).length;
+    const { relay, runs } = relayOver(store);
+    const run = asking(await relay.start({ curator: "hosted", model: "m", hosted: true })).run;
+    const done = await relay.autopilot({ runId: run, answerer: failing(script(), "mentions", 1, () => new ProviderStop("auth", 401)), until: later() });
+    expect(done).toMatchObject({ state: "done", stop: "auth" });
+    expect([...store.files.keys()].filter((p) => p.startsWith("inbox/"))).toHaveLength(before);
+    expect((await runs.history())[0]).toMatchObject({ outcome: "aborted", stop: "auth", failed: 0 });
+  });
+
+  it("passes over an episode too large for the per-run budget, and curates the next", async () => {
+    const { store } = await setup();
+    const { relay, runs } = relayOver(store);
+    const run = asking(await relay.start({ curator: "hosted", model: "m", hosted: true })).run;
+    const answerer = failing(script(), "mentions", 1, () => new BudgetExhausted(true));
+    const done = await relay.autopilot({ runId: run, answerer, until: later() });
+    expect(done).toMatchObject({ state: "done", report: { failed: [] } });
+    const summary = (await runs.history())[0]!;
+    expect(summary).toMatchObject({ outcome: "done", consolidated: 2, tooLarge: [expect.stringMatching(/^ep-/)] });
+    expect(store.files.get("_hippo/review.md")).toContain("too large for the per-run budget");
+  });
+
+  it("replays a conflicting commit without paying for answers it already has", async () => {
+    const relayed = await setup();
+    const { store } = committing(relayed.store, (n) => {
+      if (n > 0 || relayed.store.files.has("inbox/job-scout/2026-09-27T130000-fair.md")) return;
+      relayed.store.files.set("inbox/job-scout/2026-09-27T130000-fair.md", episode("job-scout", "2026-09-27T13:00:00Z", "Career fair at Harbor University on 2026-10-20."));
+      throw new StoreConflictError(["inbox/job-scout/2026-09-27T130000-fair.md"]);
+    });
+    const { relay } = relayOver(store);
+    const run = asking(await relay.start({ curator: "hosted", model: "m", hosted: true })).run;
+    const answerer = failing(script(), "never", 1, () => new Error("x"));
+    await relay.autopilot({ runId: run, answerer, until: later(), units: 2 });
+    // Episode 1's questions were each asked once, though its commit was tried twice.
+    expect(answerer.asked).toEqual(["mentions", "claims"]);
+  });
+
+  it("can't be answered or skipped over MCP, only aborted; and only the Worker opens one", async () => {
+    const { store } = await setup();
+    // A clock that moves a minute per read, so a renewed lease would show.
+    let ticks = 0;
+    const { relay } = relayOver(store, { clock: () => new Date(now().getTime() + 60_000 * ticks++) });
+    await expect(relay.start({ curator: "hosted", model: "m" })).rejects.toThrow('"hosted" is reserved');
+    const run = asking(await relay.start({ curator: "hosted", model: "m", hosted: true })).run;
+    const lease = (await relay.status()).run!.leaseUntil;
+    await expect(relay.answer({ runId: run, answers: [] })).rejects.toThrow("can't be answered or skipped");
+    await expect(relay.skip({ runId: run, reason: "x" })).rejects.toThrow("can't be answered or skipped");
+    // Refused calls don't keep a hosted run's lease alive.
+    expect((await relay.status()).run!.leaseUntil).toBe(lease);
+    expect(await relay.abort(run)).toMatchObject({ history: [{ id: run, outcome: "aborted" }] });
+    // An agent's run, whatever it is called, is never driven by the model.
+    const agents = asking(await relay.start({ curator: "archivist", model: "m" })).run;
+    await expect(relay.autopilot({ runId: agents, answerer: script(), until: later() })).rejects.toThrow("isn't a hosted run");
+  });
+
+  it("leaves set-aside episodes and excluded ones out, unless the owner asks for every episode", async () => {
+    const { store } = await setup();
+    const vault = await Vault.load(store, { now });
+    const [a, b, c] = vault.episodes.map((e) => e.id);
+    await store.write("_hippo/review.md", `---\nfailures:\n  ${a}: { attempts: 3, reason: refused }\n---\n`);
+    const { relay } = relayOver(store);
+    const hosted = await relay.start({ curator: "hosted", model: "m", hosted: true, exclude: [b!] });
+    expect((await relay.status()).run!.progress.total).toBe(1);
+    await relay.abort(asking(hosted).run);
+    await relay.start({ curator: "hosted", model: "m", hosted: true, includeSetAside: true });
+    expect((await relay.status()).run!.progress.total).toBe(3);
+    expect(c).toBeDefined();
+  });
+
+  it("waits for a late alarm, and expires after six hours", async () => {
+    const { store } = await setup();
+    let at = now();
+    const { relay, runs } = relayOver(store, { clock: () => at });
+    const run = asking(await relay.start({ curator: "hosted", model: "m", hosted: true })).run;
+    // Its lease passed two hours ago, but a hosted run is still waiting for its slice.
+    at = new Date(now().getTime() + 2 * 60 * 60_000);
+    await relay.expire(at);
+    expect((await runs.get())?.id).toBe(run);
+    expect(await relay.autopilot({ runId: run, answerer: script(), until: at, units: 0 })).toMatchObject({ state: "paused" });
+    at = new Date(now().getTime() + 7 * 60 * 60_000);
+    await relay.expire(at);
+    expect((await runs.history())[0]).toMatchObject({ id: run, outcome: "expired" });
+  });
+});
+
+describe("the standby gate", () => {
+  const healthy = { healthy: true, lastRun: "2026-09-27T03:00:00.000Z" };
+  const at = new Date("2026-09-27T21:00:00.000Z");
+  const hours = (h: number) => new Date(at.getTime() - h * 3_600_000);
+
+  it("without hosted curation, every run is needed, an empty inbox's too", async () => {
+    expect(standbyVerdict(undefined, { episodes: 0, rulings: 0 }, at)).toEqual({ needed: true });
+    const store = fixtureStore({});
+    const runs = new MemoryRunStore();
+    const relay = new SleepRelay({ open: async (n) => ({ vault: await Vault.load(store, { now: () => n }), store }), runs, clock: now });
+    const step = await relay.start({ curator: "archivist", model: "scripted" });
+    expect(step.state).toBe("done");
+    expect(await runs.history()).toHaveLength(1);
+  });
+
+  it("stands by while Hippocampus curates, and wakes when it pauses or memories wait too long", () => {
+    expect(standbyVerdict(healthy, { episodes: 2, oldest: hours(30), rulings: 0 }, at)).toMatchObject({ needed: false, reason: "hosted" });
+    expect(standbyVerdict(healthy, { episodes: 2, oldest: hours(37), rulings: 0 }, at)).toEqual({ needed: true });
+    expect(standbyVerdict({ healthy: false }, { episodes: 2, oldest: hours(1), rulings: 0 }, at)).toEqual({ needed: true });
+    expect(standbyVerdict(healthy, { episodes: 0, rulings: 0 }, at)).toMatchObject({ needed: false, reason: "idle" });
+    expect(standbyVerdict(healthy, { episodes: 0, rulings: 1 }, at)).toMatchObject({ needed: false, reason: "hosted" });
+  });
+
+  it("counts waiting from arrival, not from when the thing happened, and leaves set-aside episodes out", async () => {
+    const landed = new Date("2026-09-27T20:00:00.000Z");
+    const id = `ep-${ulid(landed.getTime())}`;
+    expect(arrivedAt({ id, at: "2025-01-01T00:00:00Z" })).toEqual(landed);
+    // Written by hand: no ULID, so `at` is all there is.
+    expect(arrivedAt({ id: "ep-1k2j3h4", at: "2026-09-20T10:00:00Z" })).toEqual(new Date("2026-09-20T10:00:00Z"));
+    const store = fixtureStore({
+      [`inbox/home-finder/2026-09-27T200000-old.md`]: `---\nid: ${id}\nagent: home-finder\nkind: fact\nat: 2025-01-01T00:00:00Z\n---\nThe Alfama flat was first listed in 2025.\n`,
+      "inbox/campus-agent/stuck.md": episode("campus-agent", "2026-09-01T10:00:00Z", "Something that keeps failing."),
+    });
+    const vault = await Vault.load(store, { now });
+    const stuck = vault.episodes.find((e) => e.agent === "campus-agent")!.id;
+    const work = waitingWork(vault, { [stuck]: { attempts: 3, reason: "refused" } });
+    expect(work).toMatchObject({ episodes: 1, setAside: 1, oldest: landed, rulings: 0 });
+    expect(standbyVerdict(healthy, work, at)).toMatchObject({ needed: false, reason: "hosted" });
+  });
+
+  it("answers not_needed without opening a run or touching history, and force runs anyway", async () => {
+    const { store } = await setup();
+    const runs = new MemoryRunStore();
+    const gate: SleepGate = async ({ vault, failures, now: n }) => standbyVerdict(healthy, waitingWork(vault, failures), n);
+    const relay = new SleepRelay({ open: async (n) => ({ vault: await Vault.load(store, { now: () => n }), store }), runs, clock: now, gate });
+    const quiet = await relay.start({ curator: "archivist", model: "scripted" });
+    expect(quiet).toMatchObject({ state: "not_needed", reason: "hosted", hosted: { lastRun: healthy.lastRun } });
+    expect(await runs.get()).toBeUndefined();
+    expect(await runs.history()).toEqual([]);
+    expect((await relay.start({ curator: "archivist", model: "scripted", force: true })).state).toBe("ask");
+  });
+});
+
+describe("how many episodes a run takes", () => {
+  /** The night's three episodes plus `extra` more, with the vault's `batch_size` set when given. */
+  async function inbox(extra: number, batchSize?: number) {
+    const { store } = await setup();
+    for (let i = 0; i < extra; i++)
+      await store.write(`inbox/home-finder/2026-09-27T13${String(i).padStart(2, "0")}00-viewing.md`, episode("home-finder", "2026-09-27T13:00:00Z", `Viewing ${i + 1} of a flat in Lisbon.`));
+    if (batchSize !== undefined) await store.write("_hippo/config.yaml", `${(await store.read("_hippo/config.yaml"))!}curator:\n  batch_size: ${batchSize}\n`);
+    return store;
+  }
+
+  it("takes the vault's whole batch_size, not ten", async () => {
+    const { relay } = relayOver(await inbox(12));
+    const step = await relay.start({ curator: "archivist", model: "scripted" });
+    expect(step.state === "ask" && step.progress.total).toBe(15);
+  });
+
+  it("records a full batch in the review, so the rest read as next rather than failed", async () => {
+    const store = await inbox(2, 3);
+    const { relay } = relayOver(store);
+    const first = await relay.start({ curator: "archivist", model: "scripted" });
+    expect(first.state === "ask" && first.progress.total).toBe(3);
+    const { report } = await runToEnd(relay, first, script());
+    expect(report.remaining).toBe(2);
+    const review = (await store.read("_hippo/review.md"))!;
+    expect(parseDoc(review).data.batch_full).toBe(3);
+    expect(review).toContain("2 still in the inbox (this run took its limit of 3; the rest are next)");
+  });
+
+  it("records no full batch when everything fit", async () => {
+    const store = await inbox(0);
+    const { relay } = relayOver(store);
+    await runToEnd(relay, await relay.start({ curator: "archivist", model: "scripted" }), script());
+    expect(parseDoc((await store.read("_hippo/review.md"))!).data.batch_full).toBeUndefined();
   });
 });

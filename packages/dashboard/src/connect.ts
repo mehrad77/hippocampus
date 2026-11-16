@@ -114,10 +114,17 @@ export function connectSnippets(t: ConnectTarget, first?: ConnectAppId): Snippet
 }
 
 /**
- * Where the nightly curator can run, cheapest first: the same three the `sleep-setup` skill offers, in
- * the same words. An agent the person already has costs nothing new; Actions needs Claude paid for.
+ * Where the nightly curator can run: Hippocampus itself (only where the instance offers it, so a
+ * dashboard shows it only when `hostedCurator.available`), then the same three the `sleep-setup`
+ * skill offers, cheapest first and in the same words. An agent the person already has costs nothing
+ * new; Actions needs Claude paid for.
  */
 export const CURATION_PLACES = [
+  {
+    id: "hosted",
+    title: "Hippocampus runs it with your key",
+    help: "This Hippocampus runs sleep every night with your own Anthropic or Mistral API key, under a monthly cap you set. Nothing of yours stays on.",
+  },
   {
     id: "schedule",
     title: "One of your agents",
@@ -129,10 +136,41 @@ export const CURATION_PLACES = [
 
 export type CurationPlace = (typeof CURATION_PLACES)[number]["id"];
 
-/** How to run the curator with a new curator key, for each place. `repo` is the vault's repo, for the Actions secrets. */
 /** What to ask a curator agent, wherever it runs (a scheduled task's prompt, a bot's message). */
-export const SLEEP_PROMPT = "Run the Hippocampus sleep as this vault's curator: call sleep_start with your model name, then answer its questions with sleep_answer (or sleep_skip) until the run is done. Never repeat a secret value outside the answers.";
+export const SLEEP_PROMPT =
+  'Run the Hippocampus sleep as this vault\'s curator: call sleep_start with your model name. If it answers "not_needed" (Hippocampus curated the vault itself, or nothing is waiting), stop and say why in one line. Otherwise answer its questions with sleep_answer (or sleep_skip) until the run is done, then tell me what happened in plain words. Never repeat a secret value outside the answers. Only when I ask for a run now, call sleep_start with force: true.';
 
+/**
+ * The standing instruction an agent keeps in its own persistent instructions, so it uses the memory in
+ * every session: the memory skill, condensed. `{agent}` is replaced with the agent's id.
+ */
+export const MEMORY_ROUTINE = `Hippocampus memory (agent id: {agent}). The person's AI agents share a memory through the hippocampus tools; pass agent: "{agent}" on every call.
+- At the start of a task about the person's plans, people, places, documents or projects: call onboard, then recall (or get, ask_canon) before you act on a fact. Before contacting someone, call briefing with about set to them.
+- When you learn something durable, call remember: one thing per call, exact values (ISO dates, amounts with currency, full names), the notes it's about. Set secret: true for ID numbers, account numbers and credentials, and confidential: true for private matters (health, money, family). Corrections are new memories.
+- Trust canon; say so when you use a rumor; never pick a side on a disputed fact. Never edit the vault's notes yourself.`;
+
+/**
+ * The one prompt a person pastes into any agent after setting up a vault. It connects the agent, adds
+ * the memory routine and makes sure someone curates. It holds no key, and pasting it twice only fills
+ * gaps.
+ */
+export function setupPrompt(o: { publicUrl: string; vault: string }): string {
+  return `Set yourself up with my Hippocampus memory, the vault "${o.vault}" at ${o.publicUrl}. Do each step only if it isn't done yet, and ask me before changing your own settings.
+
+1. Connect. If you have no hippocampus tools for this vault, read ${o.publicUrl}/llms.txt and connect with device sign-in: show me the code and the link, and I'll approve it on my dashboard. If you can't run commands, tell me which snippet to paste from Setup → Connected apps. Never ask me for a key in this chat.
+2. Name yourself <platform>-<role> (lowercase, like claude-code-home-finder), keep that id for good, and call onboard with it. If onboard says you're unknown, call introduce once.
+3. Memory routine. With my OK, add this to your persistent instructions (user-level CLAUDE.md, Cursor rules, custom instructions, or your system prompt), with your id filled in. In Claude Code, install the plugin instead (claude plugin install hippocampus@hippocampus): its memory skill is the same routine.
+---
+${MEMORY_ROUTINE}
+---
+4. Curation. onboard ends with who curates this vault.
+   - If Hippocampus curates it with my key, say so, and ask me once whether you should stand by in case it pauses.
+   - If nobody curates it, or I say yes to standing by: set up a curator. Connect a second time with device sign-in and access=curate, then schedule a daily task at a quiet hour that runs: "${SLEEP_PROMPT}" If you can't schedule tasks, tell me my options (Setup → Nightly curation).
+   - If another agent already curates or stands by, do nothing.
+5. Report in two lines: what is connected, and who curates when.`;
+}
+
+/** How to run the curator with a new curator key, for each place. `repo` is the vault's repo, for the Actions secrets. */
 export function curatorSnippets(t: ConnectTarget & { repo?: string }): Snippet[] {
   const out: Snippet[] = [
     { label: "Claude Code (the curator's own server)", lang: "bash", code: `claude mcp add --transport http ${t.server} ${t.url} --header "Authorization: Bearer ${t.key}"`, note: "Then run /hippocampus:sleep, or /hippocampus:sleep-setup to schedule it." },
@@ -155,8 +193,8 @@ export function curatorSnippets(t: ConnectTarget & { repo?: string }): Snippet[]
     out.push({
       label: "GitHub Actions secrets (for the nightly workflow)",
       lang: "bash",
-      code: `gh secret set HIPPO_CURATOR_KEY --repo ${t.repo} --body "${t.key}"\ngh variable set HIPPO_MCP_URL --repo ${t.repo} --body "${t.url}"`,
-      note: "The workflow also needs Claude: a subscription token (claude setup-token, then gh secret set CLAUDE_CODE_OAUTH_TOKEN) or an API key (gh secret set ANTHROPIC_API_KEY).",
+      code: `gh secret set HIPPO_CURATOR_KEY --repo ${t.repo} --body "${t.key}"`,
+      note: "The workflow also needs Claude, as a secret too: a subscription token (claude setup-token, then gh secret set CLAUDE_CODE_OAUTH_TOKEN) or an API key (gh secret set ANTHROPIC_API_KEY). The vault's address is written into the workflow when you turn it on.",
     });
   return out;
 }

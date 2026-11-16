@@ -9,7 +9,7 @@ Hippocampus is shared memory for one person's agents. You add memories to an inb
 
 ## 1. Start with `onboard`
 
-Call `onboard` first, with your agent id. A connection is usually made for an app, not for one agent, so you name yourself: pass the same `agent` id on every call. Make it `<platform>-<role>`, lowercase letters, digits and dashes, like `claude-code-home-finder` or `grok-bot-trip-planner`. Use the same id every session. Never use the person's own name, `human`, `curator`, `unknown` or `hippocampus`, and don't take an id another app uses: the vault refuses it. (If the connection is bound to one agent, the server says so and ignores the argument.)
+Call `onboard` first, with your agent id. A connection is usually made for an app, not for one agent, so you name yourself: pass the same `agent` id on every call. Make it `<platform>-<role>`, lowercase letters, digits and dashes, like `claude-code-home-finder` or `grok-bot-trip-planner`. Use the same id every session. Never use the person's own name, `human`, `curator`, `unknown`, `hippocampus` or `hosted`, and don't take an id another app uses: the vault refuses it. (If the connection is bound to one agent, the server says so and ignores the argument.)
 
 Each connection serves **one vault**, named in the server's instructions. If the person has several, each has its own server; remember into the one the task belongs to.
 

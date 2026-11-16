@@ -35,9 +35,14 @@ export default {
     return "problem" in h ? h.problem : h.app.fetch(request, ctx);
   },
 
-  /** Cron Trigger: GitLab has no webhooks, so each GitLab vault's project is checked here (visibility, existence, the connection). */
+  /**
+   * Cron Trigger: GitLab has no webhooks, so each GitLab vault's project is checked here (visibility,
+   * existence, the connection). And each vault with hosted curation gets its alarm back if it was lost.
+   */
   async scheduled(_event, env, ctx) {
     const h = hosted(env);
-    if ("app" in h) ctx.waitUntil(h.app.routes.checkGitLab().then(() => undefined));
+    if (!("app" in h)) return;
+    ctx.waitUntil(h.app.routes.checkGitLab().then(() => undefined));
+    ctx.waitUntil(h.app.ensureHostedAlarms().then(() => undefined));
   },
 } satisfies ExportedHandler<HostedEnv>;

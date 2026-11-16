@@ -13,6 +13,45 @@ import { RotateKey } from "./RotateKey.tsx";
 // What the server accepts as a public key (core's AGE_RECIPIENT). Checked here too, so a pasted private key is never sent.
 const PUBLIC_KEY = /^age1[02-9ac-hj-np-z]{58}$/;
 
+/** A secrets key made in this browser with age (X25519). Only `recipient`, the public half, ever leaves it. */
+export async function makeAgeKey(): Promise<{ identity: string; recipient: string }> {
+  const age = await import("age-encryption");
+  const identity = await age.generateX25519Identity();
+  return { identity, recipient: await age.identityToRecipient(identity) };
+}
+
+/**
+ * A key just made: its public half, the key file to download, and the person's word that they saved it. Shared by
+ * the vault's setup and this panel. Without `identity` (the page was reloaded) the file can't be downloaded again.
+ */
+export function KeyFile({ recipient, identity, file, saved, setSaved }: { recipient: string; identity?: string; file: string; saved: boolean; setSaved: (saved: boolean) => void }) {
+  const url = useMemo(() => (identity ? URL.createObjectURL(new Blob([identityFileText(identity)], { type: "application/octet-stream" })) : undefined), [identity]);
+  useEffect(() => () => (url ? URL.revokeObjectURL(url) : undefined), [url]);
+  return (
+    <div className="stack sz-tight">
+      <Facts
+        rows={[
+          ["Public key", <span className="mono" title={recipient}>{truncateKey(recipient)}</span>],
+          ["Key file", <span className="mono sz-break">{file}</span>],
+        ]}
+      />
+      {url ? (
+        <div className="row">
+          <a className="btn btn--primary" href={url} download={file}>
+            <Icon name="copy" /> Download the key file
+          </a>
+          <span className="hint">Keep it somewhere safe, like a password manager. Nobody can read your secrets without it, not even you.</span>
+        </div>
+      ) : (
+        <p className="small sz-warn-text">This page was reloaded, so the key file can't be downloaded again. If you saved it, you're set; if not, make a different key.</p>
+      )}
+      <label className="check">
+        <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />I saved the key file somewhere safe
+      </label>
+    </div>
+  );
+}
+
 /**
  * The secrets key on an existing vault: make one in this browser (only the public half goes to the vault) or paste
  * a public key you already have. Without a key, agents' secret facts are held back instead of stored.
@@ -34,8 +73,6 @@ export function SecretsPanel({ vaultName, canRotate = false }: { vaultName: stri
   // A replacement must not download over the old key file, which still opens the secrets saved before it.
   const file = replacing ? identityFileName(vaultName).replace(/\.agekey$/, `-${new Date().toISOString().slice(0, 10)}.agekey`) : identityFileName(vaultName);
   const pastedProblem = !pasted.trim() ? undefined : /AGE-SECRET-KEY/i.test(pasted) ? "That is a private key. Never paste it anywhere: nothing was sent. Paste the public key (age1…) instead." : !PUBLIC_KEY.test(pasted.trim()) ? "A public key starts with age1 and is 62 characters long." : undefined;
-  const url = useMemo(() => (identity ? URL.createObjectURL(new Blob([identityFileText(identity)], { type: "application/octet-stream" })) : undefined), [identity]);
-  useEffect(() => () => (url ? URL.revokeObjectURL(url) : undefined), [url]);
 
   // Unknown (an older server, or still loading): say nothing rather than nag.
   const has = overview.data?.secretsKey;
@@ -44,10 +81,9 @@ export function SecretsPanel({ vaultName, canRotate = false }: { vaultName: stri
   const make = async () => {
     setMakeError(undefined);
     try {
-      const age = await import("age-encryption");
-      const id = await age.generateX25519Identity();
-      setIdentity(id);
-      setRecipient(await age.identityToRecipient(id));
+      const key = await makeAgeKey();
+      setIdentity(key.identity);
+      setRecipient(key.recipient);
       setSaved(false);
     } catch (err) {
       setMakeError(err);
@@ -78,12 +114,15 @@ export function SecretsPanel({ vaultName, canRotate = false }: { vaultName: stri
             <p className="small">
               {v("Secret facts (passport numbers, account ids, passwords) are encrypted to this vault's key before they're stored.", "Secret facts are sealed to this vault's key before they're stored.")} {canRotate ? "Read one on its record's page with Reveal and your key file. If the key file leaked, rotate: every secret moves to a new key. Lost it? Nobody can recover it, but you can replace the key." : "Lost the key file? Nobody can recover it, but you can replace the key and have your agents send the secrets again."}
             </p>
-            <div className="row">
-              {canRotate && <RotateKey vaultName={vaultName} onDone={() => void overview.reload()} />}
-              <button type="button" className="btn btn--sm" onClick={() => setAsking(true)}>
-                <Icon name="key" /> Lost the key? Replace it…
-              </button>
-            </div>
+            <details className="sz-more small">
+              <summary>More: {canRotate ? "rotate or replace the key" : "replace the key"}</summary>
+              <div className="row">
+                {canRotate && <RotateKey vaultName={vaultName} onDone={() => void overview.reload()} />}
+                <button type="button" className="btn btn--sm" onClick={() => setAsking(true)}>
+                  <Icon name="key" /> Lost the key? Replace it…
+                </button>
+              </div>
+            </details>
           </>
         ) : (
           <>
@@ -119,23 +158,7 @@ export function SecretsPanel({ vaultName, canRotate = false }: { vaultName: stri
               </div>
             ) : (
               <div className="stack sz-tight">
-                <Facts
-                  rows={[
-                    ["Public key", <span className="mono" title={recipient}>{truncateKey(recipient)}</span>],
-                    ["Key file", <span className="mono sz-break">{file}</span>],
-                  ]}
-                />
-                {url && (
-                  <div className="row">
-                    <a className="btn btn--primary" href={url} download={file}>
-                      <Icon name="copy" /> Download the key file
-                    </a>
-                    <span className="hint">Keep it somewhere safe, like a password manager. Nobody can read your secrets without it, not even you.</span>
-                  </div>
-                )}
-                <label className="check">
-                  <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />I saved the key file somewhere safe
-                </label>
+                <KeyFile recipient={recipient} identity={identity} file={file} saved={saved} setSaved={setSaved} />
                 <div className="row">
                   <button type="button" className="btn btn--primary" disabled={action.busy || !ready} onClick={() => void save(recipient)}>
                     Lock this vault's secrets to this key

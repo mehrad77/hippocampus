@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hostedSettings, type HostedVars } from "./settings.ts";
+import { hostedCurationAvailable, hostedSettings, type HostedVars } from "./settings.ts";
 import { APP, ORIGIN } from "./testing.ts";
 
 const env = (vars: HostedVars = {}): HostedVars => ({
@@ -39,5 +39,46 @@ describe("hostedSettings", () => {
     expect(err).toContain("Unset GITHUB_OAUTH_URL:");
     expect(err).not.toContain("elsewhere");
     expect(hostedSettings(env({ GITHUB_API_URL: " " })).apiUrl).toBeUndefined();
+  });
+
+  it("takes HIPPO_TOKEN_KEY on its own, without turning GitLab on", () => {
+    const key = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+    expect(hostedSettings(env({ HIPPO_TOKEN_KEY: ` ${key} ` }))).toMatchObject({ tokenKey: key, gitlab: undefined });
+    expect(hostedSettings(env()).tokenKey).toBeUndefined();
+    expect(() => hostedSettings(env({ HIPPO_TOKEN_KEY: "c2hvcnQ=" }))).toThrow("HIPPO_TOKEN_KEY must be 32 bytes");
+    expect(hostedSettings(env({ HIPPO_TOKEN_KEY: key, GITLAB_CLIENT_ID: "id", GITLAB_CLIENT_SECRET: "s" })).gitlab).toMatchObject({ clientId: "id", tokenKey: key });
+  });
+
+  it("offers hosted curation only when the operator turns it on, and has a token key to seal with", () => {
+    const key = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+    // A token key alone (any instance with GitLab has one) doesn't turn it on.
+    expect(hostedCurationAvailable(hostedSettings(env({ HIPPO_TOKEN_KEY: key })))).toBe(false);
+    expect(hostedCurationAvailable(hostedSettings(env({ HIPPO_TOKEN_KEY: key, HIPPO_HOSTED_CURATOR: " ON " })))).toBe(true);
+    expect(hostedCurationAvailable(hostedSettings(env({ HIPPO_HOSTED_CURATOR: "on" })))).toBe(false);
+    expect(hostedCurationAvailable(hostedSettings(env({ HIPPO_TOKEN_KEY: key, HIPPO_HOSTED_CURATOR: "off" })))).toBe(false);
+    // Anything else leaves it off, and a typo mustn't take the app down.
+    expect(hostedSettings(env({ HIPPO_TOKEN_KEY: key, HIPPO_HOSTED_CURATOR: "yes" })).hostedCuratorOn).toBeUndefined();
+  });
+
+  it("sends model calls to a fake provider only for local development, without echoing the address", () => {
+    const fake = { HIPPO_LLM_ANTHROPIC_URL: "http://127.0.0.1:8788/v1/", HIPPO_LLM_MISTRAL_URL: "http://127.0.0.1:8788/v1" };
+    expect(hostedSettings(env({ HIPPO_PUBLIC_URL: "http://127.0.0.1:8787", ...fake })).llmUrls).toEqual({ anthropic: "http://127.0.0.1:8788/v1", mistral: "http://127.0.0.1:8788/v1" });
+    expect(() => hostedSettings(env(fake))).toThrow("Unset HIPPO_LLM_ANTHROPIC_URL and HIPPO_LLM_MISTRAL_URL");
+    const err = (() => {
+      try {
+        hostedSettings(env({ HIPPO_LLM_MISTRAL_URL: "https://elsewhere.test" }));
+      } catch (e) {
+        return String(e);
+      }
+    })();
+    expect(err).toContain("Unset HIPPO_LLM_MISTRAL_URL:");
+    expect(err).not.toContain("elsewhere");
+    expect(hostedSettings(env()).llmUrls).toBeUndefined();
+  });
+
+  it("still refuses a half-configured GitLab client", () => {
+    const key = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+    expect(() => hostedSettings(env({ HIPPO_TOKEN_KEY: key, GITLAB_CLIENT_ID: "id" }))).toThrow("missing GITLAB_CLIENT_SECRET");
+    expect(() => hostedSettings(env({ GITLAB_CLIENT_ID: "id", GITLAB_CLIENT_SECRET: "s" }))).toThrow("missing HIPPO_TOKEN_KEY");
   });
 });

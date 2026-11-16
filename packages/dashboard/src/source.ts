@@ -151,6 +151,12 @@ export interface CuratorStatus {
     remaining: number;
     /** How many commits the run made. */
     commits: number;
+    /** Why it stopped early (outcome `aborted`): `budget`, `auth`, `credit`, `rate_limit`, `provider`, or a newer Worker's word. */
+    stop?: string;
+    /** What a hosted run spent on models, in micro-dollars. */
+    cost?: { micros: number; calls: number };
+    /** Episodes passed over as too large for the per-run budget. */
+    tooLarge?: string[];
   }[];
 }
 

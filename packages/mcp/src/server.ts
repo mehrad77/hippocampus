@@ -33,6 +33,8 @@ export interface HippoServerOptions {
    * at the end of `onboard`, so the agent can tell the person instead of searching for tools.
    */
   curation?: string;
+  /** Who curates this vault and when, one line appended to every connection's `onboard`. */
+  curationState?: () => Promise<string | undefined>;
 }
 
 // Also defined in apps/worker/src/hosted/registry.ts (KIND_SCOPES) and apps/worker/src/oauth.ts (SCOPE_LABELS).
@@ -125,7 +127,7 @@ function param(v: string | string[] | undefined, form = false): string {
 /** The server's version, as it introduces itself (and as its server card says). */
 export const SERVER_VERSION = "0.1.0";
 
-export function createHippoServer({ service, agent, scopes, version = SERVER_VERSION, icons, jsonSchemaValidator, relay, vault, holds, curation }: HippoServerOptions): McpServer {
+export function createHippoServer({ service, agent, scopes, version = SERVER_VERSION, icons, jsonSchemaValidator, relay, vault, holds, curation, curationState }: HippoServerOptions): McpServer {
   const granted = scopes ? normalizeScopes(scopes) : undefined;
   const curates = !!relay && (!granted || granted.includes("curate"));
   const instructions = INSTRUCTIONS + (agent ? "" : NAMING_INSTRUCTIONS) + (curates ? CURATE_INSTRUCTIONS : curation ? `\n${curation}` : "") + (vault ? vaultInstructions(vault) : "");
@@ -177,7 +179,11 @@ export function createHippoServer({ service, agent, scopes, version = SERVER_VER
         inputSchema: { ...agentArg },
         annotations: { readOnlyHint: true },
       },
-      (args) => guard(async () => text(`${await service.onboard(who(args))}${!curates && curation ? `\n\n${curation}` : ""}`)),
+      (args) =>
+        guard(async () => {
+          const state = await curationState?.().catch(() => undefined);
+          return text(`${await service.onboard(who(args))}${!curates && curation ? `\n\n${curation}` : ""}${state ? `\n\n${state}` : ""}`);
+        }),
     ),
   );
 
@@ -512,7 +518,7 @@ function registerSleep(server: McpServer, relay: () => SleepRelay, agent: string
       {
         title: "Start sleep",
         description:
-          'Run tonight\'s sleep yourself: consolidate the inbox into canon by answering the curator\'s questions. Returns the procedure and the first questions; answer them with sleep_answer until the state is "done". One run at a time. Questions include each episode in full, secret values too: only use this if you are trusted with the vault\'s secrets.',
+          'Run tonight\'s sleep yourself: consolidate the inbox into canon by answering the curator\'s questions. Returns the procedure and the first questions; answer them with sleep_answer until the state is "done". If the state is "not_needed" (Hippocampus curates this vault itself, or nothing waits), stop and say why in one line. One run at a time. Questions include each episode in full, secret values too: only use this if you are trusted with the vault\'s secrets.',
         inputSchema: {
           model: z.string().min(1).max(120).describe("The model answering the questions, recorded on every commit"),
           curator: z
@@ -520,9 +526,10 @@ function registerSleep(server: McpServer, relay: () => SleepRelay, agent: string
             .optional()
             .describe(agent ? `Ignored: this connection curates as "${agent}"` : 'Your agent id, recorded on every commit (default "curator-agent")'),
           limit: z.number().int().min(1).max(100).optional().describe("Most episodes this run (default 10)"),
+          force: z.boolean().optional().describe('Run even when the answer would be "not_needed". Only when the person asks for a run now.'),
         },
       },
-      (args) => run(() => relay().start({ curator: agent ?? args.curator ?? "curator-agent", model: args.model, limit: args.limit })),
+      (args) => run(() => relay().start({ curator: agent ?? args.curator ?? "curator-agent", model: args.model, limit: args.limit, force: args.force })),
     ),
   );
 
@@ -589,7 +596,15 @@ function registerSleep(server: McpServer, relay: () => SleepRelay, agent: string
   scoped(
     "curate",
     server.registerPrompt("sleep", { title: "Run Hippocampus sleep", description: "Consolidate the inbox into canon yourself, one question at a time." }, () => ({
-      messages: [{ role: "user", content: { type: "text", text: `${SLEEP_PROCEDURE}\n\nStart by calling sleep_start with your model name.` } }],
+      messages: [
+        {
+          role: "user",
+          content: {
+            type: "text",
+            text: `${SLEEP_PROCEDURE}\n\nStart by calling sleep_start with your model name. If it answers "not_needed", stop and say why in one line; pass force: true only when the person asked for a run now.`,
+          },
+        },
+      ],
     })),
   );
 }

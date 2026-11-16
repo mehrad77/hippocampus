@@ -49,6 +49,7 @@ import {
   setSummary,
   slugify,
   truncate,
+  ulidTime,
   unwrapLink,
   validateShapes,
   viewContext,
@@ -66,6 +67,7 @@ import {
   type Failures,
 } from "@hippocampus/core";
 import type { LLM } from "./llm.ts";
+import { RunStop } from "./meter.ts";
 import { GOAL_STATUS_NOTE, nextSteps, renderNextSteps, suggestedDomains } from "./next-steps.ts";
 import {
   claimsPrompt,
@@ -117,6 +119,8 @@ export interface SleepReport {
   failed: { id: string; path: string; error: string }[];
   summaries: string[];
   remaining: number;
+  /** The run took a full batch of this many while more were waiting: those wait for the next run, unfailed. */
+  batchFull?: number;
   changed: string[];
   warnings: string[];
 }
@@ -160,7 +164,11 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
   const evidence = new Map<string, string[]>();
   const secrets: string[] = [];
   const failures = await readFailures(opts.store);
-  for (const ep of pickBatch(vault, opts.limit, failures)) {
+  let stopped: RunStop | undefined;
+  const limit = opts.limit ?? vault.config.curator.batch_size;
+  const batch = pickBatch(vault, limit, failures);
+  if (batch.length >= limit && vault.episodes.length > batch.length) report.batchFull = limit;
+  for (const ep of batch) {
     log(`… ${ep.id} (${ep.agent}): ${ep.secret ? "(secret)" : ep.confidential ? "(confidential)" : ep.text.slice(0, 70).replace(/\s+/g, " ")}`);
     const before = vault.snapshot();
     // The vault as it stood before this episode, so its audit sees only what this episode changed.
@@ -178,6 +186,12 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
       // Half an episode (say, an entity created from a mention whose claims then failed) would be
       // committed without its chronicle entry, and before its secrets were redacted.
       vault.restore(before);
+      // A stop (the budget, a refused key) isn't this episode's fault: it and the rest stay in the inbox, not counted as failed.
+      if (err instanceof RunStop) {
+        stopped = err;
+        log(`  ■ ${err.message}: stopping (left in inbox)`);
+        break;
+      }
       const message = err instanceof Error ? err.message : String(err);
       report.failed.push({ id: ep.id, path: ep.path, error: message });
       log(`  ✗ ${message.slice(0, 200)} (left in inbox)`);
@@ -185,14 +199,19 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
   }
 
   await redactRun(vault, opts.store, evidence, secrets);
-  for (const { entity, texts } of summaryTargets(vault, evidence)) {
+  for (const { entity, texts } of stopped ? [] : summaryTargets(vault, evidence)) {
     try {
       await summarize(vault, llm, entity, texts, { houseRules, secrets });
       report.summaries.push(entity.slug);
     } catch (err) {
+      if (err instanceof RunStop) {
+        stopped = err;
+        break;
+      }
       report.warnings.push(`summary for ${entity.slug} failed: ${(err as Error).message}`);
     }
   }
+  if (stopped) report.warnings.push(`${stopped.message}: stopped early, without summaries for the rest`);
 
   // A suggestion that happens to spell one of the run's secrets would fail the whole run below.
   for (const r of report.consolidated) if (r.domains) r.domains = r.domains.filter((d) => !secrets.some((s) => s.trim().length >= 3 && d.includes(s.toLowerCase())));
@@ -217,6 +236,45 @@ export function pickBatch(vault: Vault, limit?: number, failures: Failures = {})
   const stuck = (e: Episode) => (failures[e.id]?.attempts ?? 0) >= SET_ASIDE_AFTER;
   const ordered = [...vault.episodes.filter((e) => !stuck(e)), ...vault.episodes.filter(stuck)];
   return ordered.slice(0, limit ?? vault.config.curator.batch_size);
+}
+
+/**
+ * When an episode reached the inbox: the time in its id (`ep-<ulid>`). Not `at`, which says when the thing
+ * happened and is the agent's to set, so a back-dated memory would look long overdue the moment it lands.
+ * An episode written by hand has no ULID (`ep-<hash of its path>`); for those, `at` is all there is.
+ */
+export function arrivedAt(e: Pick<Episode, "id" | "at">): Date | undefined {
+  const t = e.id.startsWith("ep-") ? ulidTime(e.id.slice(3)) : undefined;
+  if (t !== undefined) return new Date(t);
+  const at = new Date(e.at);
+  return Number.isNaN(at.getTime()) ? undefined : at;
+}
+
+/** Dispute notes the next run acts on without a model: a human's ruling, or a declined proposal or merge. */
+export function rulingsWaiting(vault: Vault): number {
+  let n = 0;
+  for (const d of vault.openDisputes()) {
+    if (d.fm.state === "declined" && (d.fm.kind === "proposal" || d.fm.kind === "merge")) n++;
+    else if (d.fm.kind !== "merge" && d.fm.ruling !== undefined && d.fm.ruling !== null && d.fm.ruling !== "") n++;
+  }
+  return n;
+}
+
+/** What a run would find: the episodes worth a run (set-aside ones counted apart), the oldest arrival among them, and the rulings waiting. */
+export function waitingWork(vault: Vault, failures: Failures = {}): { episodes: number; setAside: number; oldest?: Date; rulings: number } {
+  let episodes = 0;
+  let setAside = 0;
+  let oldest: Date | undefined;
+  for (const e of vault.episodes) {
+    if ((failures[e.id]?.attempts ?? 0) >= SET_ASIDE_AFTER) {
+      setAside++;
+      continue;
+    }
+    episodes++;
+    const at = arrivedAt(e);
+    if (at && (!oldest || at < oldest)) oldest = at;
+  }
+  return { episodes, setAside, oldest, rulings: rulingsWaiting(vault) };
 }
 
 /** A failure's reason as the review keeps it: the rules an audit refused, never the paths (a path can hold a secret). */
@@ -855,10 +913,10 @@ function renderReview(vault: Vault, report: SleepReport, failures: Failures): st
   const orphans = found.orphans.map((r) => `- ${link(r.slug)} (${r.type}: ${r.title})`);
   const section = (title: string, items: string[]) => `## ${title}\n\n${items.length ? items.join("\n") : "- (none)"}\n`;
   return renderDoc(
-    { type: "review", generated: now, suggested_domains: domains.length ? domains.map((d) => d.id) : undefined, failures: Object.keys(failures).length ? failures : undefined },
+    { type: "review", generated: now, suggested_domains: domains.length ? domains.map((d) => d.id) : undefined, failures: Object.keys(failures).length ? failures : undefined, batch_full: report.batchFull },
     `# 🌙 Morning review
 
-Generated by the last sleep (${now.slice(0, 16).replace("T", " ")} UTC, model \`${report.model}\`): ${report.consolidated.length} episodes consolidated, ${report.failed.length} failed, ${report.remaining} still in the inbox.
+Generated by the last sleep (${now.slice(0, 16).replace("T", " ")} UTC, model \`${report.model}\`): ${report.consolidated.length} episodes consolidated, ${report.failed.length} failed, ${report.remaining} still in the inbox${report.batchFull ? ` (this run took its limit of ${report.batchFull}; the rest are next)` : ""}.
 
 ${section("➡ What to do next", steps)}
 ${section("⚖ Disputes awaiting your ruling", disputes)}
