@@ -283,7 +283,7 @@ export interface SleepRelayDeps {
   leaseMs?: number;
   /** Questions per response, counting the current one (4). */
   lookahead?: number;
-  /** Episodes per run when `start` gives no limit (10, or the vault's batch size if smaller). */
+  /** Most episodes per run when `start` gives no limit. Without it a run takes the vault's `batch_size`: each episode commits on its own, so a long run that stops early loses nothing. */
   batch?: number;
   /** Asked before an agent's run starts, unless `force`. Without it every run is needed, as before. */
   gate?: SleepGate;
@@ -362,7 +362,7 @@ export class SleepRelay {
   private readonly clock: () => Date;
   private readonly leaseMs: number;
   private readonly lookahead: number;
-  private readonly batch: number;
+  private readonly batch: number | undefined;
   private chain: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly d: SleepRelayDeps) {
@@ -370,7 +370,7 @@ export class SleepRelay {
     this.clock = d.clock ?? (() => new Date());
     this.leaseMs = d.leaseMs ?? 15 * 60_000;
     this.lookahead = Math.max(1, d.lookahead ?? 4);
-    this.batch = d.batch ?? 10;
+    this.batch = d.batch;
   }
 
   /**
@@ -394,15 +394,14 @@ export class SleepRelay {
         const verdict = await this.d.gate({ now, vault, failures, curator });
         if (!verdict.needed) return notNeeded(verdict);
       }
-      const limit = i.limit ?? Math.min(this.batch, vault.config.curator.batch_size);
+      const limit = i.limit ?? Math.min(this.batch ?? Infinity, vault.config.curator.batch_size);
       const skip = new Set(i.exclude ?? []);
       const stuck = (id: string) => (failures[id]?.attempts ?? 0) >= SET_ASIDE_AFTER;
-      const batch = i.hosted
-        ? pickBatch(vault, undefined, failures)
-            .filter((e) => !skip.has(e.id) && (i.includeSetAside || !stuck(e.id)))
-            .slice(0, limit)
-            .map((e) => e.id)
-        : pickBatch(vault, limit, failures).map((e) => e.id);
+      const candidates = i.hosted
+        ? pickBatch(vault, Infinity, failures).filter((e) => !skip.has(e.id) && (i.includeSetAside || !stuck(e.id)))
+        : pickBatch(vault, Infinity, failures);
+      const batch = candidates.slice(0, limit).map((e) => e.id);
+      const batchFull = candidates.length > batch.length ? limit : undefined;
       const state: RunState = {
         id: `run-${ulid(now.getTime()).toLowerCase()}`,
         curator,
@@ -412,7 +411,7 @@ export class SleepRelay {
         batch,
         cursor: 0,
         phase: "rulings",
-        report: { model, rulings: [], consolidated: [], failed: [], summaries: [], remaining: 0, changed: [], warnings: [] },
+        report: { model, rulings: [], consolidated: [], failed: [], summaries: [], remaining: 0, ...(batchFull ? { batchFull } : {}), changed: [], warnings: [] },
         evidence: {},
         commits: [],
         skipped: [],

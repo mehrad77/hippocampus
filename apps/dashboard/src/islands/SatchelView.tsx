@@ -56,10 +56,13 @@ function Satchel({ session }: { session: SessionInfo }) {
     );
 
   const all = o.inbox;
-  const shown = filterEpisodes(all, { agent, kind }).filter((e) => !waitedOnly || e.waitedThroughSleep);
+  // Waited and possibly failed, as against simply next because the last run took a full batch.
+  const stuck = (e: (typeof all)[number]) => e.waitedThroughSleep && e.batchFull === undefined;
+  const shown = filterEpisodes(all, { agent, kind }).filter((e) => !waitedOnly || stuck(e));
   const agents = countBy(all, (e) => e.agent);
   const kinds = countBy(all, (e) => e.kind);
-  const waited = all.filter((e) => e.waitedThroughSleep).length;
+  const waited = all.filter(stuck).length;
+  const next = all.filter((e) => e.waitedThroughSleep && e.batchFull !== undefined);
   const sealed = all.filter((e) => e.secret).length;
   const filtered = !!agent || !!kind || waitedOnly;
   const clear = () => {
@@ -98,6 +101,16 @@ function Satchel({ session }: { session: SessionInfo }) {
 
       {session.capabilities.curator && <CuratorLine />}
       <SleepPanel o={o} sealed={sealed} voice={voice} />
+
+      {next.length > 0 && (
+        <p className="small muted" role="note">
+          <Icon name="hourglass" size={16} />{" "}
+          {v(
+            `${plural(next.length, "note")} didn't fit in the last nightly update, which handled its limit of ${next[0]!.batchFull}. ${next.length === 1 ? "It's" : "They're"} next; nothing failed.`,
+            `${plural(next.length, "episode")} didn't fit the last sleep's batch of ${next[0]!.batchFull}. ${next.length === 1 ? "It's" : "They're"} next; nothing failed.`,
+          )}
+        </p>
+      )}
 
       {waited > 0 && (
         <div className="callout callout--warn" role="note">
@@ -270,7 +283,7 @@ function Letter({ e, party, resolve, kinds }: { e: EpisodeView; party: PartyMemb
   const member = party.find((p) => p.slug === e.agent);
   const conf = confidenceLabel(e.confidence);
   return (
-    <li id={e.id} className={`letter${e.secret ? " letter--sealed" : ""}${e.waitedThroughSleep ? " letter--waited" : ""}`}>
+    <li id={e.id} className={`letter${e.secret ? " letter--sealed" : ""}${e.waitedThroughSleep && e.batchFull === undefined ? " letter--waited" : ""}`}>
       <header className="letter__head">
         {member ? (
           <EntityLink entity={member} />
@@ -297,7 +310,16 @@ function Letter({ e, party, resolve, kinds }: { e: EpisodeView; party: PartyMemb
           {e.failure.reason ? `: ${e.failure.reason}` : ""}. It stays here, and nothing is lost. Ask the agent that sent it to send it again without secret values in names or titles.
         </p>
       )}
-      {e.waitedThroughSleep && !e.failure && (
+      {e.waitedThroughSleep && !e.failure && e.batchFull !== undefined && (
+        <p className="small muted">
+          <Icon name="hourglass" size={16} />{" "}
+          {v(
+            `Waiting for the next nightly update: the last one handled its limit of ${e.batchFull} memories, and this one is next. Nothing is wrong.`,
+            `Waiting for the next sleep: the last one took its full batch of ${e.batchFull}, and this one is next.`,
+          )}
+        </p>
+      )}
+      {e.waitedThroughSleep && !e.failure && e.batchFull === undefined && (
         <p className="letter__warn small">
           <Icon name="hourglass" size={16} /> {v("Not processed by the last nightly update: it may have failed. Check the review note.", "Sat through a sleep: it may have failed. Check the morning review.")}
         </p>
