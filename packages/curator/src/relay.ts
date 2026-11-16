@@ -11,6 +11,7 @@ import {
   readFailures,
   ulid,
   withTrailers,
+  type Failures,
   type SearcherFactory,
   type Vault,
   type VaultStore,
@@ -116,7 +117,25 @@ export interface RelayReport extends SleepReport {
 
 export type RelayStep =
   | { run: string; state: "ask"; progress: Progress; questions: Question[]; rejected?: Rejection[]; procedure?: string }
-  | { run: string; state: "done"; report: RelayReport };
+  | { run: string; state: "done"; report: RelayReport }
+  | NotNeeded;
+
+/**
+ * No run tonight: Hippocampus curates this vault itself (`hosted`), or nothing waits (`idle`). Never
+ * stored. `message` says it in full, for a curator whose prompt predates this answer.
+ */
+export interface NotNeeded {
+  state: "not_needed";
+  reason: "hosted" | "idle";
+  message: string;
+  hosted?: { lastRun?: string; nextRun?: string };
+}
+
+/** The gate's verdict on an agent's run. `hosted` carries the hosted curator's times, for the message. */
+export type GateVerdict = { needed: true } | { needed: false; reason: "hosted" | "idle"; hosted?: { lastRun?: string; nextRun?: string } };
+
+/** Decides whether an agent's run is needed, given the vault it would curate (the standby curator). */
+export type SleepGate = (i: { now: Date; vault: Vault; failures: Failures }) => Promise<GateVerdict>;
 
 /** The open run. Holds no plaintext: reports carry slugs and decisions, evidence is redacted. */
 export interface RunState {
@@ -231,6 +250,40 @@ export interface SleepRelayDeps {
   lookahead?: number;
   /** Episodes per run when `start` gives no limit (10, or the vault's batch size if smaller). */
   batch?: number;
+  /** Asked before an agent's run starts, unless `force`. Without it every run is needed, as before. */
+  gate?: SleepGate;
+}
+
+/** How long a memory may wait before the standby curator runs even though Hippocampus curates: one missed hosted night, and some. */
+export const STANDBY_AFTER_MS = 36 * 60 * 60_000;
+
+/** The hosted curator as the standby gate sees it. `healthy` is false when it is off, paused, has no key, or is switched off by the operator. */
+export interface HostedCuration {
+  healthy: boolean;
+  lastRun?: string;
+  nextRun?: string;
+}
+
+/**
+ * Whether an agent's run is needed while Hippocampus may curate the vault itself. Without hosted
+ * curation, always (an empty run still applies rulings and writes the review, as it always has). With
+ * it: only when it isn't healthy, or a memory has waited longer than `STANDBY_AFTER_MS`.
+ */
+export function standbyVerdict(hosted: HostedCuration | undefined, work: { episodes: number; oldest?: Date; rulings: number }, now: Date): GateVerdict {
+  if (!hosted || !hosted.healthy) return { needed: true };
+  if (work.oldest && now.getTime() - work.oldest.getTime() > STANDBY_AFTER_MS) return { needed: true };
+  const times = { ...(hosted.lastRun ? { lastRun: hosted.lastRun } : {}), ...(hosted.nextRun ? { nextRun: hosted.nextRun } : {}) };
+  if (!work.episodes && !work.rulings) return { needed: false, reason: "idle", hosted: times };
+  return { needed: false, reason: "hosted", hosted: times };
+}
+
+function notNeeded(v: Extract<GateVerdict, { needed: false }>): NotNeeded {
+  const when = v.hosted?.lastRun ? ` It last ran ${v.hosted.lastRun.slice(0, 16).replace("T", " ")} UTC.` : "";
+  const message =
+    v.reason === "hosted"
+      ? `Not needed tonight: Hippocampus curates this vault itself, with the owner's model key, and it is working.${when} Stop here and say so in one line. You run only if it pauses or memories wait too long, or if the person asks for a run now (then call sleep_start with force: true).`
+      : "Not needed tonight: nothing is waiting in the inbox. Stop here and say so in one line.";
+  return { state: "not_needed", reason: v.reason, message, ...(v.hosted ? { hosted: v.hosted } : {}) };
 }
 
 /** Replays after a conflicting commit before giving up. */
@@ -273,7 +326,7 @@ export class SleepRelay {
     this.batch = d.batch ?? 10;
   }
 
-  start(i: { curator: string; model: string; limit?: number }): Promise<RelayStep> {
+  start(i: { curator: string; model: string; limit?: number; force?: boolean }): Promise<RelayStep> {
     return this.exclusive(async () => {
       const now = this.clock();
       await this.settle(now);
@@ -283,7 +336,12 @@ export class SleepRelay {
       const model = i.model.replace(/\s+/g, " ").trim().slice(0, 120);
       if (!model) throw new VaultError("model is required: the name of the model answering the questions");
       const { vault, store } = await this.d.open(now);
-      const batch = pickBatch(vault, i.limit ?? Math.min(this.batch, vault.config.curator.batch_size), await readFailures(store)).map((e) => e.id);
+      const failures = await readFailures(store);
+      if (this.d.gate && !i.force) {
+        const verdict = await this.d.gate({ now, vault, failures });
+        if (!verdict.needed) return notNeeded(verdict);
+      }
+      const batch = pickBatch(vault, i.limit ?? Math.min(this.batch, vault.config.curator.batch_size), failures).map((e) => e.id);
       const state: RunState = {
         id: `run-${ulid(now.getTime()).toLowerCase()}`,
         curator,

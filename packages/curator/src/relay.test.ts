@@ -1,11 +1,11 @@
-import { MemoryStore, StoreConflictError, Vault, decryptSecret, humanText, parseDoc, type Change, type CommitMeta } from "@hippocampus/core";
+import { MemoryStore, StoreConflictError, Vault, decryptSecret, humanText, parseDoc, ulid, type Change, type CommitMeta } from "@hippocampus/core";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
 import { episode, now, script, setup } from "./__fixtures__/night.ts";
 import { ScriptedLLM } from "./llm.ts";
-import { MemoryRunStore, RunBusyError, SleepRelay, type Question, type RelayStep } from "./relay.ts";
-import { CURATOR_AUTHOR, sleep } from "./sleep.ts";
+import { MemoryRunStore, RunBusyError, SleepRelay, standbyVerdict, type Question, type RelayStep, type SleepGate } from "./relay.ts";
+import { CURATOR_AUTHOR, arrivedAt, sleep, waitingWork } from "./sleep.ts";
 
 type Ask = Extract<RelayStep, { state: "ask" }>;
 
@@ -45,6 +45,7 @@ async function runToEnd(relay: SleepRelay, first: RelayStep, agent: ScriptedLLM)
     step = await relay.answer({ runId: step.run, answers: await answers(agent, step.questions) });
     if (step.state === "ask") rejected.push(...(step.rejected ?? []).map((r) => r.questionId));
   }
+  if (step.state !== "done") throw new Error(`expected a run, got ${step.state}`);
   return { report: step.report, seen, rejected };
 }
 
@@ -259,7 +260,7 @@ describe("sleep relay", () => {
     let step: RelayStep = await relay.start({ curator: "archivist", model: "scripted" });
     while (step.state === "ask" && step.questions[0]!.name !== "summary") step = await relay.answer({ runId: step.run, answers: await answers(agent, step.questions) });
     const skipped = asking(step).questions[0]!.prompt.split(" ")[1]!;
-    const next = asking(await relay.skip({ runId: step.run, reason: "nothing worth saying" }));
+    const next = asking(await relay.skip({ runId: asking(step).run, reason: "nothing worth saying" }));
     expect(next.questions[0]!.prompt).not.toContain(`Entity: ${skipped} `);
     const { report } = await runToEnd(relay, next, agent);
     expect(report.summaries).toHaveLength(3);
@@ -354,5 +355,58 @@ describe("sleep relay", () => {
     expect(report.consolidated).toEqual(expected.consolidated);
     expect(report.consolidated[1]).toMatchObject({ agent: "home-finder", stats: ["migration-agency"] });
     expect(await tree(relayed)).toEqual(await tree(classic));
+  });
+});
+
+describe("the standby gate", () => {
+  const healthy = { healthy: true, lastRun: "2026-09-27T03:00:00.000Z" };
+  const at = new Date("2026-09-27T21:00:00.000Z");
+  const hours = (h: number) => new Date(at.getTime() - h * 3_600_000);
+
+  it("without hosted curation, every run is needed, an empty inbox's too", async () => {
+    expect(standbyVerdict(undefined, { episodes: 0, rulings: 0 }, at)).toEqual({ needed: true });
+    const store = fixtureStore({});
+    const runs = new MemoryRunStore();
+    const relay = new SleepRelay({ open: async (n) => ({ vault: await Vault.load(store, { now: () => n }), store }), runs, clock: now });
+    const step = await relay.start({ curator: "archivist", model: "scripted" });
+    expect(step.state).toBe("done");
+    expect(await runs.history()).toHaveLength(1);
+  });
+
+  it("stands by while Hippocampus curates, and wakes when it pauses or memories wait too long", () => {
+    expect(standbyVerdict(healthy, { episodes: 2, oldest: hours(30), rulings: 0 }, at)).toMatchObject({ needed: false, reason: "hosted" });
+    expect(standbyVerdict(healthy, { episodes: 2, oldest: hours(37), rulings: 0 }, at)).toEqual({ needed: true });
+    expect(standbyVerdict({ healthy: false }, { episodes: 2, oldest: hours(1), rulings: 0 }, at)).toEqual({ needed: true });
+    expect(standbyVerdict(healthy, { episodes: 0, rulings: 0 }, at)).toMatchObject({ needed: false, reason: "idle" });
+    expect(standbyVerdict(healthy, { episodes: 0, rulings: 1 }, at)).toMatchObject({ needed: false, reason: "hosted" });
+  });
+
+  it("counts waiting from arrival, not from when the thing happened, and leaves set-aside episodes out", async () => {
+    const landed = new Date("2026-09-27T20:00:00.000Z");
+    const id = `ep-${ulid(landed.getTime())}`;
+    expect(arrivedAt({ id, at: "2025-01-01T00:00:00Z" })).toEqual(landed);
+    // Written by hand: no ULID, so `at` is all there is.
+    expect(arrivedAt({ id: "ep-1k2j3h4", at: "2026-09-20T10:00:00Z" })).toEqual(new Date("2026-09-20T10:00:00Z"));
+    const store = fixtureStore({
+      [`inbox/home-finder/2026-09-27T200000-old.md`]: `---\nid: ${id}\nagent: home-finder\nkind: fact\nat: 2025-01-01T00:00:00Z\n---\nThe Alfama flat was first listed in 2025.\n`,
+      "inbox/campus-agent/stuck.md": episode("campus-agent", "2026-09-01T10:00:00Z", "Something that keeps failing."),
+    });
+    const vault = await Vault.load(store, { now });
+    const stuck = vault.episodes.find((e) => e.agent === "campus-agent")!.id;
+    const work = waitingWork(vault, { [stuck]: { attempts: 3, reason: "refused" } });
+    expect(work).toMatchObject({ episodes: 1, setAside: 1, oldest: landed, rulings: 0 });
+    expect(standbyVerdict(healthy, work, at)).toMatchObject({ needed: false, reason: "hosted" });
+  });
+
+  it("answers not_needed without opening a run or touching history, and force runs anyway", async () => {
+    const { store } = await setup();
+    const runs = new MemoryRunStore();
+    const gate: SleepGate = async ({ vault, failures, now: n }) => standbyVerdict(healthy, waitingWork(vault, failures), n);
+    const relay = new SleepRelay({ open: async (n) => ({ vault: await Vault.load(store, { now: () => n }), store }), runs, clock: now, gate });
+    const quiet = await relay.start({ curator: "archivist", model: "scripted" });
+    expect(quiet).toMatchObject({ state: "not_needed", reason: "hosted", hosted: { lastRun: healthy.lastRun } });
+    expect(await runs.get()).toBeUndefined();
+    expect(await runs.history()).toEqual([]);
+    expect((await relay.start({ curator: "archivist", model: "scripted", force: true })).state).toBe("ask");
   });
 });

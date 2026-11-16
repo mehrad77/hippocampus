@@ -219,6 +219,51 @@ export function pickBatch(vault: Vault, limit?: number, failures: Failures = {})
   return ordered.slice(0, limit ?? vault.config.curator.batch_size);
 }
 
+const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/**
+ * When an episode reached the inbox: the time in its id (`ep-<ulid>`). Not `at`, which says when the thing
+ * happened and is the agent's to set, so a back-dated memory would look long overdue the moment it lands.
+ * An episode written by hand has no ULID (`ep-<hash of its path>`); for those, `at` is all there is.
+ */
+export function arrivedAt(e: Pick<Episode, "id" | "at">): Date | undefined {
+  const m = /^ep-([0-9A-HJKMNP-TV-Z]{10})[0-9A-HJKMNP-TV-Z]{16}$/.exec(e.id);
+  if (!m) {
+    const at = new Date(e.at);
+    return Number.isNaN(at.getTime()) ? undefined : at;
+  }
+  let t = 0;
+  for (const c of m[1]!) t = t * 32 + CROCKFORD.indexOf(c);
+  return new Date(t);
+}
+
+/** Dispute notes the next run acts on without a model: a human's ruling, or a declined proposal or merge. */
+export function rulingsWaiting(vault: Vault): number {
+  let n = 0;
+  for (const d of vault.openDisputes()) {
+    if (d.fm.state === "declined" && (d.fm.kind === "proposal" || d.fm.kind === "merge")) n++;
+    else if (d.fm.kind !== "merge" && d.fm.ruling !== undefined && d.fm.ruling !== null && d.fm.ruling !== "") n++;
+  }
+  return n;
+}
+
+/** What a run would find: the episodes worth a run (set-aside ones counted apart), the oldest arrival among them, and the rulings waiting. */
+export function waitingWork(vault: Vault, failures: Failures = {}): { episodes: number; setAside: number; oldest?: Date; rulings: number } {
+  let episodes = 0;
+  let setAside = 0;
+  let oldest: Date | undefined;
+  for (const e of vault.episodes) {
+    if ((failures[e.id]?.attempts ?? 0) >= SET_ASIDE_AFTER) {
+      setAside++;
+      continue;
+    }
+    episodes++;
+    const at = arrivedAt(e);
+    if (at && (!oldest || at < oldest)) oldest = at;
+  }
+  return { episodes, setAside, oldest, rulings: rulingsWaiting(vault) };
+}
+
 /** A failure's reason as the review keeps it: the rules an audit refused, never the paths (a path can hold a secret). */
 function reasonOf(error: string): string {
   if (!error.startsWith("refused to commit:")) return error.slice(0, 200);

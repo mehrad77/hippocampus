@@ -18,7 +18,9 @@ Look for the `sleep_*` tools (`sleep_status`, `sleep_start`, …) on any Hippoca
 
 ## 2. Choose where it runs
 
-Offer these three, cheapest first, and let the person pick:
+First check who curates now: `onboard` ends with a line about it. If Hippocampus already runs it with the person's own model key (**Setup → Nightly curation** on the hosted app), nothing is needed; offer one of the choices below only as **a standby curator**, which runs when hosted curation pauses (budget, a refused key) or memories wait too long, and otherwise answers `not_needed` at the cost of one call. Schedule a standby after the hosted hour.
+
+Otherwise offer these three, cheapest first, and let the person pick:
 
 1. **One of your agents** (recommended): an agent they already use and pay for, such as Claude Code or a Grok bot, runs sleep on a schedule or when they ask. No new charge. Suggest **a bot of its own that only curates**: its own Claude Code project or scheduled task, its own Grok bot, with its own curator key. Not the agent they chat with every day.
 2. **A script or cron line**: their own machine runs Claude Code (or another agent) every night.
@@ -49,6 +51,6 @@ On a self-hosted or local vault, the person makes a curator key or token the way
 
 ## 5. Check it
 
-If the `sleep_*` tools are here now, offer to run the first night together: follow the `sleep` skill. Otherwise call `sleep_status` after the first scheduled run, or ask them to look at **Setup & health → Curator** on the dashboard, which lists every run.
+If the `sleep_*` tools are here now, offer to run the first night together: follow the `sleep` skill. Otherwise call `sleep_status` after the first scheduled run, or ask them to look at **Setup → Nightly curation** on the dashboard, which lists every run.
 
 Finish with a two-line summary: where sleep runs, and when.

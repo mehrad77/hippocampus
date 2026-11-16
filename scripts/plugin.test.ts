@@ -84,4 +84,14 @@ describe("the Claude Code plugin", () => {
     const skill = read(`${pluginDir}/skills/sleep/SKILL.md`);
     for (const t of sleepTools) expect(skill, `sleep skill mentions ${t}`).toContain(`\`${t}\``);
   });
+
+  it("tells a curator when to stand by, and a new agent to keep the routine and check who curates", () => {
+    const sleep = read(`${pluginDir}/skills/sleep/SKILL.md`);
+    expect(sleep).toContain('`"not_needed"`');
+    expect(sleep).toContain("`force: true`");
+    expect(read(`${pluginDir}/skills/sleep-setup/SKILL.md`)).toContain("standby curator");
+    const connect = read(`${pluginDir}/skills/connect/SKILL.md`);
+    expect(connect).toContain("**Memory routine.**");
+    expect(connect).toContain("**Curation.**");
+  });
 });
