@@ -9,7 +9,7 @@ import type { CuratorStatus } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Empty, RelTime, SkeletonPanel } from "../../ui/Parts.tsx";
 import { ConfirmDialog, ErrorCallout, Facts, ToneTag, useAction } from "./common.tsx";
-import { OUTCOME_TONE } from "./hosted.ts";
+import { outcomeTone } from "./hosted.ts";
 
 type Run = NonNullable<CuratorStatus["run"]>;
 type Past = CuratorStatus["history"][number];
@@ -128,7 +128,7 @@ function History({ runs, commits }: { runs: Past[]; commits?: { url: string; hos
         </thead>
         <tbody>
           {runs.map((r) => {
-            const o = OUTCOME_TONE[r.outcome];
+            const o = outcomeTone(r.outcome);
             return (
               <tr key={r.id}>
                 <td data-label="When">
@@ -173,7 +173,7 @@ export function CuratorLine() {
   if (!s.data) return null;
   const run = s.data.run;
   const last = newestFirst(s.data.history)[0];
-  const o = last ? OUTCOME_TONE[last.outcome] : undefined;
+  const o = last ? outcomeTone(last.outcome) : undefined;
   return (
     <p className="hz-curline small" role="status">
       <Icon name="moonStars" size={16} />

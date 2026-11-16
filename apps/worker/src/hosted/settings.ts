@@ -22,6 +22,8 @@ export interface HostedSettings {
   oauthUrl?: string;
   /** Present when the operator set up a GitLab OAuth application: vaults can then live on GitLab. */
   gitlab?: GitLabSettings;
+  /** Seals secrets kept in the registry (`HIPPO_TOKEN_KEY`). GitLab needs it, but it can be set without GitLab. */
+  tokenKey?: string;
 }
 
 export interface GitLabSettings {
@@ -95,18 +97,29 @@ export function hostedSettings(env: HostedVars): HostedSettings {
     apiUrl: trimSlash(env.GITHUB_API_URL),
     oauthUrl: trimSlash(env.GITHUB_OAUTH_URL),
     gitlab: gitlabSettings(env),
+    tokenKey: tokenKey(env),
   };
 }
 
-/** The GitLab settings when all of them are set; none when none are; an error for a half-configured set, so a typo doesn't quietly turn GitLab off. */
+/** `HIPPO_TOKEN_KEY` when set, checked, so a malformed key fails at startup rather than at the first seal. */
+export function tokenKey(env: HostedVars): string | undefined {
+  const key = env.HIPPO_TOKEN_KEY?.trim();
+  if (!key) return undefined;
+  checkTokenKey(key);
+  return key;
+}
+
+/**
+ * The GitLab settings when its client is set; none when it isn't (`HIPPO_TOKEN_KEY` alone seals other
+ * secrets); an error for a half-configured client, so a typo doesn't quietly turn GitLab off.
+ */
 export function gitlabSettings(env: HostedVars): GitLabSettings | undefined {
   const id = env.GITLAB_CLIENT_ID?.trim();
   const secret = env.GITLAB_CLIENT_SECRET?.trim();
-  const key = env.HIPPO_TOKEN_KEY?.trim();
-  if (!id && !secret && !key) return undefined;
+  if (!id && !secret) return undefined;
+  const key = tokenKey(env);
   const missing = [!id && "GITLAB_CLIENT_ID", !secret && "GITLAB_CLIENT_SECRET", !key && "HIPPO_TOKEN_KEY"].filter(Boolean);
   if (missing.length) throw new Error(`GitLab needs GITLAB_CLIENT_ID, GITLAB_CLIENT_SECRET and HIPPO_TOKEN_KEY together; missing ${missing.join(", ")}`);
-  checkTokenKey(key!);
   const url = new URL(env.GITLAB_URL?.trim() || "https://gitlab.com");
   if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback(url))) throw new Error("GITLAB_URL must be an https URL");
   return { url: url.origin, clientId: id!, clientSecret: secret!, tokenKey: key! };

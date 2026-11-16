@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HostedStatus } from "../../lib/types.ts";
-import { canAddVault, connectionRows, freeHumans, humanIdFor, inviteProblem, draftProblems, draftReady, forNewVault, hostedDefaultStep, hostedLock, hostedNeighbors, hostedProvider, hostedRepos, hostedStepDef, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, pickedAdoptable, repoVerdict, type HostedContext } from "./hosted.ts";
+import { canAddVault, connectionRows, freeHumans, humanIdFor, inviteProblem, draftProblems, draftReady, forNewVault, hostedDefaultStep, hostedLock, hostedNeighbors, hostedProvider, hostedRepos, hostedStepDef, hostedStepState, identityFileName, identityFileText, initRequest, newDraft, outcomeTone, pickedAdoptable, repoVerdict, type HostedContext } from "./hosted.ts";
 
 const base: HostedStatus = {
   kind: "hosted",
@@ -303,5 +303,15 @@ describe("connections", () => {
     expect(on!.scopes).toContain("curate");
     // A member sees the app, but not the switch.
     expect(connectionRows([], [{ ...app, curate: true, mayCurate: false }], "v1")[0]!.curating).toBeUndefined();
+  });
+});
+
+describe("outcomeTone", () => {
+  it("names the known outcomes, and shows one it doesn't know as itself", () => {
+    expect(outcomeTone("done")).toMatchObject({ tone: "done", word: "Finished" });
+    expect(outcomeTone("aborted").tone).toBe("error");
+    expect(outcomeTone("stopped")).toMatchObject({ tone: "na", word: "stopped" });
+    expect(outcomeTone("toString").word).toBe("toString");
+    expect(outcomeTone("").word).toBe("Unknown");
   });
 });

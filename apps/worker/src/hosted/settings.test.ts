@@ -40,4 +40,18 @@ describe("hostedSettings", () => {
     expect(err).not.toContain("elsewhere");
     expect(hostedSettings(env({ GITHUB_API_URL: " " })).apiUrl).toBeUndefined();
   });
+
+  it("takes HIPPO_TOKEN_KEY on its own, without turning GitLab on", () => {
+    const key = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+    expect(hostedSettings(env({ HIPPO_TOKEN_KEY: ` ${key} ` }))).toMatchObject({ tokenKey: key, gitlab: undefined });
+    expect(hostedSettings(env()).tokenKey).toBeUndefined();
+    expect(() => hostedSettings(env({ HIPPO_TOKEN_KEY: "c2hvcnQ=" }))).toThrow("HIPPO_TOKEN_KEY must be 32 bytes");
+    expect(hostedSettings(env({ HIPPO_TOKEN_KEY: key, GITLAB_CLIENT_ID: "id", GITLAB_CLIENT_SECRET: "s" })).gitlab).toMatchObject({ clientId: "id", tokenKey: key });
+  });
+
+  it("still refuses a half-configured GitLab client", () => {
+    const key = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+    expect(() => hostedSettings(env({ HIPPO_TOKEN_KEY: key, GITLAB_CLIENT_ID: "id" }))).toThrow("missing GITLAB_CLIENT_SECRET");
+    expect(() => hostedSettings(env({ GITLAB_CLIENT_ID: "id", GITLAB_CLIENT_SECRET: "s" }))).toThrow("missing HIPPO_TOKEN_KEY");
+  });
 });

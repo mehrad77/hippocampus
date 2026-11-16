@@ -398,6 +398,12 @@ export const OUTCOME_TONE: Record<"done" | "expired" | "aborted", { tone: BadgeS
   aborted: { tone: "error", word: "Aborted", help: "Stopped before the end. What it committed stays; the rest waits in the inbox." },
 };
 
+/** A run's outcome as a tag. One this dashboard doesn't know (a newer Worker's, after a rollback) shows as itself, never breaks the page. */
+export function outcomeTone(outcome: string): { tone: BadgeState; word: string; help: string } {
+  const known = Object.hasOwn(OUTCOME_TONE, outcome) ? OUTCOME_TONE[outcome as keyof typeof OUTCOME_TONE] : undefined;
+  return known ?? { tone: "na", word: outcome.slice(0, 40) || "Unknown", help: "What it committed stays; the rest waits in the inbox." };
+}
+
 // ── Sharing ────────────────────────────────────────────────────────────────
 
 /** What each role may do, in both voices, for pickers and the members list. */
