@@ -18,6 +18,7 @@ import {
 } from "@hippocampus/core";
 import { z } from "zod";
 import type { LLM } from "./llm.ts";
+import { BudgetExhausted, RunStop, type StopReason } from "./meter.ts";
 import { nextSteps, type NextStep } from "./next-steps.ts";
 import {
   CURATOR_AUTHOR,
@@ -28,6 +29,7 @@ import {
   loadHouseRules,
   needsModel,
   pickBatch,
+  SET_ASIDE_AFTER,
   summarize,
   summaryTargets,
   type EpisodeOutcome,
@@ -160,6 +162,30 @@ export interface RunState {
   asking?: string;
   marks: SecretMark[];
   seed: number;
+  /** Hippocampus's own run, with the owner's model key: only the Worker opens one, and only it drives it. */
+  hosted?: boolean;
+  /** Episodes passed over because they alone don't fit the per-run budget. */
+  tooLarge?: string[];
+  /** Set while a hosted run finishes early, so its review says why. */
+  stopping?: StopReason;
+}
+
+/** The curator id on Hippocampus's own runs, reserved for them. */
+export const HOSTED_CURATOR = "hosted";
+
+/** A stop, in the words the review and the dashboard use. */
+export const STOP_WORDS: Record<StopReason, string> = {
+  budget: "budget reached",
+  auth: "the model key was refused",
+  credit: "the model provider's credit ran out",
+  rate_limit: "the model provider was rate limiting",
+  provider: "the model provider failed",
+};
+
+/** What a run spent on models: integer micro-dollars and calls. */
+export interface RunCost {
+  micros: number;
+  calls: number;
 }
 
 /** A finished run, for status: ids, counts and times only. */
@@ -176,6 +202,15 @@ export interface RunSummary {
   summaries: number;
   remaining: number;
   commits: number;
+  /**
+   * Why a run stopped early (outcome `aborted`): the budget, a refused key, spent credit, a rate limit
+   * or a provider failure. Stored with an outcome the previous Worker knows, so a rollback reads it.
+   */
+  stop?: StopReason;
+  /** What a hosted run spent. */
+  cost?: RunCost;
+  /** Episodes passed over as too large for the per-run budget. */
+  tooLarge?: string[];
 }
 
 export interface RunStatus {
@@ -252,7 +287,19 @@ export interface SleepRelayDeps {
   batch?: number;
   /** Asked before an agent's run starts, unless `force`. Without it every run is needed, as before. */
   gate?: SleepGate;
+  /** What a hosted run has spent so far, kept by whoever meters it; read when the run closes. */
+  spent?: (runId: string) => Promise<RunCost | undefined>;
 }
+
+/** Where `autopilot` left the run. */
+export type AutopilotResult =
+  | { state: "paused"; run: string; progress: Progress }
+  | { state: "done"; run: string; report: RelayReport; stop?: StopReason };
+
+/** How long a hosted run may wait for its next slice before it expires, alarms being late or lost. */
+export const HOSTED_RUN_MAX_MS = 6 * 60 * 60_000;
+
+const HOSTED_ONLY = "this run is Hippocampus's own, driven with the owner's model key: it can't be answered or skipped from here. sleep_abort stops it.";
 
 /** How long a memory may wait before the standby curator runs even though Hippocampus curates: one missed hosted night, and some. */
 export const STANDBY_AFTER_MS = 36 * 60 * 60_000;
@@ -326,22 +373,36 @@ export class SleepRelay {
     this.batch = d.batch ?? 10;
   }
 
-  start(i: { curator: string; model: string; limit?: number; force?: boolean }): Promise<RelayStep> {
+  /**
+   * Opens a run. `hosted` is for the Worker alone (MCP never passes it): such a run skips the gate,
+   * leaves out set-aside episodes (unless `includeSetAside`, for the owner's Run now) and those in
+   * `exclude`, and is driven by `autopilot`, never by an agent's answers.
+   */
+  start(i: { curator: string; model: string; limit?: number; force?: boolean; hosted?: boolean; exclude?: readonly string[]; includeSetAside?: boolean }): Promise<RelayStep> {
     return this.exclusive(async () => {
       const now = this.clock();
       await this.settle(now);
       if (await this.d.runs.get()) throw new RunBusyError(await this.statusAt(now));
       const curator = i.curator.trim().toLowerCase();
       if (!AGENT_ID.test(curator)) throw new VaultError(`curator "${i.curator}" must be an agent id: lowercase letters, digits and dashes`);
+      if (curator === HOSTED_CURATOR && !i.hosted) throw new VaultError(`"${HOSTED_CURATOR}" is reserved for Hippocampus's own runs: pick another curator id`);
       const model = i.model.replace(/\s+/g, " ").trim().slice(0, 120);
       if (!model) throw new VaultError("model is required: the name of the model answering the questions");
       const { vault, store } = await this.d.open(now);
       const failures = await readFailures(store);
-      if (this.d.gate && !i.force) {
+      if (this.d.gate && !i.force && !i.hosted) {
         const verdict = await this.d.gate({ now, vault, failures });
         if (!verdict.needed) return notNeeded(verdict);
       }
-      const batch = pickBatch(vault, i.limit ?? Math.min(this.batch, vault.config.curator.batch_size), failures).map((e) => e.id);
+      const limit = i.limit ?? Math.min(this.batch, vault.config.curator.batch_size);
+      const skip = new Set(i.exclude ?? []);
+      const stuck = (id: string) => (failures[id]?.attempts ?? 0) >= SET_ASIDE_AFTER;
+      const batch = i.hosted
+        ? pickBatch(vault, undefined, failures)
+            .filter((e) => !skip.has(e.id) && (i.includeSetAside || !stuck(e.id)))
+            .slice(0, limit)
+            .map((e) => e.id)
+        : pickBatch(vault, limit, failures).map((e) => e.id);
       const state: RunState = {
         id: `run-${ulid(now.getTime()).toLowerCase()}`,
         curator,
@@ -358,24 +419,78 @@ export class SleepRelay {
         skippedSummaries: [],
         marks: [],
         seed: crypto.getRandomValues(new Uint32Array(1))[0]!,
+        ...(i.hosted ? { hosted: true } : {}),
       };
       // Left over from a run that ended without closing; they must not answer this run's questions.
       await this.d.runs.clearAnswers();
       await this.d.runs.put(state);
+      // Nothing is asked of anyone: autopilot takes it from here.
+      if (state.hosted) return { run: state.id, state: "ask", progress: progress(state), questions: [] };
       const step = await this.drive(state, pass([]));
       return step.state === "ask" ? { ...step, procedure: SLEEP_PROCEDURE } : step;
     });
   }
 
+  /**
+   * Drives the open hosted run with `answerer` until it is done, `until` passes, or `units` units have
+   * run. Every unit commits on its own, and a unit's answers are recorded as they come, so a replay
+   * (a conflicting commit, or this object evicted mid-unit) doesn't pay for them again. A budget or
+   * provider stop ends the run early, without summaries: the episodes not curated stay in the inbox
+   * and aren't counted as failed. An episode too large for the per-run budget is passed over.
+   */
+  autopilot(i: { runId: string; answerer: LLM; until: Date; units?: number; onUnit?: (unit: string) => void }): Promise<AutopilotResult> {
+    return this.exclusive(async () => {
+      const state = await this.d.runs.get();
+      if (!state || state.id !== i.runId) throw this.notOpen(i.runId, state);
+      if (!state.hosted) throw new VaultError(`run ${state.id} isn't a hosted run: its curator answers it`);
+      let left = i.units ?? Infinity;
+      while (state.phase !== "done") {
+        if (left-- <= 0 || this.clock() >= i.until) {
+          state.leaseUntil = this.leaseFrom(this.clock());
+          await this.d.runs.put(state);
+          return { state: "paused", run: state.id, progress: progress(state) };
+        }
+        state.leaseUntil = this.leaseFrom(this.clock());
+        // The meter counts per unit, to tell an episode too large for the run from a run out of budget.
+        i.onUnit?.(unitOf(state));
+        let asked: NeedsAnswer | undefined;
+        try {
+          asked = await this.runUnit(state, pass([]), {}, i.answerer);
+        } catch (err) {
+          if (!(err instanceof RunStop)) throw err;
+          const unit = unitOf(state);
+          await this.d.runs.clearAnswers(unit);
+          if (err instanceof BudgetExhausted && err.tooLarge && state.phase === "episodes") {
+            const id = state.batch[state.cursor]!;
+            state.tooLarge = [...(state.tooLarge ?? []), id];
+            state.report.warnings.push(`${id} is too large for the per-run budget: it stays in the inbox until the budget is raised or another curator takes it`);
+            this.advance(state);
+            await this.d.runs.put(state);
+            continue;
+          }
+          return this.stopRun(state, err.stop);
+        }
+        if (asked) throw new Error(`autopilot: ${asked.question.id} went unanswered`);
+      }
+      const done = await this.close(state, "done");
+      return { state: "done", run: state.id, report: done.report };
+    });
+  }
+
   /** Values may be JSON or a JSON string. An empty list just shows the open questions again. */
   answer(i: { runId: string; answers: { questionId: string; value: unknown }[] }): Promise<RelayStep> {
-    return this.exclusive(async () => this.drive(await this.live(i.runId), pass(i.answers)));
+    return this.exclusive(async () => {
+      const state = await this.live(i.runId);
+      if (state.hosted) throw new VaultError(HOSTED_ONLY);
+      return this.drive(state, pass(i.answers));
+    });
   }
 
   /** Skips the current episode (it stays in the inbox), or during the finish the summary being asked. */
   skip(i: { runId: string; reason: string }): Promise<RelayStep> {
     return this.exclusive(async () => {
       const state = await this.live(i.runId);
+      if (state.hosted) throw new VaultError(HOSTED_ONLY);
       const reason = i.reason.replace(/\s+/g, " ").trim().slice(0, 300) || "no reason given";
       if (state.phase === "episodes") {
         const id = state.batch[state.cursor]!;
@@ -430,12 +545,12 @@ export class SleepRelay {
   }
 
   /** Runs the current unit to its commit (and moves on), or to its first unanswered question. */
-  private async runUnit(state: RunState, p: Pass, o: { summaries?: boolean } = {}): Promise<NeedsAnswer | undefined> {
+  private async runUnit(state: RunState, p: Pass, o: { summaries?: boolean } = {}, answerer?: LLM): Promise<NeedsAnswer | undefined> {
     const unit = unitOf(state);
     for (let attempt = 0; ; attempt++) {
       state.asking = undefined;
       const { vault, store } = await this.d.open(new Date(state.now));
-      const llm = new RelayLLM(state.model, unit, await this.d.runs.answers(unit), p, leakCheck(state), (a) => this.d.runs.putAnswer(unit, a));
+      const llm = new RelayLLM(state.model, unit, await this.d.runs.answers(unit), p, leakCheck(state), (a) => this.d.runs.putAnswer(unit, a), answerer);
       let result: UnitResult;
       try {
         result = await this.work(state, vault, store, llm, o.summaries ?? true);
@@ -498,7 +613,8 @@ export class SleepRelay {
       try {
         outcome = await consolidate(vault, llm, ep, this.searcher, { houseRules });
       } catch (err) {
-        if (err instanceof NeedsAnswer) throw err;
+        // A stop isn't the episode's fault: it stays in the inbox, not counted as failed.
+        if (err instanceof NeedsAnswer || err instanceof RunStop) throw err;
         return failed(err);
       }
       const { evidence, secrets, ...report } = outcome;
@@ -529,10 +645,11 @@ export class SleepRelay {
           state.asking = entity.slug;
           throw err;
         }
+        if (err instanceof RunStop) throw err;
         report.warnings.push(`summary for ${entity.slug} failed: ${(err as Error).message}`);
       }
     }
-    if (!summaries) report.warnings.push("the run's lease passed: finished without summaries");
+    if (!summaries) report.warnings.push(state.stopping ? `${STOP_WORDS[state.stopping]}: finished without summaries` : "the run's lease passed: finished without summaries");
     finishRun(vault, report, await readFailures(store));
     const violations = await audit();
     if (violations.length) throw new AuditError(violations);
@@ -609,6 +726,8 @@ export class SleepRelay {
   private async settle(now: Date): Promise<void> {
     const state = await this.d.runs.get();
     if (!state || Date.parse(state.leaseUntil) > now.getTime()) return;
+    // A hosted run waits for its next alarm, late or re-armed by the Cron, up to a limit.
+    if (state.hosted && now.getTime() - Date.parse(state.now) < HOSTED_RUN_MAX_MS) return;
     // The episode in flight and the rest of the batch stay in the inbox.
     await this.d.runs.clearAnswers();
     state.phase = "finish";
@@ -621,11 +740,25 @@ export class SleepRelay {
     await this.close(state, "expired");
   }
 
-  private async close(state: RunState, outcome: RunSummary["outcome"]): Promise<Extract<RelayStep, { state: "done" }>> {
+  /** Ends a hosted run early: the finish unit without summaries (no model call, so always affordable), then closed as `aborted` with why. */
+  private async stopRun(state: RunState, stop: StopReason): Promise<AutopilotResult> {
+    state.stopping = stop;
+    state.phase = "finish";
+    try {
+      await this.runUnit(state, pass([]), { summaries: false });
+    } catch (err) {
+      state.report.warnings.push(`could not finish the run: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const done = await this.close(state, "aborted", stop);
+    return { state: "done", run: state.id, report: done.report, stop };
+  }
+
+  private async close(state: RunState, outcome: RunSummary["outcome"], stop?: StopReason): Promise<Extract<RelayStep, { state: "done" }>> {
     state.phase = "done";
     await this.d.runs.clearAnswers();
     await this.d.runs.clear();
     const r = state.report;
+    const cost = state.hosted ? await this.d.spent?.(state.id) : undefined;
     await this.d.runs.pushHistory({
       id: state.id,
       curator: state.curator,
@@ -639,6 +772,9 @@ export class SleepRelay {
       summaries: r.summaries.length,
       remaining: r.remaining,
       commits: state.commits.length,
+      ...(stop ? { stop } : {}),
+      ...(cost ? { cost } : {}),
+      ...(state.tooLarge?.length ? { tooLarge: state.tooLarge } : {}),
     });
     return { run: state.id, state: "done", report: { ...r, curator: state.curator, skipped: state.skipped, commits: state.commits, next: nextSteps(r) } };
   }
@@ -684,6 +820,8 @@ class RelayLLM implements LLM {
     private readonly pass: Pass,
     private readonly leaks: LeakCheck,
     private readonly record: (a: RecordedAnswer) => Promise<void>,
+    /** A hosted run's model: asked when nothing recorded answers the question, and its answer recorded at once. */
+    private readonly answerer?: LLM,
   ) {}
 
   async object<T>(req: { name: string; schema: z.ZodType<T>; system: string; prompt: string }): Promise<T> {
@@ -693,6 +831,14 @@ class RelayLLM implements LLM {
     if (given) {
       await this.record({ index, hash: h, value: given.value });
       return given.value;
+    }
+    if (this.answerer) {
+      const old = this.recorded.find((a) => a.index === index && a.hash === h);
+      const parsed = old ? req.schema.safeParse(old.value) : undefined;
+      if (parsed?.success) return parsed.data;
+      const value = await this.answerer.object(req);
+      await this.record({ index, hash: h, value });
+      return value;
     }
     // An answer rejected just now is asked again, whatever was recorded before.
     const old = this.pass.used.has(q.id) ? undefined : this.recorded.find((a) => a.index === index);

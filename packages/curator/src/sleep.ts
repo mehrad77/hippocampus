@@ -66,6 +66,7 @@ import {
   type Failures,
 } from "@hippocampus/core";
 import type { LLM } from "./llm.ts";
+import { RunStop } from "./meter.ts";
 import { GOAL_STATUS_NOTE, nextSteps, renderNextSteps, suggestedDomains } from "./next-steps.ts";
 import {
   claimsPrompt,
@@ -160,6 +161,7 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
   const evidence = new Map<string, string[]>();
   const secrets: string[] = [];
   const failures = await readFailures(opts.store);
+  let stopped: RunStop | undefined;
   for (const ep of pickBatch(vault, opts.limit, failures)) {
     log(`… ${ep.id} (${ep.agent}): ${ep.secret ? "(secret)" : ep.confidential ? "(confidential)" : ep.text.slice(0, 70).replace(/\s+/g, " ")}`);
     const before = vault.snapshot();
@@ -178,6 +180,12 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
       // Half an episode (say, an entity created from a mention whose claims then failed) would be
       // committed without its chronicle entry, and before its secrets were redacted.
       vault.restore(before);
+      // A stop (the budget, a refused key) isn't this episode's fault: it and the rest stay in the inbox, not counted as failed.
+      if (err instanceof RunStop) {
+        stopped = err;
+        log(`  ■ ${err.message}: stopping (left in inbox)`);
+        break;
+      }
       const message = err instanceof Error ? err.message : String(err);
       report.failed.push({ id: ep.id, path: ep.path, error: message });
       log(`  ✗ ${message.slice(0, 200)} (left in inbox)`);
@@ -185,14 +193,19 @@ export async function sleep(opts: SleepOptions): Promise<SleepReport> {
   }
 
   await redactRun(vault, opts.store, evidence, secrets);
-  for (const { entity, texts } of summaryTargets(vault, evidence)) {
+  for (const { entity, texts } of stopped ? [] : summaryTargets(vault, evidence)) {
     try {
       await summarize(vault, llm, entity, texts, { houseRules, secrets });
       report.summaries.push(entity.slug);
     } catch (err) {
+      if (err instanceof RunStop) {
+        stopped = err;
+        break;
+      }
       report.warnings.push(`summary for ${entity.slug} failed: ${(err as Error).message}`);
     }
   }
+  if (stopped) report.warnings.push(`${stopped.message}: stopped early, without summaries for the rest`);
 
   // A suggestion that happens to spell one of the run's secrets would fail the whole run below.
   for (const r of report.consolidated) if (r.domains) r.domains = r.domains.filter((d) => !secrets.some((s) => s.trim().length >= 3 && d.includes(s.toLowerCase())));

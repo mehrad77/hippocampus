@@ -15,6 +15,7 @@ We aim to acknowledge reports within a few days, and to credit reporters who wan
 | Your vault repo on GitHub or GitLab | Every note, the inbox, the chronicle, disputes, age-encrypted secrets | You. It's your private repo |
 | Your age identity (key file) | The only thing that can decrypt secrets | You. It never reaches the app |
 | The hosted app's registry (D1) | Your GitHub id and login (and your GitLab username, once connected), an id of its own for you, your access note, your vaults' repo names and status, a SHA-256 hash of each key with its label and scopes; for a GitLab vault, your GitLab username and your GitLab OAuth tokens, sealed (AES-256-GCM under `HIPPO_TOKEN_KEY`, bound to your account id) | The operator |
+| The hosted app's registry (D1), with hosted curation on | Your model provider's API key (Anthropic or Mistral), sealed the same way (AES-256-GCM under `HIPPO_TOKEN_KEY`, bound to your account id), its last four characters, your caps, which models run each step, and what you spent each month | The operator |
 | Your vault's Durable Object | A search index (note text, and embeddings if on), a cache of the repo's files, sleep runs in progress, the current installation token | The operator |
 | KV (`OAUTH_KV`) | Sign-in sessions, OAuth clients and grants (a grant's details are stored encrypted) | The operator |
 | Logs | Route name, status, timing and a hashed vault id per request | The operator |
@@ -28,8 +29,9 @@ Whoever runs a hosted instance acts as a **data processor** for the vaults on it
 - **The index and cache.** Note text sits in each vault's Durable Object storage on Cloudflare. Inbox files are the exception: they can hold secrets in plain text until sleep encrypts them, so their contents are cached in memory only, never stored at rest. They still pass through the Worker while it serves a request.
 - **The registry.** Who has an account, which repo is whose vault, and when keys were last used. Admins see names and states on the admin page, never vault content, but an operator with database access sees the same rows.
 - **Embeddings.** With semantic recall on, note text goes to the configured embeddings provider (Workers AI or another API).
+- **Hosted curation** (Setup → Nightly curation, with your own key). The Worker sends each new memory in full, secret and confidential ones included, to the provider you chose, under your key, and keeps that key sealed in the registry. Anyone with `HIPPO_TOKEN_KEY` and read access to the registry (the operator) can use it. It is never logged, never shown back (only its last four characters), and only ever sent to the provider's own API: there is no field for another address. Spend stops at your caps, which the Worker reserves before every call. Set a spending limit at the provider too, in case its prices change before this app's table does.
 
-The operator never sees: the age identity, any key or session in plain form (only hashes are stored), or what a curator agent's model provider does with what it reads.
+The operator never sees: the age identity, an agent key or session in plain form (only hashes are stored), or what a curator agent's model provider does with what it reads. A model key you save for hosted curation is the exception above: sealed, but the operator can open it.
 
 If you can't accept this, run the CLI locally, or [run your own instance](docs/USAGE.md#running-your-own-instance).
 
