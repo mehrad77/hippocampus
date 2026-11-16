@@ -2,11 +2,33 @@ import { describe, expect, it } from "vitest";
 import type { HostedConnectedApp } from "@hippocampus/dashboard";
 // The pretend hosted app's stages, so every one of them gets its steps checked.
 import { DEMO_STAGES, hostedDemo, type HostedDemoStage } from "../../../../../packages/dashboard/src/demo-hosted.ts";
+import { STEP_MAX_OUTPUT as CURATOR_MAX_OUTPUT } from "../../../../../packages/curator/src/pricing.ts";
 import type { HostedRepoView, HostedStatus } from "../../lib/types.ts";
 import {
   arrival,
   canAddVault,
+  capProblems,
   connectionRows,
+  curatorError,
+  curatorProviders,
+  ESTIMATE_ASSUMES,
+  ESTIMATE_PROMPT_TOKENS,
+  estimatePer100,
+  hourOptions,
+  isUniform,
+  keyNeeded,
+  localHour,
+  modelsOf,
+  money,
+  pausedBanner,
+  pauseWords,
+  RUN_NOTHING_TO_DO,
+  runCost,
+  standbyWords,
+  startingMix,
+  STEP_MAX_OUTPUT,
+  stopTone,
+  uniformMix,
   freeHumans,
   humanIdFor,
   inviteProblem,
@@ -89,6 +111,12 @@ describe("hosted onboarding steps", () => {
     expect(hostedDefaultStep(ctx(withAgent))).toBe("curate");
     expect(hostedStepState("curate", ctx(withAgent))).toBe("todo");
     expect(hostedStepState("curate", ctx({ ...withAgent, curatorActions: true }))).toBe("done");
+    // Hippocampus curating the vault with the owner's key counts; a saved key alone doesn't.
+    const hosted = (enabled: boolean): HostedStatus => ({ ...withAgent, hostedCurator: { available: true, keyHint: "…3xQa", spentThisMonthUsd: 0, recommended: {}, models: [], vault: { enabled } } });
+    expect(hostedStepState("curate", ctx(hosted(false)))).toBe("todo");
+    expect(hostedStepState("curate", ctx(hosted(true)))).toBe("done");
+    // A new vault's setup keeps the account's key and caps, not the shown vault's schedule.
+    expect(forNewVault(hosted(true)).hostedCurator).toEqual({ available: true, keyHint: "…3xQa", spentThisMonthUsd: 0, recommended: {}, models: [] });
   });
 
   it("counts a sign-in app as the agent, and one that may curate as the curator", () => {
@@ -492,6 +520,92 @@ describe("connections", () => {
     expect(on!.scopes).toContain("curate");
     // A member sees the app, but not the switch.
     expect(connectionRows([], [{ ...app, curate: true, mayCurate: false }], "v1")[0]!.curating).toBeUndefined();
+  });
+});
+
+describe("hosted curation", () => {
+  const models = [
+    { provider: "anthropic" as const, model: "claude-sonnet-5-5", inputUsdPerMTok: 2, outputUsdPerMTok: 10 },
+    { provider: "anthropic" as const, model: "claude-haiku-5-5", inputUsdPerMTok: 0.1, outputUsdPerMTok: 0.5 },
+    { provider: "mistral" as const, model: "mistral-small-2603", inputUsdPerMTok: 0.15, outputUsdPerMTok: 0.6 },
+  ];
+  const rec = { mentions: "claude-haiku-5-5", match: "claude-haiku-5-5", claims: "claude-sonnet-5-5", summary: "claude-haiku-5-5" };
+  const status = { recommended: { anthropic: rec }, models };
+
+  it("starts from the saved mix, then the eval's, then the provider's cheapest model for every step", () => {
+    expect(startingMix(status, "anthropic")).toEqual({ mix: rec, recommended: true });
+    expect(startingMix(status, "mistral")).toEqual({ mix: uniformMix("mistral-small-2603"), recommended: false });
+    expect(startingMix({ ...status, provider: "anthropic", steps: uniformMix("claude-sonnet-5-5") }, "anthropic")).toEqual({ mix: uniformMix("claude-sonnet-5-5"), recommended: false });
+    expect(startingMix({ recommended: {}, models: [] }, "anthropic")).toBeUndefined();
+    expect(modelsOf(models, "anthropic").map((m) => m.model)).toEqual(["claude-haiku-5-5", "claude-sonnet-5-5"]);
+    expect(curatorProviders(models)).toEqual(["anthropic", "mistral"]);
+    expect(isUniform(rec)).toBe(false);
+  });
+
+  it("estimates 100 memories high: one call per step, a full prompt, and every output token allowed", () => {
+    // Haiku: 4 calls × 4,000 tokens × $0.1/M, plus 7,680 output tokens × $0.5/M = $0.00544 a memory.
+    expect(estimatePer100(uniformMix("claude-haiku-5-5"), models, "anthropic")).toBeCloseTo(0.544, 6);
+    const per = (step: keyof typeof STEP_MAX_OUTPUT, input: number, output: number) => (ESTIMATE_PROMPT_TOKENS * input + STEP_MAX_OUTPUT[step] * output) / 1e6;
+    expect(estimatePer100(rec, models, "anthropic")).toBeCloseTo(100 * (per("mentions", 0.1, 0.5) + per("match", 0.1, 0.5) + per("claims", 2, 10) + per("summary", 0.1, 0.5)), 6);
+    // A model without a price gives no estimate.
+    expect(estimatePer100(uniformMix("unknown"), models, "anthropic")).toBeUndefined();
+    // The dashboard's copy of the curator's output allowance stays equal to it.
+    expect(STEP_MAX_OUTPUT).toEqual(CURATOR_MAX_OUTPUT);
+    expect(ESTIMATE_ASSUMES).toMatch(/4,000 tokens/);
+    expect([money(0.544), money(0.004), money(0), money(1234.5)]).toEqual(["$0.54", "under $0.01", "$0.00", "$1,235"]);
+  });
+
+  it("checks the caps and asks for a key on the first save and with a new provider", () => {
+    expect(capProblems({ month: "10", run: "2" })).toEqual({ month: undefined, run: undefined });
+    expect(capProblems({ month: "", run: "0" })).toEqual({ month: "A number of US dollars.", run: "More than $0." });
+    expect(capProblems({ month: "5", run: "6" }).run).toBe("At most the monthly cap.");
+    expect(capProblems({ month: "20000", run: "1" }).month).toBe("Up to $10,000.");
+    expect(keyNeeded({}, "anthropic")).toBe(true);
+    expect(keyNeeded({ provider: "anthropic", keyHint: "…3xQa" }, "anthropic")).toBe(false);
+    expect(keyNeeded({ provider: "anthropic", keyHint: "…3xQa" }, "mistral")).toBe(true);
+  });
+
+  it("offers the 24 UTC hours, labelled in the person's own time", () => {
+    const at = new Date("2026-11-16T12:00:00Z");
+    const lisbon = hourOptions(at, "Europe/Lisbon");
+    expect(lisbon).toHaveLength(24);
+    expect(lisbon[0]).toEqual({ hourUtc: 0, label: "00:00" });
+    expect(localHour(3, at, "Europe/Berlin")).toBe("04:00");
+    // A half-hour zone says so, rather than rounding the hour.
+    expect(hourOptions(at, "Asia/Kolkata").find((o) => o.hourUtc === 21)!.label).toBe("02:30");
+    expect(new Set(hourOptions(at, "Asia/Kolkata").map((o) => o.hourUtc)).size).toBe(24);
+  });
+
+  it("says why runs wait and what fixes it, and who stands by", () => {
+    expect(pausedBanner({ reason: "budget" }, { curator: "archivist", at: "2026-11-15T03:00:00Z", decision: "needed" })).toEqual({
+      head: "Paused: monthly budget reached",
+      standby: "archivist",
+      fix: expect.stringMatching(/Raise the monthly cap/),
+    });
+    expect(pausedBanner({ reason: "auth" }, undefined).standby).toBeUndefined();
+    expect(pausedBanner({ reason: "auth" }, undefined).fix).toMatch(/Save a new key/);
+    expect(pausedBanner({ reason: "credit" }, undefined).fix).toMatch(/credit/);
+    expect(pauseWords("toString").word).toBe("Paused");
+    expect(standbyWords({ curator: "archivist", at: "2026-11-15T03:00:00Z", decision: "hosted" })).toEqual({ curator: "archivist", at: "2026-11-15T03:00:00Z", decision: "Hippocampus had it covered" });
+    expect(standbyWords(undefined)).toBeUndefined();
+  });
+
+  it("puts the route codes in plain words, and keeps the server's own for the rest", () => {
+    expect(curatorError({ status: 400, code: "KEY_AUTH", message: "x" })).toMatchObject({ code: "KEY_AUTH", message: expect.stringMatching(/refused that key/) });
+    expect(curatorError({ status: 409, code: "BUDGET", message: "x" })).toMatchObject({ message: expect.stringMatching(/Raise the monthly cap/) });
+    const missing = { status: 400, code: "KEY_MODELS_MISSING", message: "This key can't use claude-opus-5-5." };
+    expect(curatorError(missing)).toBe(missing);
+    expect(curatorError({ code: "toString", message: "y" })).toMatchObject({ message: "y" });
+    expect(RUN_NOTHING_TO_DO.has("IDLE") && RUN_NOTHING_TO_DO.has("NOT_NEEDED")).toBe(true);
+  });
+
+  it("names why a run stopped, and shows a stop it doesn't know as itself", () => {
+    expect(stopTone("budget")).toMatchObject({ tone: "warn", word: "Paused at the budget" });
+    expect(stopTone("auth").word).toBe("Key refused");
+    expect(stopTone("credit").word).toBe("Out of credit");
+    expect(stopTone("constructor").word).toBe("Stopped: constructor");
+    expect(runCost({ micros: 420_000, calls: 28 })).toEqual({ usd: 0.42, calls: 28 });
+    expect(runCost(undefined)).toBeUndefined();
   });
 });
 

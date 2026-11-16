@@ -24,9 +24,9 @@ Hippocampus absorbs the Archivist's job (canonical facts, disputes). The Game Ma
 | Topic | Decision |
 | --- | --- |
 | Clients | Any agent that speaks MCP. Local tools that can't may write inbox files instead |
-| Curation | Hybrid: fast inbox writes, then an async curator. The curator is either `hippo sleep` with a model of your choice, or an agent the human trusts, answering the server's questions over MCP |
+| Curation | Hybrid: fast inbox writes, then an async curator. The curator is `hippo sleep` with a model of your choice, an agent the human trusts answering the server's questions over MCP, or, on the hosted app, the Worker itself with the owner's own model key (§4c) |
 | Deployment | The vault repo (GitHub or GitLab) is the source of truth. Two runtimes: the local CLI, and a hosted multi-user app on Cloudflare (a GitHub App or a GitLab OAuth connection, one Durable Object per vault) |
-| Curator LLM | Provider-agnostic. Locally: LM Studio or Ollama (OpenAI-compatible) by default; Anthropic and xAI are supported. Hosted: whichever agent holds the curator key |
+| Curator LLM | Provider-agnostic. Locally: LM Studio or Ollama (OpenAI-compatible) by default; Anthropic, xAI and Mistral are supported. Hosted: whichever agent holds the curator key, or the owner's Anthropic or Mistral key, a model per step |
 | Sensitive data | Private vault repo. Secret fields are encrypted in an `age` sidecar and gated by scope |
 | Disputes | Resolved by lane authority, then corroboration, then recency. Anything still ambiguous becomes a dispute note for the human to rule on |
 | Memory scope | One shared world; no private per-agent memory |
@@ -205,7 +205,7 @@ If an episode fails, it stays in the inbox for the next night. The review's fron
 
 ## 4b. Agent-run sleep (the relay)
 
-The hosted app has no model of its own. Instead, an agent holding a **curator key** (scope `curate`) runs sleep through `SleepRelay` (`packages/curator/src/relay.ts`):
+Unless its owner turns on hosted curation (§4c), the hosted app has no model of its own. Instead, an agent holding a **curator key** (scope `curate`) runs sleep through `SleepRelay` (`packages/curator/src/relay.ts`):
 
 - `sleep_start` opens a run (one at a time per vault, held by a 15-minute lease that every answer renews) and returns the first questions. Each question is one curator LLM call from the pipeline above: `system`, `prompt` and a JSON Schema.
 - The agent answers with `sleep_answer`. The server validates each answer with the same zod schemas, records it, and replays the current unit (the rulings, one episode, or the finish) from a fresh vault until the unit commits. If the vault moved underneath, only questions whose inputs changed are asked again.
@@ -214,6 +214,17 @@ The hosted app has no model of its own. Instead, an agent holding a **curator ke
 - Secret values consolidated earlier in a run are kept only as seeded fingerprints, so later units can be checked for leaks without holding the value.
 
 `SLEEP_PROCEDURE` is the shared instruction text: served as the MCP `sleep` prompt and mirrored by the Claude Code plugin's `/hippocampus:sleep` skill. `hippo serve` offers the same tools locally. A vault on the hosted app can also turn on an Actions curator: a `sleep.yml` workflow in the vault repo that runs Claude nightly with the curator key, through MCP only, without checking the repo out.
+
+## 4c. Hosted curation with the owner's key
+
+On an instance with `HIPPO_TOKEN_KEY` (and `HIPPO_HOSTED_CURATOR` not `off`), an owner can have the Worker run sleep itself (Setup → Nightly curation → "Hippocampus runs it with your key"):
+
+- **The key.** The account's Anthropic or Mistral API key is checked with the provider (listing its models, which costs nothing), sealed in the registry under `HIPPO_TOKEN_KEY` and bound to the account (`llm-access.ts`). Only its last four characters come back. Requests go to the provider's own API; there is no base-URL field.
+- **Models.** Each curator step (mentions, match, claims, summary) has its own model (`stepLLM`). The default mix is the curator eval's recommendation (`RECOMMENDED` in `pricing.ts`), per step the cheapest model that passes the step's hard gates within a margin of the best; until the eval has run, the owner picks one model for every step. A model without a row in the dated price table can't be metered, so it is refused.
+- **The budget.** Before every call, `meter.ts` reserves its worst case (the whole prompt at the dearest input rate, and every output token the step allows), then settles to the reported usage. The account's ledger (`llm-spend.ts`) reserves under the month's cap in one statement, so an account's vaults can't overspend together, and checks the per-run cap. Reaching the month's cap stops the run (`aborted` with `stop: "budget"`; what it committed stays, the rest waits in the inbox) and pauses the account until the next month or a higher cap. A refused key or spent credit pauses it until a new key is saved. A memory too large for the per-run cap is passed over until the cap is raised.
+- **The night.** Each vault has its own hour (UTC; the dashboard shows it in the owner's time). The vault's Durable Object opens a `hosted` run from its alarm and drives it with `autopilot` one slice at a time; the object's one alarm is shared by every job (`alarms.ts`). **Run now** starts one at once, set-aside memories included.
+- **The standby.** An agent curator can stand by. While hosted curation is on, unpaused and keyed, and no memory has waited 36 hours, `sleep_start` answers `not_needed` (no run, no quota). Otherwise the standby runs. Each check-in is recorded (curator and time only) and shown on the dashboard, and every connection's `onboard` ends with who curates.
+- **Privacy.** Every new memory, secret and confidential ones included, goes to the chosen provider under the owner's key. Members' agents add to the inbox the owner's key pays for; the monthly cap is what bounds it. See [SECURITY.md](SECURITY.md).
 
 ## 5. Secrets
 
@@ -270,7 +281,8 @@ A pnpm monorepo: `packages/*` are libraries (core model and service, curator, MC
 | GitHub API store | ✅ | `packages/store-github`: reads pinned to one commit, blob cache by sha, each flush is one commit via the Git Data API, rebases past unrelated pushes, `StoreConflictError` on same-file races. `hippo --github owner/repo` |
 | Distribution | ✅ | npm package (tsup bundle + template + seeds), vault format version + `hippo migrate`, privacy guard + pre-commit hook, CI for this repo and for vaults |
 | Hosted app | ✅ | `apps/worker`: a GitHub App (Contents and Workflows read/write, Metadata read) with user authorization on install; D1 registry (accounts and users, vaults, members and invites, device connects, sealed GitLab tokens, hashed keys of kind `agent`, `curator` or `bound`); waitlist and admin approval; bootstrap of an empty private repo, or adoption of an existing vault (only missing guardrail files are added); a `VaultHost` Durable Object per vault with installation tokens stored in its SQLite, an audited single writer, the search index, a SQLite blob cache (inbox blobs stay in memory), the sleep run store and alarms; quotas; rate limits; webhooks that disconnect a vault when the app is uninstalled or the repo goes public; account deletion |
-| Agent-run sleep | ✅ | `SleepRelay` behind the `curate` scope: questions and schema-checked answers, leased runs, replay on conflict. Served by the hosted app and `hippo serve`; the plugin skill and the Actions curator drive it |
+| Agent-run sleep | ✅ | `SleepRelay` behind the `curate` scope: questions and schema-checked answers, leased runs, replay on conflict. Served by the hosted app and `hippo serve`; the plugin skill and the Actions curator drive it. A standby gate answers `not_needed` while hosted curation is healthy |
+| Hosted curation | ✅ | The owner's Anthropic or Mistral key, sealed in the registry; a model per step from a dated price table; every call reserved at its worst case under a monthly and a per-run cap; a nightly hour per vault and Run now, driven from the vault's Durable Object alarm; the curator eval (`packages/curator/src/eval/`) recommends the mix. `RECOMMENDED` stays empty until the eval has been run with real keys |
 | Audit | ✅ | `auditChanges` per actor (agent, curator, human, bootstrap, migration) before every hosted commit and every `hippo sleep` flush: human-only fields, goal-scope limits, confidential leaks, migrations that only move notes; `Hippo-*` commit trailers; `hippo audit` over git history, daily in vault CI |
 | Introductions | ✅ | `introduce` writes the agent's own card with no authority; the human sets authority on the dashboard. Older `inbox/<agent>/_introduction-*.md` files still approve or dismiss |
 | Semantic recall | ✅ | `packages/embeddings`: `Embedder` adapters for OpenAI-compatible servers (LM Studio, Ollama, hosted) and Workers AI, opt-in via `HIPPO_EMBED_*`. The index stores one normalized vector per doc version and model, mirrored in memory, and embeds only what changed. Search fuses FTS and cosine hits with reciprocal rank fusion, then lets the top hits lift related candidates (never above themselves). Embedder failures fall back to keywords |

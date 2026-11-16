@@ -1,7 +1,7 @@
 // Session Zero on the hosted app, its pure parts: the onboarding steps and when each unlocks, the
 // repo picker's verdicts, the campaign draft, and the curator recipes. No DOM here, so it is
 // unit-tested in hosted.test.ts.
-import type { HostedAgentClaim, HostedConnectedApp, HostedInitRequest, HostedKeyInfo, Snippet } from "@hippocampus/dashboard";
+import type { HostedAgentClaim, HostedConnectedApp, HostedCuratorStatus, HostedInitRequest, HostedKeyInfo, HostedLlmProvider, HostedLlmStep, HostedStepMix, HostedVaultCurator, Snippet } from "@hippocampus/dashboard";
 import { accessOf } from "@hippocampus/dashboard/connect";
 import type { IconName } from "../../lib/icons.ts";
 import type { HostedRepoView, HostedStatus } from "../../lib/types.ts";
@@ -195,8 +195,10 @@ export const statusKey = (adding: boolean) => (adding ? "/setup/status?add" : "/
 
 /** The status as a new vault's setup sees it: nothing of the vault the tab shows, so the wizard starts fresh. */
 export function forNewVault(s: HostedStatus): HostedStatus {
-  const { vault: _vault, keys: _keys, curatorActions: _actions, ...rest } = s;
-  return { ...rest, items: s.items.filter((i) => i.id === "access") };
+  const { vault: _vault, keys: _keys, curatorActions: _actions, hostedCurator, ...rest } = s;
+  // The account's key and caps stay; the shown vault's schedule doesn't.
+  const account = hostedCurator ? (({ vault: _v, ...a }) => a)(hostedCurator) : undefined;
+  return { ...rest, ...(account ? { hostedCurator: account } : {}), items: s.items.filter((i) => i.id === "access") };
 }
 
 /** How many of these vaults the person owns (a vault without a role is theirs: an older server). */
@@ -226,7 +228,8 @@ const appsHere = (ctx: HostedContext) => (ctx.apps ?? []).filter((a) => !a.vault
 export const hasAgent = (ctx: HostedContext) => hasKey(ctx.status.keys, ["agent", "bound"]) || appsHere(ctx).length > 0;
 
 /** Someone curates: a curator key, the Actions workflow, or a sign-in app the owner let curate. */
-export const hasCurator = (ctx: HostedContext) => hasKey(ctx.status.keys, ["curator"]) || !!ctx.status.curatorActions || appsHere(ctx).some((a) => a.curate);
+export const hasCurator = (ctx: HostedContext) =>
+  hasKey(ctx.status.keys, ["curator"]) || !!ctx.status.curatorActions || !!ctx.status.hostedCurator?.vault?.enabled || appsHere(ctx).some((a) => a.curate);
 
 /** The picked repo is one the installation can still see. */
 export function pickedRepo(ctx: HostedContext): boolean {
@@ -431,6 +434,181 @@ export function actionsSnippets(repo: string, mcpUrl: string): Snippet[] {
     },
   ];
 }
+
+// ── Hosted curation (the owner's model key) ────────────────────────────────
+
+export type CuratorModel = HostedCuratorStatus["models"][number];
+
+/** The curator's four model steps, in the order a memory meets them, with what each does in plain words. */
+export const LLM_STEPS: readonly { id: HostedLlmStep; word: string; help: string }[] = [
+  { id: "mentions", word: "Mentions", help: "finds who and what a memory is about" },
+  { id: "match", word: "Matching", help: "matches those to the vault's notes" },
+  { id: "claims", word: "Facts", help: "reads the facts and relations out of it" },
+  { id: "summary", word: "Summaries", help: "rewrites the summaries of changed notes" },
+];
+
+export const PROVIDER_WORDS: Record<HostedLlmProvider, string> = { anthropic: "Anthropic", mistral: "Mistral" };
+
+/**
+ * Output tokens a hosted call may write, per step: a copy of `STEP_MAX_OUTPUT` in
+ * packages/curator/src/pricing.ts, which the dashboard can't import. Keep the two equal.
+ */
+export const STEP_MAX_OUTPUT: Record<HostedLlmStep, number> = { mentions: 2048, match: 512, claims: 4096, summary: 1024 };
+
+/** The prompt size the estimate assumes for every call: generous, so the estimate errs high. */
+export const ESTIMATE_PROMPT_TOKENS = 4000;
+
+/** The estimate's assumptions, shown next to it. */
+export const ESTIMATE_ASSUMES = `one call per step for every memory, each reading ${ESTIMATE_PROMPT_TOKENS.toLocaleString("en-US")} tokens and writing as much as the step may. Real runs usually cost less.`;
+
+export const uniformMix = (model: string): HostedStepMix => ({ mentions: model, match: model, claims: model, summary: model });
+
+/** Whether every step uses the same model. */
+export const isUniform = (mix: HostedStepMix) => LLM_STEPS.every((s) => mix[s.id] === mix.mentions);
+
+/** A provider's models, cheapest first. */
+export function modelsOf(models: readonly CuratorModel[], provider: HostedLlmProvider): CuratorModel[] {
+  return models.filter((m) => m.provider === provider).sort((a, b) => a.inputUsdPerMTok + a.outputUsdPerMTok - (b.inputUsdPerMTok + b.outputUsdPerMTok));
+}
+
+/** The providers the instance can price, in the order it lists them. */
+export const curatorProviders = (models: readonly CuratorModel[]): HostedLlmProvider[] => [...new Set(models.map((m) => m.provider))];
+
+/**
+ * The mix the form starts from for a provider: the saved one, else the eval's recommendation, else the
+ * provider's cheapest model for every step. `recommended` says whether the eval chose it.
+ */
+export function startingMix(c: Pick<HostedCuratorStatus, "provider" | "steps" | "recommended" | "models">, provider: HostedLlmProvider): { mix: HostedStepMix; recommended: boolean } | undefined {
+  const rec = c.recommended[provider];
+  if (c.provider === provider && c.steps) return { mix: c.steps, recommended: !!rec && LLM_STEPS.every((s) => rec[s.id] === c.steps![s.id]) };
+  if (rec) return { mix: rec, recommended: true };
+  const cheapest = modelsOf(c.models, provider)[0];
+  return cheapest ? { mix: uniformMix(cheapest.model), recommended: false } : undefined;
+}
+
+/**
+ * What 100 memories cost at most, in USD, under `ESTIMATE_ASSUMES`. Undefined when a step's model has
+ * no price (a run would refuse it anyway).
+ */
+export function estimatePer100(mix: HostedStepMix, models: readonly CuratorModel[], provider: HostedLlmProvider): number | undefined {
+  let usd = 0;
+  for (const s of LLM_STEPS) {
+    const m = models.find((x) => x.provider === provider && x.model === mix[s.id]);
+    if (!m) return undefined;
+    // USD per million tokens, so tokens × rate / 1e6 per call.
+    usd += (ESTIMATE_PROMPT_TOKENS * m.inputUsdPerMTok + STEP_MAX_OUTPUT[s.id] * m.outputUsdPerMTok) / 1e6;
+  }
+  return usd * 100;
+}
+
+/** Dollars for people: cents under $100, whole dollars above, and "under $0.01" for crumbs. */
+export function money(usd: number): string {
+  if (usd > 0 && usd < 0.01) return "under $0.01";
+  return usd >= 100 ? `$${Math.round(usd).toLocaleString("en-US")}` : `$${usd.toFixed(2)}`;
+}
+
+/** A model's price as it shows beside it. */
+export const priceWords = (m: CuratorModel) => `$${m.inputUsdPerMTok} in / $${m.outputUsdPerMTok} out per M tokens`;
+
+export interface CapsDraft {
+  month: string;
+  run: string;
+}
+
+/** Why the caps can't be saved yet. A run's cap above the month's would never bind. */
+export function capProblems(d: CapsDraft): { month?: string; run?: string } {
+  const month = Number(d.month);
+  const run = Number(d.run);
+  const bad = (n: number, raw: string) => (!raw.trim() || !Number.isFinite(n) ? "A number of US dollars." : n <= 0 ? "More than $0." : n > 10_000 ? "Up to $10,000." : undefined);
+  return { month: bad(month, d.month), run: bad(run, d.run) ?? (Number.isFinite(month) && run > month ? "At most the monthly cap." : undefined) };
+}
+
+/** Whether a save must carry a key: the first save, and any save that changes the provider. */
+export const keyNeeded = (c: Pick<HostedCuratorStatus, "provider" | "keyHint">, provider: HostedLlmProvider) => !c.keyHint || c.provider !== provider;
+
+/**
+ * The 24 nightly hours, stored as UTC, each labelled in the person's own time (`timeZone`, else the
+ * browser's), sorted by that time. A half-hour zone shows 03:30 rather than pretending to 03:00.
+ */
+export function hourOptions(at: Date, timeZone?: string): { hourUtc: number; label: string }[] {
+  const fmt = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", ...(timeZone ? { timeZone } : {}) });
+  const day = Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate());
+  return Array.from({ length: 24 }, (_, h) => ({ hourUtc: h, label: fmt.format(new Date(day + h * 3600_000)) })).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** One UTC hour in local time, e.g. `04:00`. */
+export const localHour = (hourUtc: number, at: Date, timeZone?: string) => hourOptions(at, timeZone).find((o) => o.hourUtc === hourUtc)?.label ?? `${String(hourUtc).padStart(2, "0")}:00 UTC`;
+
+/** Why hosted runs wait, and what fixes it. */
+export const PAUSE_WORDS: Record<"auth" | "credit" | "budget", { word: string; fix: string }> = {
+  auth: { word: "Paused: the provider refused the key", fix: "Save a new key below. Runs start again with the next night." },
+  credit: { word: "Paused: the provider's credit ran out", fix: "Add credit at the provider, or save a key that has some. Saving a key starts runs again." },
+  budget: { word: "Paused: monthly budget reached", fix: "Raise the monthly cap below, or wait for the next month: the budget starts again on the 1st (UTC)." },
+};
+
+/** A pause this dashboard doesn't know (a newer Worker's) reads as a plain pause. */
+export const pauseWords = (reason: string) =>
+  Object.hasOwn(PAUSE_WORDS, reason) ? PAUSE_WORDS[reason as keyof typeof PAUSE_WORDS] : { word: "Paused", fix: "Save the settings again, or ask the operator." };
+
+/** The banner when hosted curation is paused: why, who covers tonight if anyone stands by, and the fix. */
+export function pausedBanner(paused: { reason: string }, standby: HostedVaultCurator["standby"]): { head: string; standby?: string; fix: string } {
+  const w = pauseWords(paused.reason);
+  return { head: w.word, ...(standby ? { standby: standby.curator } : {}), fix: w.fix };
+}
+
+/** The standby line: who stands by and when they last checked in. Undefined means nobody does yet. */
+export function standbyWords(standby: HostedVaultCurator["standby"]): { curator: string; at: string; decision: string } | undefined {
+  if (!standby) return undefined;
+  const decision = standby.decision === "needed" ? "it ran" : standby.decision === "hosted" ? "Hippocampus had it covered" : standby.decision === "idle" ? "nothing was waiting" : standby.decision;
+  return { curator: standby.curator, at: standby.at, decision };
+}
+
+/** The hosted routes' error codes in plain words; anything else keeps the server's own words. */
+const CURATOR_ERRORS: Record<string, string> = {
+  KEY_AUTH: "The provider refused that key. Check it and paste it again.",
+  KEY_UNREACHABLE: "The provider couldn't be reached to check the key. Try again in a minute.",
+  UNAVAILABLE: "This Hippocampus doesn't run curation with your own key right now.",
+  NO_KEY: "Save a model key first.",
+  NOT_READY: "This vault isn't ready yet.",
+  OFF: "The operator has switched hosted curation off for now.",
+  NO_ACCOUNT: "This vault's account wasn't found.",
+  PAUSED: "Hosted curation is paused. See what to do above.",
+  BUDGET: "This month's budget is spent. Raise the monthly cap, or wait for the next month.",
+  UNPRICED: "A chosen model has no price, so it can't be metered. Pick the models again and save.",
+  BUSY: "Another curator's run is open. Try again when it finishes.",
+  SLEEP_LIMIT: "This vault has had its runs for today. Try again tomorrow.",
+  VAULT_UPGRADE_NEEDED: "The vault needs an upgrade before it can be curated. See Setup & health.",
+  VAULT: "The vault couldn't be read just now. Try again in a minute.",
+};
+
+/** Codes Run now answers that aren't failures: nothing needed doing. */
+export const RUN_NOTHING_TO_DO = new Set(["IDLE", "NOT_NEEDED"]);
+
+/** An API error from a hosted curation route, reworded. The key is never part of it: the server never echoes it. */
+export function curatorError(err: unknown): unknown {
+  const e = (typeof err === "object" && err ? err : {}) as { status?: unknown; code?: unknown; message?: unknown };
+  const code = typeof e.code === "string" ? e.code : "";
+  // KEY_MODELS_MISSING and INVALID name the models or the field: the server's words say more.
+  const words = Object.hasOwn(CURATOR_ERRORS, code) ? CURATOR_ERRORS[code] : undefined;
+  return words ? { status: e.status, code, message: words } : err;
+}
+
+/** A run's stop reason as a tag: why a hosted run ended early. One this dashboard doesn't know shows as itself. */
+export const STOP_TONE: Record<"budget" | "auth" | "credit" | "rate_limit" | "provider", { tone: BadgeState; word: string; help: string }> = {
+  budget: { tone: "warn", word: "Paused at the budget", help: "The run reached its cap or the month's. What it committed stays; the rest waits for the next run." },
+  auth: { tone: "error", word: "Key refused", help: "The provider refused the model key. Save a new one under Nightly curation." },
+  credit: { tone: "error", word: "Out of credit", help: "The provider's credit ran out. Add credit there, or save another key." },
+  rate_limit: { tone: "warn", word: "Rate limited", help: "The provider was rate limiting. The rest waits for the next run." },
+  provider: { tone: "error", word: "Provider failed", help: "The model provider failed. The rest waits for the next run." },
+};
+
+export function stopTone(stop: string): { tone: BadgeState; word: string; help: string } {
+  const known = Object.hasOwn(STOP_TONE, stop) ? STOP_TONE[stop as keyof typeof STOP_TONE] : undefined;
+  return known ?? { tone: "na", word: `Stopped: ${stop.slice(0, 40)}`, help: "What it committed stays; the rest waits in the inbox." };
+}
+
+/** A run's cost in dollars, from the relay's micro-dollars. */
+export const runCost = (cost: { micros: number; calls: number } | undefined) => (cost ? { usd: cost.micros / 1e6, calls: cost.calls } : undefined);
 
 // ── Words for states that aren't setup items ───────────────────────────────
 

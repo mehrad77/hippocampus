@@ -9,7 +9,7 @@ import type { CuratorStatus } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Empty, RelTime, SkeletonPanel } from "../../ui/Parts.tsx";
 import { ConfirmDialog, ErrorCallout, Facts, ToneTag, useAction } from "./common.tsx";
-import { outcomeTone } from "./hosted.ts";
+import { money, outcomeTone, runCost, stopTone } from "./hosted.ts";
 
 type Run = NonNullable<CuratorStatus["run"]>;
 type Past = CuratorStatus["history"][number];
@@ -123,12 +123,15 @@ function History({ runs, commits }: { runs: Past[]; commits?: { url: string; hos
             <th scope="col">Consolidated</th>
             <th scope="col">Failed</th>
             <th scope="col">Skipped</th>
+            <th scope="col">Cost</th>
             <th scope="col">Commits</th>
           </tr>
         </thead>
         <tbody>
           {runs.map((r) => {
-            const o = outcomeTone(r.outcome);
+            // A run that stopped early says why (the budget, a refused key) rather than only "Aborted".
+            const o = r.stop ? stopTone(r.stop) : outcomeTone(r.outcome);
+            const cost = runCost(r.cost);
             return (
               <tr key={r.id}>
                 <td data-label="When">
@@ -143,7 +146,11 @@ function History({ runs, commits }: { runs: Past[]; commits?: { url: string; hos
                 </td>
                 <td data-label="Consolidated">{r.consolidated}</td>
                 <td data-label="Failed">{r.failed ? <strong className="sz-danger-text">{r.failed}</strong> : 0}</td>
-                <td data-label="Skipped">{r.skipped}</td>
+                <td data-label="Skipped">
+                  {r.skipped}
+                  {r.tooLarge?.length ? <span className="small muted"> ({r.tooLarge.length} too large for the run's cap)</span> : null}
+                </td>
+                <td data-label="Cost">{cost ? <span title={`${cost.calls} model calls`}>{money(cost.usd)}</span> : <span className="muted">—</span>}</td>
                 <td data-label="Commits">
                   {r.commits ? (
                     commits ? (
@@ -173,7 +180,7 @@ export function CuratorLine() {
   if (!s.data) return null;
   const run = s.data.run;
   const last = newestFirst(s.data.history)[0];
-  const o = last ? outcomeTone(last.outcome) : undefined;
+  const o = last ? (last.stop ? stopTone(last.stop) : outcomeTone(last.outcome)) : undefined;
   return (
     <p className="hz-curline small" role="status">
       <Icon name="moonStars" size={16} />

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { hostedDemo } from "./demo-hosted.ts";
 import { VAULT_HEADER, type AdminReferrals, type HostedInvites, type HostedMembers, type HostedNewInvite, type HostedSetupStatus, type HostedVaults } from "./setup.ts";
 import type { DashboardSource } from "./source.ts";
+// The demo's copy of the price list, checked against the real one.
+import { PRICES } from "../../curator/src/pricing.ts";
 
 const ORIGIN = "http://127.0.0.1:4339";
 const source = { info: async () => ({ mode: "demo", vault: { kind: "memory" }, campaign: "lisbon-arc", human: "player", actor: { kind: "human", id: "player" } }) } as unknown as DashboardSource;
@@ -224,6 +226,62 @@ describe("hosted demo", () => {
     expect((await api("account/delete", { confirm: "someone" })).body).toMatchObject({ code: "CONFIRM" });
     expect((await api("account/delete", { confirm: "@player" })).body).toEqual({ ok: true });
     expect((await api("session")).status).toBe(401);
+  });
+
+  it("curates with the owner's key: write-only, capped, scheduled, and run now until the budget pauses it", async () => {
+    const { api } = client();
+    await api("__demo/stage?to=ready");
+    const start = ((await api("setup/status")).body as HostedSetupStatus).hostedCurator!;
+    expect(start).toMatchObject({ available: true, spentThisMonthUsd: 0, vault: { enabled: false, standby: { curator: "archivist", decision: "needed" } } });
+    expect(start.keyHint).toBeUndefined();
+    expect(start.recommended.mistral).toBeUndefined();
+    // Nothing runs, or gets an hour, before a key is saved.
+    expect((await api("setup/curator-llm/vault", { hourUtc: 2 })).body).toMatchObject({ code: "NO_KEY" });
+    expect((await api("setup/curator-llm/run", {})).body).toMatchObject({ code: "NO_KEY" });
+    expect((await api("setup/curator-llm", { provider: "anthropic", monthCapUsd: 0.5, runCapUsd: 0.5 })).body).toMatchObject({ code: "INVALID" });
+    expect((await api("setup/curator-llm", { provider: "anthropic", model: "gpt-x", key: "sk-ant-demo-0000", monthCapUsd: 0.5, runCapUsd: 0.5 })).body).toMatchObject({ code: "INVALID" });
+    expect((await api("setup/curator-llm", { provider: "anthropic", key: "sk-ant-refused", monthCapUsd: 0.5, runCapUsd: 0.5 })).body).toMatchObject({ code: "KEY_AUTH" });
+
+    const key = "sk-ant-demo-secret-7Hq2";
+    const saved = await api("setup/curator-llm", { provider: "anthropic", key, monthCapUsd: 0.5, runCapUsd: 0.5 });
+    expect(saved.body).toMatchObject({ provider: "anthropic", keyHint: "…7Hq2", monthCapUsd: 0.5, runCapUsd: 0.5, steps: { claims: "claude-sonnet-5-5" } });
+    // The key never comes back, in any answer.
+    const status = await api("setup/status");
+    for (const r of [saved, status]) expect(JSON.stringify(r.body)).not.toContain(key);
+    // Saving again keeps the key; a new provider needs its own.
+    expect((await api("setup/curator-llm", { provider: "anthropic", model: "claude-haiku-5-5", monthCapUsd: 0.5, runCapUsd: 0.5 })).body).toMatchObject({ keyHint: "…7Hq2", steps: { claims: "claude-haiku-5-5" } });
+    expect((await api("setup/curator-llm", { provider: "mistral", model: "mistral-small-2603", monthCapUsd: 0.5, runCapUsd: 0.5 })).body).toMatchObject({ code: "INVALID" });
+
+    expect((await api("setup/curator-llm/vault", { hourUtc: 24 })).body).toMatchObject({ code: "INVALID" });
+    expect((await api("setup/curator-llm/vault", { hourUtc: 2 })).body).toMatchObject({ enabled: true, hourUtc: 2, nextRun: expect.any(String) });
+    const ran = (await api("setup/curator-llm/run", {})).body as { run: string };
+    expect(ran.run).toMatch(/^run-h/);
+    const after = ((await api("setup/status")).body as HostedSetupStatus).hostedCurator!;
+    expect(after.spentThisMonthUsd).toBeCloseTo(0.37);
+    expect(after.vault?.lastRun).toMatchObject({ outcome: "done", consolidated: 7, costUsd: 0.37 });
+    // The second run reaches the month's cap: it stops there, and the account pauses.
+    await api("setup/curator-llm/run", {});
+    const history = ((await api("curator")).body as { history: { curator: string; outcome: string; stop?: string; cost?: { micros: number } }[] }).history;
+    expect(history[0]).toMatchObject({ curator: "hosted", outcome: "aborted", stop: "budget", cost: { micros: 500_000 - 370_000 } });
+    expect(((await api("setup/status")).body as HostedSetupStatus).hostedCurator).toMatchObject({ spentThisMonthUsd: 0.5, paused: { reason: "budget" } });
+    expect((await api("setup/curator-llm/run", {})).body).toMatchObject({ code: "BUDGET" });
+    // Raising the cap lifts the pause; a refused key pauses it until a new key is saved.
+    expect((await api("setup/curator-llm", { provider: "anthropic", model: "claude-haiku-5-5", monthCapUsd: 5, runCapUsd: 0.5 })).body).not.toHaveProperty("paused");
+    await api("__demo/curator?pause=auth&standby=claude-code-curator");
+    expect(((await api("setup/status")).body as HostedSetupStatus).hostedCurator).toMatchObject({ paused: { reason: "auth" }, vault: { standby: { curator: "claude-code-curator", decision: "needed" } } });
+    expect((await api("setup/curator-llm/run", {})).body).toMatchObject({ code: "PAUSED" });
+    expect((await api("setup/curator-llm", { provider: "anthropic", model: "claude-haiku-5-5", key: "sk-ant-demo-new-9kLm", monthCapUsd: 5, runCapUsd: 0.5 })).body).toMatchObject({ keyHint: "…9kLm" });
+    await api("__demo/curator?standby=none");
+    expect(((await api("setup/status")).body as HostedSetupStatus).hostedCurator?.vault?.standby).toBeUndefined();
+    expect((await api("setup/curator-llm/vault", { hourUtc: null })).body).toMatchObject({ enabled: false, lastRun: { stop: "budget" } });
+    expect((await api("setup/curator-llm/vault", { hourUtc: null })).body).not.toHaveProperty("hourUtc");
+  });
+
+  it("prices the same models as hosted curation", async () => {
+    const { api } = client();
+    await api("__demo/stage?to=ready");
+    const models = ((await api("setup/status")).body as HostedSetupStatus).hostedCurator!.models;
+    expect(models).toEqual(PRICES.map((p) => ({ provider: p.provider, model: p.model, inputUsdPerMTok: p.input, outputUsdPerMTok: p.output })));
   });
 
   it("leaves everything else to the regular demo API", async () => {

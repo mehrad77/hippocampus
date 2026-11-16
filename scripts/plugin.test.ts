@@ -65,11 +65,11 @@ describe("the Claude Code plugin", () => {
     expect(server.headers).toEqual({ Authorization: "Bearer ${HIPPO_KEY}" });
   });
 
-  it("sets sleep up in the same three places as the dashboard, without ever asking for a key", () => {
+  it("sets sleep up in the same places as the dashboard, without ever asking for a key", () => {
     const skill = read(`${pluginDir}/skills/sleep-setup/SKILL.md`);
-    // The dashboard's choices (packages/dashboard/src/connect.ts), by their titles.
-    const places = [...read("packages/dashboard/src/connect.ts").matchAll(/id: "(actions|schedule|elsewhere)",\s+title: "([^"]+)"/g)].map((m) => m[2]!);
-    expect(places).toEqual(["One of your agents", "A script or cron line", "GitHub Actions"]);
+    // The dashboard's choices (packages/dashboard/src/connect.ts), by their titles: Hippocampus's own, then the three an agent sets up.
+    const places = [...read("packages/dashboard/src/connect.ts").matchAll(/id: "(hosted|actions|schedule|elsewhere)",\s+title: "([^"]+)"/g)].map((m) => m[2]!);
+    expect(places).toEqual(["Hippocampus runs it with your key", "One of your agents", "A script or cron line", "GitHub Actions"]);
     for (const p of places) expect(skill, `sleep-setup offers ${p}`).toContain(`**${p}`);
     expect(skill).toMatch(/Never ask for a key in the chat/);
     expect(skill).not.toMatch(/hippo_[A-Za-z0-9_-]{20,}/);

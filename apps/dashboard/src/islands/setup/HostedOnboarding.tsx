@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CURATION_PLACES } from "@hippocampus/dashboard/connect";
 import { postJson } from "../../lib/api.ts";
 import { invalidate, useResource } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
@@ -878,7 +879,7 @@ function AgentStep({ status }: HostedStepProps) {
 function CurateStep({ status, hostedCuration }: HostedStepProps) {
   const { t, v } = useTerms();
   const [choice, setChoice] = useState<"hosted" | "agent" | "advanced">(hostedCuration ? "hosted" : "agent");
-  const options = [...(hostedCuration ? [["hosted", "Hippocampus runs it with your key"] as const] : []), ["agent", "One of my agents"] as const, ["advanced", "Advanced: cron or Actions"] as const];
+  const options = [...(hostedCuration ? [["hosted", CURATION_PLACES[0].title] as const] : []), ["agent", "One of my agents"] as const, ["advanced", "Advanced: cron or Actions"] as const];
   return (
     <div className="stack">
       <p className="small">

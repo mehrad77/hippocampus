@@ -201,6 +201,68 @@
   min-width: 0;
 }
 
+/* ── Hosted curation (the owner's model key) ──────────────────────────── */
+
+.hz-hosted p {
+  margin: 0;
+}
+
+.hz-hosted__notes,
+.hz-hosted__mix {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hz-hosted__notes li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.hz-hosted__notes svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--gold);
+}
+
+.hz-hosted__mix {
+  gap: var(--space-1);
+  padding-left: var(--space-5);
+}
+
+.hz-hosted__spend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+
+.hz-hosted__spend progress {
+  flex: 1 1 10rem;
+  max-width: 20rem;
+  height: 8px;
+  accent-color: var(--accent);
+}
+
+.hz-hosted .sz-fieldset select {
+  max-width: 100%;
+}
+
+.hz-hosted__rule {
+  width: 100%;
+  margin: var(--space-1) 0;
+  border: 0;
+  border-top: 1px solid var(--rule);
+}
+
+:root:not([data-style="codex"]) .hz-hosted__notes svg {
+  color: var(--link);
+}
+
 /* ── Admin ────────────────────────────────────────────────────────────── */
 
 .hz-chip {

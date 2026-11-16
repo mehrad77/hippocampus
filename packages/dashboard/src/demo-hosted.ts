@@ -1,7 +1,7 @@
 import { isConnectApp, keySnippets } from "./connect.ts";
 import { demoPresets } from "./demo-setup.ts";
 import { HttpError, errorResponse, json, readJson, securityHeaders } from "./http.ts";
-import { VAULT_HEADER, byRecentPush, type AdminReferrals, type HostedDeviceRequest, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedAgentClaim, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem } from "./setup.ts";
+import { VAULT_HEADER, byRecentPush, type AdminReferrals, type HostedDeviceRequest, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedCuratorRunResult, type HostedCuratorStatus, type HostedLlmProvider, type HostedStepMix, type HostedVaultCurator, type HostedAgentClaim, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem } from "./setup.ts";
 import { capabilities, readOnlySource, type CuratorStatus, type DashboardSource, type SessionInfo } from "./source.ts";
 
 // The hosted app for `astro dev` (HIPPO_DEMO_HOSTED=1): an in-memory stand-in for the Worker's
@@ -23,6 +23,11 @@ import { capabilities, readOnlySource, type CuratorStatus, type DashboardSource,
 // `GET <base>/api/__demo/device` plays an agent starting device sign-in (`?access=curate` for a
 // curator): it opens the approval page with the request's code, and approving makes the connection,
 // which calls in a few seconds later.
+//
+// Hosted curation (Setup → Nightly curation) answers with a fake spend, a made-up recommended mix
+// and instant runs; a key with "refused" in it is refused. `GET <base>/api/__demo/curator` plays its
+// states: `?pause=budget|auth|credit|none` pauses it (saving a pretend key first if there is none),
+// and `?standby=<curator>|none` records a standby curator's check-in, or forgets it.
 
 export type HostedDemoStage = "signed-out" | "waitlisted" | "requested" | "denied" | "fresh" | "approved" | "installed" | "disconnected" | "bootstrapping" | "ready";
 
@@ -65,6 +70,26 @@ const vaultId = (n: number) => `01J9Z8D3M0V${String(n).padStart(15, "0")}`;
 export const DEMO_STAGES: readonly HostedDemoStage[] = ["signed-out", "waitlisted", "requested", "denied", "fresh", "approved", "installed", "disconnected", "bootstrapping", "ready"];
 /** Device sign-in's code alphabet (consonants), as the Worker's. */
 const CODE_LETTERS = "BCDFGHJKLMNPQRSTVWXZ";
+
+/** The name hosted runs carry in the run history (`HOSTED_CURATOR` in packages/curator/src/relay.ts). */
+const HOSTED = "hosted";
+const DEMO_STEPS = ["mentions", "match", "claims", "summary"] as const;
+/** The models hosted curation can price: a copy of packages/curator/src/pricing.ts's rows, which the dashboard can't import. */
+const DEMO_MODELS: HostedCuratorStatus["models"] = [
+  { provider: "anthropic", model: "claude-haiku-5-5", inputUsdPerMTok: 0.1, outputUsdPerMTok: 0.5 },
+  { provider: "anthropic", model: "claude-sonnet-5-5", inputUsdPerMTok: 2, outputUsdPerMTok: 10 },
+  { provider: "anthropic", model: "claude-opus-5-5", inputUsdPerMTok: 4, outputUsdPerMTok: 20 },
+  { provider: "mistral", model: "ministral-14b-2512", inputUsdPerMTok: 0.2, outputUsdPerMTok: 0.2 },
+  { provider: "mistral", model: "mistral-small-2603", inputUsdPerMTok: 0.15, outputUsdPerMTok: 0.6 },
+  { provider: "mistral", model: "mistral-large-4", inputUsdPerMTok: 0.7, outputUsdPerMTok: 2.1 },
+];
+/**
+ * A made-up recommended mix, so the demo can show one. Not the eval's: the real list is empty until the
+ * curator eval has run. Mistral has none here, so "no recommended mix yet" can be walked too.
+ */
+const DEMO_RECOMMENDED: HostedCuratorStatus["recommended"] = {
+  anthropic: { mentions: "claude-haiku-5-5", match: "claude-haiku-5-5", claims: "claude-sonnet-5-5", summary: "claude-haiku-5-5" },
+};
 /** What a stage jump clears in the browser: setup drafts, the add-a-vault flag, and the tab's vault (ids repeat per stage). */
 const STAGE_CLEARS = `for(const k of Object.keys(sessionStorage))if(k.startsWith("hippo:hosted-draft:")||k==="hippo:adding-vault"||k==="hippo:vault")sessionStorage.removeItem(k);`;
 
@@ -124,6 +149,14 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     devices: [] as { code: string; client: string; access: "remember" | "curate"; expires: string; status: "pending" | "approved" | "denied" }[],
     run: undefined as CuratorStatus["run"],
     history: [] as CuratorStatus["history"],
+    /** Hosted curation's settings for the account: only the key's hint is kept, never the key. */
+    llm: undefined as (Omit<HostedCuratorStatus, "available" | "spentThisMonthUsd" | "recommended" | "models" | "vault"> & { provider: HostedLlmProvider; steps: HostedStepMix }) | undefined,
+    /** This month's pretend spend, in micro-dollars. */
+    spent: 0,
+    /** Each vault's nightly hour (UTC), when hosted curation is on for it. */
+    hours: {} as Record<string, number>,
+    /** Each vault's last standby check-in. */
+    standby: {} as Record<string, NonNullable<HostedVaultCurator["standby"]>>,
     others: [
       { id: 2001, login: "harbor-student", status: "waitlisted", note: "Starting at Harbor University in the spring; my agents keep losing track of deadlines.", created: ago(2 * DAY), updated: ago(2 * DAY), admin: false },
       { id: 2002, login: "lisbon-newcomer", status: "waitlisted", created: ago(5 * HOUR), updated: ago(5 * HOUR), admin: false },
@@ -190,6 +223,84 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     ];
     state.run = { id: "run-4", curator: "archivist", model: "claude-sonnet-4-5", started: ago(3 * 60_000), leaseUntil: new Date(now().getTime() + 2 * 60_000).toISOString(), live: true, progress: { done: 3, total: 8, unit: "episode" } };
     if (apps) state.apps = [{ id: "grant-1", client: "Claude", scopes: ["read", "remember", "goal", "curate"], agent: "home-finder", vault: state.vaults[0]?.id ?? vaultId(1), created: ago(DAY / 2), curate: true, mayCurate: true }];
+    // archivist stands by too: it checked in last night and ran, since nothing else curated.
+    const first = state.vaults[0];
+    if (apps && first) state.standby[first.id] = { curator: "archivist", at: ago(DAY), decision: "needed" };
+  };
+
+  // ── Hosted curation with the owner's key ──
+
+  const mixOf = (b: Record<string, unknown>, provider: HostedLlmProvider): HostedStepMix => {
+    if (b.steps !== undefined) {
+      const s = (b.steps ?? {}) as Record<string, unknown>;
+      for (const step of DEMO_STEPS) if (typeof s[step] !== "string" || !(s[step] as string).trim()) throw new HttpError(400, `steps.${step}: a model id`, "INVALID");
+      return Object.fromEntries(DEMO_STEPS.map((step) => [step, (s[step] as string).trim()])) as HostedStepMix;
+    }
+    if (typeof b.model === "string" && b.model.trim()) return Object.fromEntries(DEMO_STEPS.map((step) => [step, (b.model as string).trim()])) as HostedStepMix;
+    const mix = DEMO_RECOMMENDED[provider];
+    if (!mix) throw new HttpError(400, "steps: pick a model for each step, or one model for all (there's no recommended mix for this provider yet)", "INVALID");
+    return mix;
+  };
+  const capOf = (v: unknown, field: string): number => {
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 10_000) throw new HttpError(400, `${field}: US dollars, 0 to 10000`, "INVALID");
+    return v;
+  };
+  const month = () => now().toISOString().slice(0, 7);
+  /** When the hour next comes round, UTC. */
+  const nextAt = (hourUtc: number) => {
+    const t = now();
+    const at = Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), hourUtc);
+    return new Date(at > t.getTime() ? at : at + DAY).toISOString();
+  };
+  const vaultCurator = (v: HostedVault): HostedVaultCurator => {
+    const hour = state.hours[v.id];
+    const last = state.history.find((h) => h.curator === HOSTED);
+    return {
+      enabled: hour !== undefined,
+      ...(hour !== undefined ? { hourUtc: hour, nextRun: nextAt(hour) } : {}),
+      ...(last ? { lastRun: { id: last.id, ended: last.ended, outcome: last.outcome, ...(last.stop ? { stop: last.stop } : {}), consolidated: last.consolidated, ...(last.cost ? { costUsd: last.cost.micros / 1e6 } : {}) } } : {}),
+      ...(state.standby[v.id] ? { standby: state.standby[v.id] } : {}),
+    };
+  };
+  const hostedCurator = (vault: HostedVault | undefined): HostedCuratorStatus => ({
+    available: true,
+    ...(state.llm ?? {}),
+    spentThisMonthUsd: state.spent / 1e6,
+    recommended: DEMO_RECOMMENDED,
+    models: DEMO_MODELS,
+    ...(vault?.role === "owner" && vault.status === "ready" ? { vault: vaultCurator(vault) } : {}),
+  });
+  const pauseFor = (reason: "auth" | "credit" | "budget") => {
+    if (state.llm) state.llm.paused = reason === "budget" ? { reason, until: month() } : { reason };
+  };
+
+  /** A hosted run, done at once: it spends a little, and stops at the month's cap, which pauses the account. */
+  const hostedRun = (llm: NonNullable<typeof state.llm>): string => {
+    const id = `run-h${state.history.length + 1}`;
+    const left = Math.max(0, (llm.monthCapUsd ?? 0) * 1e6 - state.spent);
+    const want = Math.min(370_000, (llm.runCapUsd ?? 0) * 1e6);
+    const micros = Math.min(want, left);
+    const stopped = micros < want ? "budget" : undefined;
+    state.spent += micros;
+    const consolidated = stopped ? Math.floor((7 * micros) / Math.max(1, want)) : 7;
+    state.history.unshift({
+      id,
+      curator: HOSTED,
+      model: `${llm.provider}:${llm.steps.mentions}`,
+      started: ago(90_000),
+      ended: now().toISOString(),
+      outcome: stopped ? "aborted" : "done",
+      consolidated,
+      failed: 0,
+      skipped: 0,
+      summaries: stopped ? 0 : 3,
+      remaining: 7 - consolidated,
+      commits: consolidated ? 2 : 0,
+      ...(stopped ? { stop: stopped } : {}),
+      cost: { micros, calls: consolidated * 4 },
+    });
+    if (stopped) pauseFor("budget");
+    return id;
   };
 
   const toStage = (stage: HostedDemoStage, provider?: string) => {
@@ -294,6 +405,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       publicUrl,
       mcpUrl: vault ? `${publicUrl}/mcp/${vault.id}` : `${publicUrl}/mcp`,
       presets: demoPresets(),
+      ...(state.status === "approved" ? { hostedCurator: hostedCurator(adding ? undefined : vault) } : {}),
       items: [],
     };
     s.items = items(s);
@@ -461,6 +573,48 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       state.curatorActions[vault.id] = enabled;
       const result: HostedCuratorActionsResult = { enabled, path: ".github/workflows/sleep.yml" };
       return result;
+    }
+    if ((sub === "curator-llm" || sub.startsWith("curator-llm/")) && method === "POST") {
+      if (!vault || (vault.role ?? "owner") !== "owner") throw new HttpError(403, "Only the vault's owner can set up hosted curation.", "OWNER_ONLY");
+      if (sub === "curator-llm") {
+        const b = (body ?? {}) as Record<string, unknown>;
+        const provider = b.provider as HostedLlmProvider;
+        if (provider !== "anthropic" && provider !== "mistral") throw new HttpError(400, "provider: anthropic or mistral", "INVALID");
+        const steps = mixOf(b, provider);
+        const unpriced = [...new Set(DEMO_STEPS.map((s) => steps[s]))].filter((m) => !DEMO_MODELS.some((x) => x.provider === provider && x.model === m));
+        if (unpriced.length) throw new HttpError(400, `${unpriced.join(", ")}: no price for ${unpriced.length === 1 ? "this model" : "these models"}, pick a listed one`, "INVALID");
+        const monthCapUsd = capOf(b.monthCapUsd, "monthCapUsd");
+        const runCapUsd = capOf(b.runCapUsd, "runCapUsd");
+        if (b.key !== undefined && typeof b.key !== "string") throw new HttpError(400, "key: the provider's API key, as text", "INVALID");
+        const key = typeof b.key === "string" ? b.key.trim() : "";
+        if (!key && !state.llm) throw new HttpError(400, "key: paste the provider's API key", "INVALID");
+        if (!key && state.llm && state.llm.provider !== provider) throw new HttpError(400, "key: a new provider needs its own key", "INVALID");
+        // The demo's stand-in for the provider's check: a key with "refused" in it is refused. Only its hint is kept.
+        if (/refused/i.test(key)) throw new HttpError(400, "The provider refused that key. Check it and paste it again.", "KEY_AUTH");
+        let paused = state.llm?.paused;
+        if (key && paused && paused.reason !== "budget") paused = undefined;
+        if (paused?.reason === "budget" && monthCapUsd * 1e6 > state.spent) paused = undefined;
+        state.llm = { provider, steps, keyHint: key ? `…${key.slice(-4)}` : state.llm!.keyHint!, monthCapUsd, runCapUsd, ...(paused ? { paused } : {}) };
+        return hostedCurator(vault);
+      }
+      if (vault.status !== "ready") throw new HttpError(409, "This vault isn't ready.", "NOT_READY");
+      if (sub === "curator-llm/vault") {
+        const raw = (body as { hourUtc?: unknown } | undefined)?.hourUtc;
+        if (raw !== null && !(typeof raw === "number" && Number.isInteger(raw) && raw >= 0 && raw < 24)) throw new HttpError(400, "hourUtc: 0 to 23 (UTC), or null to turn it off", "INVALID");
+        if (raw !== null && !state.llm) throw new HttpError(409, "Save a model key first.", "NO_KEY");
+        if (raw === null) delete state.hours[vault.id];
+        else state.hours[vault.id] = raw as number;
+        return vaultCurator(vault);
+      }
+      if (sub === "curator-llm/run") {
+        const llm = state.llm;
+        if (!llm) throw new HttpError(409, "Hosted curation can't run: no model key is saved.", "NO_KEY");
+        if (llm.paused?.reason === "budget" || state.spent >= (llm.monthCapUsd ?? 0) * 1e6) throw new HttpError(409, "Hosted curation can't run: this month's budget is spent.", "BUDGET");
+        if (llm.paused) throw new HttpError(409, `Hosted curation can't run: ${llm.paused.reason === "auth" ? "the model key was refused" : "the model provider's credit ran out"}.`, "PAUSED");
+        // The demo's runs finish at once, so they never wait on the open agent run it shows.
+        const result: HostedCuratorRunResult = { run: hostedRun(llm) };
+        return result;
+      }
     }
     throw new HttpError(404, `No such setup route: ${method} ${sub}`, "NOT_FOUND");
   }
@@ -663,6 +817,20 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       const access = url.searchParams.get("access") === "curate" ? "curate" : "remember";
       state.devices.push({ code, client: access === "curate" ? "Claude Code (curator)" : "Claude Code", access, expires: new Date(now().getTime() + 10 * 60_000).toISOString(), status: "pending" });
       return redirect(`${base}/connect/?code=${code}`);
+    }
+    if (sub === "curator") {
+      // Hosted curation's states: a pause (saving a key first if none is), and a standby curator's check-in.
+      const vault = state.vaults.find((v) => v.id === state.last) ?? state.vaults[0];
+      const pause = url.searchParams.get("pause");
+      if (pause === "budget" || pause === "auth" || pause === "credit") {
+        state.llm ??= { provider: "anthropic", steps: DEMO_RECOMMENDED.anthropic!, keyHint: "…demo", monthCapUsd: 5, runCapUsd: 1 };
+        if (pause === "budget") state.spent = Math.max(state.spent, (state.llm.monthCapUsd ?? 0) * 1e6);
+        pauseFor(pause);
+      } else if (pause === "none" && state.llm) delete state.llm.paused;
+      const standby = url.searchParams.get("standby");
+      if (vault && standby === "none") delete state.standby[vault.id];
+      else if (vault && standby) state.standby[vault.id] = { curator: standby.slice(0, 40), at: now().toISOString(), decision: state.hours[vault.id] !== undefined && !state.llm?.paused ? "hosted" : "needed" };
+      return redirect(`${base}/setup/#curation`);
     }
     if (sub === "key") {
       if (!opts.demoKey) throw new HttpError(404, "The demo has no key", "NOT_FOUND");

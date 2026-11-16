@@ -37,7 +37,7 @@ Run the CLI from source (tsx, no build):
 Use these for UI work, screenshots and bug reports. Everything in them is fictional.
 
 - `pnpm dev:dashboard` runs the dashboard UI with hot reload against the demo campaign, under `/dashboard/` (not `/`). `HIPPO_VAULT=<dir> pnpm dev:dashboard` uses a local vault instead, which is private data: never commit or share what it shows.
-- `HIPPO_DEMO_HOSTED=1 pnpm dev:dashboard` puts a pretend hosted app in front of the demo: sign-in, waitlist, GitHub App install, vault setup, keys, curator, admin and account pages, with nothing touching GitHub. `GET /dashboard/api/__demo/stage?to=<stage>` jumps to a stage (`signed-out`, `waitlisted`, `requested`, `approved`, `installed`, `ready`); add `&provider=gitlab` to walk the GitLab path.
+- `HIPPO_DEMO_HOSTED=1 pnpm dev:dashboard` puts a pretend hosted app in front of the demo: sign-in, waitlist, GitHub App install, vault setup, keys, curator, admin and account pages, with nothing touching GitHub. `GET /dashboard/api/__demo/stage?to=<stage>` jumps to a stage (`signed-out`, `waitlisted`, `requested`, `denied`, `fresh`, `approved`, `installed`, `disconnected`, `bootstrapping`, `ready`); add `&provider=gitlab` to walk the GitLab path. `__demo/device` plays an agent starting device sign-in (`?access=curate` for a curator). Hosted curation (Setup → Nightly curation) answers with fake spend, a made-up recommended mix and instant runs, and refuses any key containing `refused`; `__demo/curator?pause=budget|auth|credit|none` pauses it, and `?standby=<curator>|none` records or forgets a standby check-in.
 - `.claude/launch.json` names these for preview tools: `dashboard` (port 4400), `dashboard-hosted` (4401, with `HIPPO_DEMO_HOSTED=1`), `fake-github` (8786) and `worker` (8787).
 - `./apps/cli/bin/hippo dashboard --demo` serves the built dashboard with the demo campaign, as users see it.
 
@@ -237,3 +237,5 @@ Run it in `apps/worker`. It can't cross a Durable Object class migration.
 - requests nearing 100,000 a day.
 
 KV writes run out first: each sign-in, OAuth client registration and token refresh writes one, and Free allows 1,000 a day.
+
+Hosted curation (the owner's own model key) needs Workers Paid: move the instance first. It is on wherever `HIPPO_TOKEN_KEY` is set. On an instance without GitLab, set `HIPPO_TOKEN_KEY` only after the release with hosted curation is deployed and healthy. An earlier Worker accepts the key only together with the GitLab settings, so a rollback past that release with the key alone set fails to start. `HIPPO_HOSTED_CURATOR=off` switches hosted curation off without a deploy.

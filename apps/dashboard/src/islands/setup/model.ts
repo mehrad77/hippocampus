@@ -344,6 +344,7 @@ export const LLM_PROVIDERS: readonly ProviderDef[] = [
   { id: "openai-compatible", label: "Any OpenAI-compatible server", baseURL: "required", key: "optional", modelHint: "the server's model id" },
   { id: "anthropic", label: "Anthropic API", key: "required", keyEnv: "ANTHROPIC_API_KEY", modelHint: "claude-haiku-4-5-20251001" },
   { id: "xai", label: "xAI API", key: "required", keyEnv: "XAI_API_KEY", modelHint: "grok-4-fast" },
+  { id: "mistral", label: "Mistral API", key: "required", keyEnv: "MISTRAL_API_KEY", modelHint: "mistral-small-2603" },
 ];
 
 export const EMBED_PROVIDERS: readonly ProviderDef[] = [

@@ -114,10 +114,17 @@ export function connectSnippets(t: ConnectTarget, first?: ConnectAppId): Snippet
 }
 
 /**
- * Where the nightly curator can run, cheapest first: the same three the `sleep-setup` skill offers, in
- * the same words. An agent the person already has costs nothing new; Actions needs Claude paid for.
+ * Where the nightly curator can run: Hippocampus itself (only where the instance offers it, so a
+ * dashboard shows it only when `hostedCurator.available`), then the same three the `sleep-setup`
+ * skill offers, cheapest first and in the same words. An agent the person already has costs nothing
+ * new; Actions needs Claude paid for.
  */
 export const CURATION_PLACES = [
+  {
+    id: "hosted",
+    title: "Hippocampus runs it with your key",
+    help: "This Hippocampus runs sleep every night with your own Anthropic or Mistral API key, under a monthly cap you set. Nothing of yours stays on.",
+  },
   {
     id: "schedule",
     title: "One of your agents",

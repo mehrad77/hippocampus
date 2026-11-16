@@ -9,6 +9,7 @@ import type { AccountApp, HostedAgentClaim, HostedCuratorActionsResult, HostedKe
 import { Icon } from "../../ui/Icon.tsx";
 import { Dialog, Empty, Panel, RelTime, SkeletonPanel } from "../../ui/Parts.tsx";
 import { AddAgent } from "./AddAgent.tsx";
+import { HostedCurator } from "./HostedCurator.tsx";
 import { ConfirmDialog, Effects, ErrorCallout, Facts, refreshSetup, Snippets, ToneTag, useAction } from "./common.tsx";
 import { actionsSnippets, connectionRows, type ConnectionRow } from "./hosted.ts";
 
@@ -184,8 +185,17 @@ function AgentsOf({ row, long }: { row: ConnectionRow; long?: boolean }) {
 export function CurationSetup({ status, bare, runs, curated }: { status: HostedStatus; bare?: boolean; runs?: React.ReactNode; curated?: boolean }) {
   const { v } = useTerms();
   const github = (status.vault?.provider ?? "github") === "github";
+  // Hippocampus's own curation, where the instance offers it; in the bare (onboarding) list it has a choice of its own.
+  const hosted = !bare && !!status.hostedCurator?.available;
+  const hostedOn = hosted && !!(status.hostedCurator?.vault?.enabled || status.hostedCurator?.keyHint);
   // An agent they already have first: it costs nothing new. Actions needs Claude paid for.
-  const [place, setPlace] = useState<CurationPlace>(status.curatorActions ? "actions" : "schedule");
+  // Until the person picks, the choice follows the status: what runs now, else Hippocampus's own where offered.
+  const [picked, setPlace] = useState<CurationPlace>();
+  // Once hosted curation is set up, its card stands on its own above the other places.
+  const places = CURATION_PLACES.filter((p) => (github || p.id !== "actions") && (p.id !== "hosted" || (hosted && !hostedOn)));
+  const wanted = picked ?? (status.curatorActions ? "actions" : hosted && !hostedOn ? "hosted" : "schedule");
+  // A place that left the list (hosted curation just saved) falls back to the first agent choice.
+  const place: CurationPlace = places.some((p) => p.id === wanted) ? wanted : "schedule";
   const [minted, setMinted] = useState<HostedMintedKey>();
   const action = useAction();
   const mint = async () => {
@@ -194,23 +204,16 @@ export function CurationSetup({ status, bare, runs, curated }: { status: HostedS
     setMinted(res);
     void refreshSetup();
   };
-  const places = CURATION_PLACES.filter((p) => github || p.id !== "actions");
   const snippets = minted?.snippets ?? [];
   const forPlace =
     place === "actions" ? snippets.filter((s) => /Actions/.test(s.label)) : place === "schedule" ? snippets.filter((s) => !/Actions|cron/.test(s.label)) : snippets.filter((s) => /cron|prompt/.test(s.label));
   // Once a curator is set up, its runs come first and the setup folds away.
-  const configured = curated ?? (!!status.curatorActions || (status.keys ?? []).some((k) => k.kind === "curator"));
+  const configured = curated ?? (!!status.curatorActions || hostedOn || (status.keys ?? []).some((k) => k.kind === "curator"));
   const setup = (
     <div className="stack">
       <p className="small">
         Every night, a curator turns what your agents saved into notes: it settles facts, updates goals and the timeline, and empties the inbox. Pick where it runs. In Claude Code, <code>/hippocampus:sleep-setup</code> walks you through the same choices.
       </p>
-      <div className="callout callout--warn" role="note">
-        <Icon name="lock" />
-        <div>
-          <strong>The curator sees secret memories.</strong> Give sleep <strong>a bot of its own</strong>: a separate agent (its own Claude Code project or scheduled task, its own Grok bot) that only curates, with its own curator key. Not the agent you chat with every day, and only with an AI provider you trust with your secrets. One curator per vault is enough.
-        </div>
-      </div>
       <fieldset className="sz-fieldset">
         <legend className="label">Where it runs</legend>
         {places.map((p) => (
@@ -223,8 +226,18 @@ export function CurationSetup({ status, bare, runs, curated }: { status: HostedS
           </label>
         ))}
       </fieldset>
+      {place !== "hosted" && (
+        <div className="callout callout--warn" role="note">
+          <Icon name="lock" />
+          <div>
+            <strong>The curator sees secret memories.</strong> Give sleep <strong>a bot of its own</strong>: a separate agent (its own Claude Code project or scheduled task, its own Grok bot) that only curates, with its own curator key. Not the agent you chat with every day, and only with an AI provider you trust with your secrets. One curator per vault is enough.
+          </div>
+        </div>
+      )}
       {action.error !== undefined && <ErrorCallout error={action.error} />}
-      {minted ? (
+      {place === "hosted" ? (
+        <HostedCurator status={status} />
+      ) : minted ? (
         <div className="stack sz-tight">
           <p className="small">
             <strong>Your curator key</strong> is in the snippets below; you won't see it again.
@@ -251,6 +264,7 @@ export function CurationSetup({ status, bare, runs, curated }: { status: HostedS
   return (
     <Panel title={v("Nightly curation", "The nightly sleep")} icon="moonStars" id="curation">
       <div className="stack">
+        {hostedOn && <HostedCurator status={status} />}
         {runs}
         {configured && runs ? (
           <details className="sz-details">

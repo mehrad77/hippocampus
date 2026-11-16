@@ -134,7 +134,7 @@ const VaultRequest = z.discriminatedUnion("action", [
 ]);
 
 const LlmRequest = z.object({
-  provider: z.enum(["lmstudio", "ollama", "openai-compatible", "anthropic", "xai"]),
+  provider: z.enum(["lmstudio", "ollama", "openai-compatible", "anthropic", "xai", "mistral"]),
   model: oneLine(200),
   baseURL: ServerUrl.or(blank).optional(),
   apiKey: Secret.nullable().optional(),
@@ -664,7 +664,7 @@ function secretsItem(a: ActiveVault | undefined, s: SecretsStatus): SetupItem {
 
 function llmItem(a: ActiveVault | undefined, llm: LlmSettings, chosen: boolean): SetupItem {
   const base = { id: "llm", title: "Curator model", how: "performed" as const };
-  const hosted = llm.provider === "anthropic" || llm.provider === "xai";
+  const hosted = llm.provider === "anthropic" || llm.provider === "xai" || llm.provider === "mistral";
   if (a?.mode === "mcp") return { ...base, state: "optional", detail: "The curator runs where the vault lives." };
   if (hosted && llm.apiKey === "unset") return { ...base, state: "warn", detail: `${llm.provider} · ${llm.model}: no API key` };
   const configured = chosen || hosted;

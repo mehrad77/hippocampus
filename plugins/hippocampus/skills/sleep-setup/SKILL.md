@@ -18,7 +18,7 @@ Look for the `sleep_*` tools (`sleep_status`, `sleep_start`, …) on any Hippoca
 
 ## 2. Choose where it runs
 
-First check who curates now: `onboard` ends with a line about it. If Hippocampus already runs it with the person's own model key (**Setup → Nightly curation** on the hosted app), nothing is needed; offer one of the choices below only as **a standby curator**, which runs when hosted curation pauses (budget, a refused key) or memories wait too long, and otherwise answers `not_needed` at the cost of one call. Schedule a standby after the hosted hour.
+First check who curates now: `onboard` ends with a line about it. If Hippocampus already runs it with the person's own model key (**Hippocampus runs it with your key**, under **Setup → Nightly curation** on the hosted app), nothing is needed; offer one of the choices below only as **a standby curator**, which runs when hosted curation pauses (budget, a refused key) or memories wait too long, and otherwise answers `not_needed` at the cost of one call. Schedule a standby after the hosted hour.
 
 Otherwise offer these three, cheapest first, and let the person pick:
 

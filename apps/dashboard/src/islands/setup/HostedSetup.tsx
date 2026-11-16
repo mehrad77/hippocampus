@@ -15,6 +15,7 @@ import { CuratorRuns } from "./Curator.tsx";
 import { HealthChecklist } from "./Health.tsx";
 import { forNewVault, hasCurator, resolveSetupHash, SETUP_SECTIONS, VAULT_TONE, type SetupSectionId } from "./hosted.ts";
 import { ConnectionsPanel, CurationSetup } from "./Connections.tsx";
+import { HostedCurator } from "./HostedCurator.tsx";
 import { HostedOnboarding } from "./HostedOnboarding.tsx";
 import { AppInvitesPanel, IncomingInvites, MembersPanel } from "./HostedSharing.tsx";
 import { HostedVaultsPanel } from "./HostedVaults.tsx";
@@ -49,7 +50,7 @@ export function HostedSetup({ session, status }: { session: SessionInfo; status:
   return (
     <>
       <IncomingInvites />
-      <HostedOnboarding session={session} status={status} footer={footer} />
+      <HostedOnboarding session={session} status={status} footer={footer} hostedCuration={status.hostedCurator?.available ? <HostedCurator status={status} compact /> : undefined} />
     </>
   );
 }
