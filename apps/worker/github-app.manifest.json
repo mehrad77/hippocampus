@@ -12,7 +12,9 @@
   "default_permissions": {
     "contents": "write",
     "workflows": "write",
-    "metadata": "read"
+    "metadata": "read",
+    "secrets": "write",
+    "actions": "write"
   },
   "default_events": ["installation_repositories", "repository"]
 }

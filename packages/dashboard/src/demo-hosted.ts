@@ -1,7 +1,7 @@
 import { isConnectApp, keySnippets } from "./connect.ts";
 import { demoPresets } from "./demo-setup.ts";
 import { HttpError, errorResponse, json, readJson, securityHeaders } from "./http.ts";
-import { VAULT_HEADER, byRecentPush, type AdminReferrals, type HostedDeviceRequest, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedCuratorRunResult, type HostedCuratorStatus, type HostedLlmProvider, type HostedStepMix, type HostedVaultCurator, type HostedAgentClaim, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem } from "./setup.ts";
+import { ACTIONS_MODELS, VAULT_HEADER, byRecentPush, type HostedActionsModel, type HostedActionsRun, type HostedActionsRunResult, type HostedActionsSecret, type HostedActionsSecretsResult, type HostedCuratorActionsState, type AdminReferrals, type HostedDeviceRequest, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedCuratorRunResult, type HostedCuratorStatus, type HostedLlmProvider, type HostedStepMix, type HostedVaultCurator, type HostedAgentClaim, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem } from "./setup.ts";
 import { capabilities, readOnlySource, type CuratorStatus, type DashboardSource, type SessionInfo } from "./source.ts";
 
 // The hosted app for `astro dev` (HIPPO_DEMO_HOSTED=1): an in-memory stand-in for the Worker's
@@ -28,6 +28,11 @@ import { capabilities, readOnlySource, type CuratorStatus, type DashboardSource,
 // and instant runs; a key with "refused" in it is refused. `GET <base>/api/__demo/curator` plays its
 // states: `?pause=budget|auth|credit|none` pauses it (saving a pretend key first if there is none),
 // and `?standby=<curator>|none` records a standby curator's check-in, or forgets it.
+//
+// The GitHub Actions curator keeps secret names only (what's pasted is dropped), fake past runs with one
+// failure, and Run now adds a queued run. `GET <base>/api/__demo/actions?permission=missing` plays an
+// installation that hasn't approved the Actions permissions yet; `?permission=granted` approves them
+// (the card's "Approve it on GitHub" link goes there in the demo).
 
 export type HostedDemoStage = "signed-out" | "waitlisted" | "requested" | "denied" | "fresh" | "approved" | "installed" | "disconnected" | "bootstrapping" | "ready";
 
@@ -47,6 +52,13 @@ export interface HostedDemoOptions {
   /** How long the `bootstrapping` stage's vault takes to be ready (ms). */
   bootstrapFor?: number;
   now?: () => Date;
+}
+
+interface DemoActions {
+  secrets: HostedActionsSecret[];
+  /** The model baked into the workflow, once it was turned on. */
+  model?: string;
+  runs: HostedActionsRun[];
 }
 
 /** `ageDays`: how long ago the repo was last pushed to, so the list's order and times stay fresh. */
@@ -133,6 +145,10 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     /** Which agent names each key's connection has spoken as, once it has called in. */
     claims: {} as Record<string, HostedAgentClaim[]>,
     curatorActions: {} as Record<string, boolean>,
+    /** The Actions curator's repo settings, per vault: secret names only (values are dropped), the workflow's model, runs. */
+    actions: {} as Record<string, DemoActions>,
+    /** `__demo/actions?permission=missing`: the installation hasn't approved Secrets and Actions. */
+    actionsPermission: true,
     made: 0,
     /** Who each vault is shared with (the owner included). */
     members: {} as Record<string, HostedMember[]>,
@@ -173,6 +189,20 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     // The demo makes you its admin too, so the admin page has someone to show it to.
     state.admin = true;
   };
+
+  /** A vault's Actions settings: nothing set yet, and three past nightly runs, the middle one failed. */
+  const actionsOf = (id: string): DemoActions =>
+    (state.actions[id] ??= {
+      secrets: [],
+      runs: [1, 2, 3].map((d, i) => ({
+        id: 7000 - i,
+        status: "completed",
+        conclusion: i === 1 ? "failure" : "success",
+        created: ago(d * DAY - 3 * HOUR),
+        url: `https://github.com/${LOGIN}/vault/actions/runs/${7000 - i}`,
+        event: "schedule",
+      })),
+    });
 
   /** The vault a request is about: the one it names, else the one used last, else the oldest. */
   const pick = (request: Request): HostedVault | undefined => {
@@ -569,10 +599,70 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     if (sub === "curator-actions" && method === "POST") {
       if (vault?.status !== "ready") throw new HttpError(409, "No vault yet: set one up first.", "NO_VAULT");
       if (vault.provider === "gitlab") throw new HttpError(409, "Nightly sleep on a schedule runs on GitHub Actions; for a GitLab vault, run sleep with your own curator agent.", "GITHUB_ONLY");
-      const enabled = !!(body as { enable?: unknown } | undefined)?.enable;
+      const b = (body ?? {}) as { enable?: unknown; model?: unknown };
+      if (b.model !== undefined && !ACTIONS_MODELS.includes(b.model as HostedActionsModel)) throw new HttpError(400, `model: ${ACTIONS_MODELS.join(" or ")}`, "INVALID");
+      const enabled = !!b.enable;
       state.curatorActions[vault.id] = enabled;
-      const result: HostedCuratorActionsResult = { enabled, path: ".github/workflows/sleep.yml" };
+      // The model is baked into the workflow file: the one asked for, else the one it had, else sonnet.
+      const a = actionsOf(vault.id);
+      if (enabled) a.model = (b.model as string | undefined) ?? a.model ?? "sonnet";
+      const result: HostedCuratorActionsResult = { enabled, path: ".github/workflows/sleep.yml", ...(enabled ? { model: a.model } : {}) };
       return result;
+    }
+    if (sub.startsWith("curator-actions/")) {
+      if (!vault || (vault.role ?? "owner") !== "owner") throw new HttpError(403, "Only the vault's owner can set up its curator.", "OWNER_ONLY");
+      if (vault.status !== "ready") throw new HttpError(409, "This vault isn't ready.", "NOT_READY");
+      if (vault.provider === "gitlab") throw new HttpError(409, "Nightly sleep on a schedule runs on GitHub Actions; for a GitLab vault, run sleep with your own curator agent.", "GITHUB_ONLY");
+      const settingsUrl = `${api}/__demo/actions?permission=granted`;
+      const mcpUrl = `${origin(request)}/mcp/${vault.id}`;
+      const a = actionsOf(vault.id);
+      const refused = () => new HttpError(403, `Hippocampus needs permission to manage Actions secrets and runs on ${vault.fullName}. Approve it on GitHub.`, "NEEDS_PERMISSION", { settingsUrl, repo: vault.fullName, who: "owner", missing: ["secrets", "actions"] });
+      if (sub === "curator-actions/state" && method === "GET") {
+        const enabled = !!state.curatorActions[vault.id];
+        const s: HostedCuratorActionsState = state.actionsPermission
+          ? { enabled, mcpUrl, ...(enabled ? { workflow: { mcpUrl, model: a.model ?? "sonnet" } } : {}), secrets: [...a.secrets], runs: enabled ? a.runs.slice(0, 5) : [] }
+          : { enabled, mcpUrl, needsPermission: { repo: vault.fullName, settingsUrl, who: "owner" } };
+        return s;
+      }
+      if (sub === "curator-actions/secrets" && method === "POST") {
+        const b = (body ?? {}) as { claudeToken?: unknown; apiKey?: unknown; model?: unknown };
+        if (b.claudeToken !== undefined && b.apiKey !== undefined) throw new HttpError(400, "Send claudeToken or apiKey, not both: the workflow uses one.", "INVALID");
+        if (b.model !== undefined && !ACTIONS_MODELS.includes(b.model as HostedActionsModel)) throw new HttpError(400, `model: ${ACTIONS_MODELS.join(" or ")}`, "INVALID");
+        const kind: HostedActionsSecret | undefined = b.claudeToken !== undefined ? "CLAUDE_CODE_OAUTH_TOKEN" : b.apiKey !== undefined ? "ANTHROPIC_API_KEY" : undefined;
+        const raw = kind === "CLAUDE_CODE_OAUTH_TOKEN" ? b.claudeToken : b.apiKey;
+        if (kind && (typeof raw !== "string" || !raw.trim() || /\s/.test(raw.trim()) || raw.trim().length > 512)) throw new HttpError(400, `${kind === "CLAUDE_CODE_OAUTH_TOKEN" ? "claudeToken" : "apiKey"}: paste it as one line, no spaces`, "INVALID");
+        if (!state.actionsPermission) throw refused();
+        // The demo keeps names only: what was pasted is dropped here, as the Worker drops it after sealing.
+        const saved: HostedActionsSecret[] = [];
+        const removed: HostedActionsSecret[] = [];
+        if (kind) {
+          const other: HostedActionsSecret = kind === "CLAUDE_CODE_OAUTH_TOKEN" ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN";
+          if (a.secrets.includes(other)) removed.push(other);
+          a.secrets = a.secrets.filter((s) => s !== other && s !== kind).concat(kind);
+          saved.push(kind);
+        }
+        const rotate = !!kind || !a.secrets.includes("HIPPO_CURATOR_KEY");
+        if (rotate) {
+          if (!a.secrets.includes("HIPPO_CURATOR_KEY")) a.secrets.push("HIPPO_CURATOR_KEY");
+          saved.push("HIPPO_CURATOR_KEY");
+          const keys = (state.keys[vault.id] ?? []).filter((k) => k.app !== "github-actions");
+          keys.unshift({ id: hex(32), kind: "curator", scopes: ["read", "curate"], label: "GitHub Actions", app: "github-actions", created: now().toISOString() });
+          state.keys[vault.id] = keys;
+        }
+        // A model goes into the workflow, so only while it's on; turning it on takes the card's choice.
+        const on = !!state.curatorActions[vault.id];
+        if (on && b.model) a.model = b.model as string;
+        const result: HostedActionsSecretsResult = { saved, removed, curatorKey: rotate ? "replaced" : "kept", ...(on && b.model ? { model: a.model! } : {}) };
+        return result;
+      }
+      if (sub === "curator-actions/run" && method === "POST") {
+        if (!state.actionsPermission) throw refused();
+        if (!state.curatorActions[vault.id]) throw new HttpError(409, "The workflow isn't in the repository: turn the Actions curator on first.", "NOT_ENABLED");
+        const id = (a.runs[0]?.id ?? 7000) + 1;
+        a.runs.unshift({ id, status: "queued", conclusion: null, created: now().toISOString(), url: `https://github.com/${vault.fullName}/actions/runs/${id}`, event: "workflow_dispatch" });
+        const result: HostedActionsRunResult = { queued: true };
+        return result;
+      }
     }
     if ((sub === "curator-llm" || sub.startsWith("curator-llm/")) && method === "POST") {
       if (!vault || (vault.role ?? "owner") !== "owner") throw new HttpError(403, "Only the vault's owner can set up hosted curation.", "OWNER_ONLY");
@@ -830,6 +920,13 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       const standby = url.searchParams.get("standby");
       if (vault && standby === "none") delete state.standby[vault.id];
       else if (vault && standby) state.standby[vault.id] = { curator: standby.slice(0, 40), at: now().toISOString(), decision: state.hours[vault.id] !== undefined && !state.llm?.paused ? "hosted" : "needed" };
+      return redirect(`${base}/setup/#curation`);
+    }
+    if (sub === "actions") {
+      // The Actions curator's permission: `missing` until the installation approves Secrets and Actions.
+      const permission = url.searchParams.get("permission");
+      if (permission === "missing") state.actionsPermission = false;
+      else if (permission === "granted") state.actionsPermission = true;
       return redirect(`${base}/setup/#curation`);
     }
     if (sub === "key") {

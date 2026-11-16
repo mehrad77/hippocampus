@@ -482,6 +482,10 @@
   color: var(--canon);
 }
 
+.sz-effect--removes svg {
+  color: var(--disputed);
+}
+
 .sz-effect code {
   overflow-wrap: anywhere;
 }

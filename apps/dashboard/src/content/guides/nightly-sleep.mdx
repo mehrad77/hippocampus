@@ -93,7 +93,7 @@ On the hosted app, **Setup & health → Nightly curation** asks where the curato
 | Hippocampus runs it with your key | Your Anthropic or Mistral API key and a monthly cap (above). Only where the instance offers it |
 | One of your agents (recommended) | An agent you already use, such as Claude Code or a Grok bot: its curator connection (one command or tool entry), then a daily task with the sleep prompt. No new charge |
 | A script or cron line | Your own machine runs Claude Code (or another agent) every night |
-| GitHub Actions | Nothing of yours stays on, but it needs Claude paid for: a subscription token or an API key. Two `gh` commands store the key and the vault's address in the repo; then **Turn it on**. GitHub vaults only |
+| GitHub Actions | Nothing of yours stays on, but it needs Claude paid for: a subscription token or an API key. Paste it on the card and it goes into the repo's encrypted secrets, with a curator key and the vault's address; then **Turn it on**. GitHub vaults only |
 
 <Aside kind="tip" title="Give sleep a bot of its own">
 
@@ -130,17 +130,30 @@ Add it with `crontab -e` on a machine that's on at that hour, with Claude Code s
 
 ### Or let GitHub Actions curate
 
-No machine of your own to schedule on? **Setup → Nightly curation** can add a workflow to your vault repo, `.github/workflows/sleep.yml`. It runs Claude every night at 03:23 UTC, through the vault's MCP server with a curator key. It never checks the repo out, and its GitHub token has no permissions. In the repo's **Settings → Secrets and variables → Actions**, set:
+No machine of your own to schedule on? **Setup → Nightly curation → GitHub Actions** adds a workflow to your vault repo, `.github/workflows/sleep.yml`. It runs Claude every night at 03:23 UTC, through the vault's MCP server with a curator key. It never checks the repo out, and its GitHub token has no permissions.
+
+The card sets the rest up for you, through the GitHub App:
+
+1. Pick how you pay for Claude: a **Claude subscription token** (Pro or Max; run `claude setup-token`; runs count against the subscription, with no API bill) or an **Anthropic API key** (billed per use, so the account needs credit).
+2. Paste it, pick the model (Sonnet by default, or Opus) and press **Save to GitHub**. It goes straight into the repo's encrypted Actions secrets; Hippocampus doesn't keep it, and it can't be shown again. Saving one kind deletes the other, so only one is ever set.
+3. Saving also makes a curator key for Actions and stores it as a secret. Saving a new token or key makes a new curator key too, and revokes the one it replaces.
+4. **Turn it on**, then **Run now** to try it. The workflow file carries the vault's address and the model (neither is secret); picking another model later rewrites it in one commit. **Recent runs** shows the last five, with a link to each on GitHub. A failed run's log ends with why ("Credit balance is too low", say) and nothing else from the run.
+
+The card's checklist shows what's set: the workflow, your token or key, the curator key and the address. If it asks for permission, the app was installed before it could manage Actions: **Approve it on GitHub** opens the installation's settings, where you accept the new permissions.
+
+<Aside kind="tip" title="By hand">
+**Set it up by hand** on the card has the `gh` commands. Keys and tokens always go in as **secrets** (`gh secret set`), never variables: a variable is plain text anyone with access to the repo can read, and the workflow doesn't read keys from variables.
+</Aside>
 
 | Name | Kind | Value |
 | --- | --- | --- |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Secret | A token from your Claude subscription (Pro or Max): run `claude setup-token`. Runs count against the subscription's usage, with no API bill |
-| `ANTHROPIC_API_KEY` | Secret | Or an Anthropic API key; runs are billed to it. Set one of the two |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Secret | A token from your Claude subscription. Wins if both are set |
+| `ANTHROPIC_API_KEY` | Secret | Or an Anthropic API key |
 | `HIPPO_CURATOR_KEY` | Secret | A curator key |
-| `HIPPO_MCP_URL` | Variable | The vault's MCP address, from the Setup page |
-| `HIPPO_CURATOR_MODEL` | Variable | Optional: `sonnet` (the default) or `opus`, say |
+| `HIPPO_MCP_URL` | Variable | Optional: overrides the address written in the workflow |
+| `HIPPO_CURATOR_MODEL` | Variable | Optional: overrides the model written in the workflow |
 
-Turning it off on the Setup page removes the file.
+Turning it off on the Setup page removes the file. Turning it on again brings an older copy of the workflow up to date, keeping its model.
 
 ### Watching runs
 

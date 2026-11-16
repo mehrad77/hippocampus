@@ -1,7 +1,7 @@
 // Session Zero on the hosted app, its pure parts: the onboarding steps and when each unlocks, the
 // repo picker's verdicts, the campaign draft, and the curator recipes. No DOM here, so it is
 // unit-tested in hosted.test.ts.
-import type { HostedAgentClaim, HostedConnectedApp, HostedCuratorStatus, HostedInitRequest, HostedKeyInfo, HostedLlmProvider, HostedLlmStep, HostedStepMix, HostedVaultCurator, Snippet } from "@hippocampus/dashboard";
+import type { HostedActionsRun, HostedAgentClaim, HostedConnectedApp, HostedCuratorActionsState, HostedCuratorStatus, HostedInitRequest, HostedKeyInfo, HostedLlmProvider, HostedLlmStep, HostedStepMix, HostedVaultCurator, Snippet } from "@hippocampus/dashboard";
 import { accessOf } from "@hippocampus/dashboard/connect";
 import type { IconName } from "../../lib/icons.ts";
 import type { HostedRepoView, HostedStatus } from "../../lib/types.ts";
@@ -417,23 +417,102 @@ export const identityFileText = (identity: string) => `${identity.trim()}\n`;
 
 // ── Agents and the curator ─────────────────────────────────────────────────
 
-/** What the Actions curator needs in the vault repo, set with the GitHub CLI. */
-export function actionsSnippets(repo: string, mcpUrl: string): Snippet[] {
+/** The Actions curator's secrets, set with the GitHub CLI. The address and model are in the workflow itself. */
+export function actionsSnippets(repo: string): Snippet[] {
   return [
     {
-      label: "Repository secrets",
+      label: "Secrets (gh secret set: encrypted, never shown again)",
       lang: "bash",
-      code: [`gh secret set HIPPO_CURATOR_KEY --repo ${repo}`, `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${repo}   # or ANTHROPIC_API_KEY`].join("\n"),
-      note: "Each command asks for the value: the curator key, then a token from your Claude subscription (make one with claude setup-token; no API bill) or, as ANTHROPIC_API_KEY instead, an Anthropic API key. Or set them on GitHub: the repo → Settings → Secrets and variables → Actions.",
-    },
-    {
-      label: "Repository variables",
-      lang: "bash",
-      code: [`gh variable set HIPPO_MCP_URL --repo ${repo} --body ${mcpUrl}`, `gh variable set HIPPO_CURATOR_MODEL --repo ${repo} --body opus`].join("\n"),
-      note: "HIPPO_CURATOR_MODEL is optional (sonnet or opus, say); without it the workflow uses sonnet. It runs nightly at 03:23 UTC.",
+      code: [
+        `gh secret set HIPPO_CURATOR_KEY --repo ${repo}`,
+        "# Then ONE of these two, as a secret too (never gh variable set):",
+        `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo ${repo}`,
+        `gh secret set ANTHROPIC_API_KEY --repo ${repo}`,
+      ].join("\n"),
+      note: "Each command asks for the value: a curator key (Create the curator key, above), then a token from your Claude subscription (claude setup-token; no API bill) or an Anthropic API key. If both are set, the subscription token is used. Or on GitHub: the repo → Settings → Secrets and variables → Actions → Secrets. The vault's address and the model are written into the workflow when you turn it on; it runs nightly at 03:23 UTC.",
     },
   ];
 }
+
+// ── The GitHub Actions curator ─────────────────────────────────────────────
+
+export type ActionsCredential = "claudeToken" | "apiKey";
+
+/** The two ways to pay for Claude in Actions, in the card's words. */
+export const ACTIONS_CREDENTIALS: readonly { id: ActionsCredential; secret: "CLAUDE_CODE_OAUTH_TOKEN" | "ANTHROPIC_API_KEY"; word: string; help: string; placeholder: string }[] = [
+  { id: "claudeToken", secret: "CLAUDE_CODE_OAUTH_TOKEN", word: "Claude subscription token", help: "No API bill: uses your Claude plan. Make one with claude setup-token.", placeholder: "sk-ant-oat01-…" },
+  { id: "apiKey", secret: "ANTHROPIC_API_KEY", word: "Anthropic API key", help: "Billed per use: needs credit on your Anthropic account.", placeholder: "sk-ant-api03-…" },
+];
+
+/** A credential pasted under the other kind's name: the mix-up the card exists to catch. */
+export function credentialProblem(kind: ActionsCredential, value: string): string | undefined {
+  const v = value.trim();
+  if (!v) return "Paste it first.";
+  if (/\s/.test(v)) return "It's one line, with no spaces.";
+  if (v.startsWith("hippo_")) return "That's a Hippocampus key. Hippocampus makes the curator key for you; paste your Claude token or Anthropic key here.";
+  if (kind === "apiKey" && v.startsWith("sk-ant-oat")) return "That's a Claude subscription token: pick “Claude subscription token” above.";
+  if (kind === "claudeToken" && v.startsWith("sk-ant-api")) return "That's an Anthropic API key: pick “Anthropic API key” above.";
+  return undefined;
+}
+
+export interface ActionsCheck {
+  id: "workflow" | "credential" | "curatorKey" | "address";
+  word: string;
+  /** Undefined: GitHub couldn't be asked just now. */
+  done: boolean | undefined;
+  detail: string;
+}
+
+/** The card's checklist, from the state the Worker read off GitHub. */
+export function actionsChecklist(s: HostedCuratorActionsState | undefined, enabled: boolean | undefined): ActionsCheck[] {
+  const secrets = s?.secrets;
+  const has = (n: string) => (secrets ? secrets.includes(n as never) : undefined);
+  const token = has("CLAUDE_CODE_OAUTH_TOKEN");
+  const key = has("ANTHROPIC_API_KEY");
+  const credential = secrets ? !!(token || key) : undefined;
+  const on = s?.enabled ?? enabled;
+  // The address is written into the workflow file: known once the file was read.
+  const address = s?.enabled === undefined ? undefined : s.enabled ? s.workflow?.mcpUrl === s.mcpUrl : false;
+  return [
+    { id: "workflow", word: "Workflow on", done: on, detail: on ? (s?.outdated ? "on, but an older version: turn it off and on to update it" : "runs every night at 03:23 UTC") : on === false ? "turn it on below" : "couldn't check" },
+    { id: "credential", word: "Your Claude token or API key", done: credential, detail: token ? "a Claude subscription token" : key ? "an Anthropic API key" : credential === false ? "not set yet" : "couldn't check" },
+    { id: "curatorKey", word: "Curator key", done: has("HIPPO_CURATOR_KEY"), detail: has("HIPPO_CURATOR_KEY") ? "set by Hippocampus" : secrets ? "set when you save" : "couldn't check" },
+    {
+      id: "address",
+      word: "Vault address",
+      done: address,
+      detail: address
+        ? "the workflow knows your vault's address"
+        : s?.enabled
+          ? s.workflow?.mcpUrl
+            ? "the workflow calls another address: turn it off and on to fix it"
+            : "an older workflow: turn it off and on to update it"
+          : s?.enabled === false
+            ? "written in when you turn it on"
+            : "couldn't check",
+    },
+  ];
+}
+
+/** A run as a tag, a failed one telling where to look. */
+export function actionsRunTone(r: Pick<HostedActionsRun, "status" | "conclusion">): { tone: BadgeState; word: string; help: string } {
+  if (r.status !== "completed") return r.status === "in_progress" ? { tone: "wait", word: "Running", help: "Claude is curating now." } : { tone: "wait", word: "Queued", help: "Waiting for a GitHub runner." };
+  switch (r.conclusion) {
+    case "success":
+      return { tone: "done", word: "Finished", help: "The run went through the inbox." };
+    case "failure":
+    case "timed_out":
+    case "startup_failure":
+      return { tone: "error", word: "Failed: open it on GitHub to see why", help: "The run's log says why, in its last step." };
+    case "cancelled":
+      return { tone: "na", word: "Cancelled", help: "Stopped on GitHub before it finished." };
+    default:
+      return { tone: "na", word: r.conclusion ? r.conclusion.slice(0, 30) : "Unknown", help: "" };
+  }
+}
+
+/** What a run was started by, in words. */
+export const runEvent = (event: string) => (event === "schedule" ? "nightly" : event === "workflow_dispatch" ? "Run now" : event);
 
 // ── Hosted curation (the owner's model key) ────────────────────────────────
 

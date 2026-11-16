@@ -443,11 +443,92 @@ export interface HostedKeyRequest {
   scopes?: string[];
 }
 
-/** `POST curator-actions`: turn the vault's nightly GitHub Actions curator on or off. */
+/**
+ * `POST curator-actions { enable, model? }`: turn the vault's nightly GitHub Actions curator on or off.
+ * On writes the workflow with the vault's MCP address and `model` (else the one it has, else sonnet)
+ * baked in, in one commit when that changes the file.
+ */
 export interface HostedCuratorActionsResult {
   enabled: boolean;
   /** The workflow file in the vault repo. */
   path: string;
+  /** The model the workflow now runs, when on. */
+  model?: string;
+}
+
+/** The repository secrets the Actions curator's workflow reads. */
+export const ACTIONS_SECRETS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "HIPPO_CURATOR_KEY"] as const;
+export type HostedActionsSecret = (typeof ACTIONS_SECRETS)[number];
+/** The models the dashboard may bake into the workflow. */
+export const ACTIONS_MODELS = ["sonnet", "opus"] as const;
+export type HostedActionsModel = (typeof ACTIONS_MODELS)[number];
+
+/**
+ * `POST curator-actions/secrets` (owner only, GitHub vaults): the app writes the workflow's secrets
+ * through the GitHub App. At most one of `claudeToken` (secret CLAUDE_CODE_OAUTH_TOKEN) and `apiKey`
+ * (secret ANTHROPIC_API_KEY); saving one deletes the other, so only one is ever set. Either also mints
+ * a new curator key for Actions (secret HIPPO_CURATOR_KEY) and revokes the one it replaces; neither, to
+ * change only the model. A model goes into the workflow file itself (one commit, when it differs) if
+ * the workflow is on; otherwise turning it on takes it. Values are write-only: sealed for GitHub on the
+ * way through, never stored, never answered. NEEDS_PERMISSION (403) when the installation hasn't
+ * approved Secrets yet.
+ */
+export interface HostedActionsSecretsRequest {
+  claudeToken?: string;
+  apiKey?: string;
+  model?: HostedActionsModel;
+}
+
+export interface HostedActionsSecretsResult {
+  /** The secrets written just now (names only). */
+  saved: HostedActionsSecret[];
+  /** The secret deleted because the other kind was saved. */
+  removed: HostedActionsSecret[];
+  /** Whether a new curator key went in (and the previous Actions one was revoked). */
+  curatorKey: "replaced" | "kept";
+  /** The model the workflow now runs; absent while it's off. */
+  model?: string;
+}
+
+/** A run of the vault repo's `sleep.yml`, as GitHub reports it. */
+export interface HostedActionsRun {
+  id: number;
+  /** queued, in_progress, completed, … */
+  status: string;
+  /** success, failure, cancelled, … once completed; null before. */
+  conclusion: string | null;
+  created: string;
+  url: string;
+  /** schedule, workflow_dispatch, … */
+  event: string;
+}
+
+/**
+ * `GET curator-actions/state` (owner only, GitHub vaults): the Actions curator's checklist and its
+ * last runs, read from GitHub. Each part is absent when GitHub couldn't be asked just now; with
+ * `needsPermission`, the installation hasn't approved Secrets and Actions yet, and only
+ * `enabled` is known.
+ */
+export interface HostedCuratorActionsState {
+  /** The workflow file is in the repo. */
+  enabled?: boolean;
+  /** It is, but not the current version: turning it on again updates it. */
+  outdated?: boolean;
+  /** `who`: the owner approves on GitHub at `settingsUrl`, or (`operator`) the App itself doesn't ask for the permissions yet. */
+  needsPermission?: { repo: string; settingsUrl: string; who: "owner" | "operator" };
+  /** Which of ACTIONS_SECRETS are set (names only; GitHub never shows values). */
+  secrets?: HostedActionsSecret[];
+  /** What the workflow file has baked in, when it's there: its model and the MCP address it calls. */
+  workflow?: { mcpUrl?: string; model?: string };
+  /** This vault's MCP address, which the workflow should call. */
+  mcpUrl: string;
+  /** Newest first, up to five. */
+  runs?: HostedActionsRun[];
+}
+
+/** `POST curator-actions/run`: GitHub queued the workflow; it shows in the runs within a few seconds. */
+export interface HostedActionsRunResult {
+  queued: true;
 }
 
 export type HostedLlmProvider = "anthropic" | "mistral";

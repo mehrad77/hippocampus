@@ -226,17 +226,21 @@ Then run `/hippocampus:sleep` in Claude Code. Without the plugin, the server's p
 
 Scheduled tasks in Claude Code, Claude Desktop or Cursor work too. Schedule this prompt where the server is connected with the curator key: "Run the Hippocampus sleep procedure as the vault's curator: call sleep_start with your model name, then answer its questions until the run is done."
 
-**The Actions curator (hosted app).** On the hosted app's setup page you can turn on a workflow, `.github/workflows/sleep.yml`, which the app adds to your vault repo. It runs Claude nightly on GitHub Actions with the curator key, through MCP only. It doesn't check the repo out, and its GitHub token has no permissions. It needs, under the repo's Settings → Secrets and variables → Actions:
+**The Actions curator (hosted app).** On the hosted app's setup page (Nightly curation → GitHub Actions) you can turn on a workflow, `.github/workflows/sleep.yml`, which the app adds to your vault repo. It runs Claude nightly on GitHub Actions with the curator key, through MCP only. It doesn't check the repo out, and its GitHub token has no permissions.
+
+The card sets its secrets for you through the GitHub App. Paste a Claude subscription token (`claude setup-token`; no API bill) or an Anthropic API key, pick the model, and press **Save to GitHub**. The value goes once through the Worker, sealed with the repo's Actions public key, into the repo's encrypted secrets; it isn't stored or shown again. Saving one kind deletes the other. Each save of a token or key also makes a new curator key for Actions, which revokes the previous one the app made. The vault's MCP address and the model are written into the workflow file itself (they aren't secret: the curator key authenticates); picking another model rewrites it in one commit. The card also has **Run now**, the last five runs with links to GitHub, and a checklist of what's set. A failed run's log ends with the final result's text only (such as "Credit balance is too low"). An installation made before the app could manage Actions shows **Approve it on GitHub**, which opens the installation's settings.
+
+What the workflow reads, under the repo's Settings → Secrets and variables → Actions (the card's **Set it up by hand** has the `gh` commands):
 
 | Name | Kind | Value |
 | --- | --- | --- |
-| `CLAUDE_CODE_OAUTH_TOKEN` | Secret | A token from your Claude subscription (Pro or Max): run `claude setup-token`. Runs count against the subscription's usage, with no API bill |
-| `ANTHROPIC_API_KEY` | Secret | Or an Anthropic API key; runs are billed to it. Set one of the two |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Secret | A token from your Claude subscription (Pro or Max): run `claude setup-token`. Runs count against the subscription's usage, with no API bill. Wins when both are set |
+| `ANTHROPIC_API_KEY` | Secret | Or an Anthropic API key; runs are billed to it. Set one of the two, as a secret, never a variable |
 | `HIPPO_CURATOR_KEY` | Secret | A curator key |
-| `HIPPO_MCP_URL` | Variable | The vault's MCP URL, from the setup page |
-| `HIPPO_CURATOR_MODEL` | Variable | Optional: `sonnet` (default) or `opus`, say |
+| `HIPPO_MCP_URL` | Variable | Optional: overrides the address written in the workflow |
+| `HIPPO_CURATOR_MODEL` | Variable | Optional: overrides the model written in the workflow |
 
-Turning it off on the setup page removes the file.
+Turning it off on the setup page removes the file. Turning it on again brings an older copy up to date, keeping its model.
 
 **Locally.** `hippo serve` offers the same tools, with no key: connect your agent with `claude mcp add hippocampus -- npx -y @mehrad77/hippocampus -v ~/vaults/my-vault serve` and run `/mcp__hippocampus__sleep`. Commit and push the result yourself, or keep using `hippo sleep`.
 
@@ -339,7 +343,7 @@ From a clone of this repository, with Node 24 and a Cloudflare account. The Work
 | Callback URL | `https://<your-host>/oauth/github/callback` |
 | Request user authorization (OAuth) during installation | On |
 | Webhook URL | `https://<your-host>/github/webhook`, with a random secret |
-| Repository permissions | Contents: read and write · Workflows: read and write · Metadata: read |
+| Repository permissions | Contents: read and write · Workflows: read and write · Metadata: read · Secrets: read and write · Actions: read and write (the last two for the Actions curator's card) |
 | Subscribe to events | Installation repositories, Repository |
 | Where it can be installed | Any account, if other people will sign up |
 

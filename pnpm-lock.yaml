@@ -205,10 +205,22 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.1
         version: 1.30.1(@cfworker/json-schema@4.1.1)(zod@4.6.5)
+      '@noble/ciphers':
+        specifier: ^2.4.0
+        version: 2.4.0
+      '@noble/curves':
+        specifier: ^2.4.0
+        version: 2.4.0
+      '@noble/hashes':
+        specifier: ^2.4.0
+        version: 2.4.0
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20261008.1
         version: 5.20261008.1
+      tweetnacl:
+        specifier: ^1.0.3
+        version: 1.0.3
       wrangler:
         specifier: ^4.148.0
         version: 4.148.0(@cloudflare/workers-types@5.20261008.1)(@types/node@24.19.0)
@@ -3233,6 +3245,9 @@ packages:
   turbo@2.11.4:
     resolution: {integrity: sha512-nedZtJ2hjWpU/JBFq7Aj1GQBxQ56si+kIUmNZBUX35O35TIuhSBR6/u3yHHmk81U+RBdBcVjvLQ3/iOFzMwKsA==}
     hasBin: true
+
+  tweetnacl@1.0.3:
+    resolution: {integrity: sha512-6rt+RN7aOi1nGMyC4Xa5DdYiukl2UWCbcJft7YhxReBGQD7OAM8Pbxw6YMo4r2diNEA8FEmu32YOn9rhaiE5yw==}
 
   type-is@2.1.0:
     resolution: {integrity: sha512-faYHw0anBbc/kWF3zFTEnxSFOAGUX9GFbOBthvDdLsIlEoWOFOtS0zgCiQYwIskL9iGXZL3kAXD8OoZ4GmMATA==}
@@ -6581,6 +6596,8 @@ snapshots:
       '@turbo/linux-arm64': 2.11.4
       '@turbo/windows-64': 2.11.4
       '@turbo/windows-arm64': 2.11.4
+
+  tweetnacl@1.0.3: {}
 
   type-is@2.1.0:
     dependencies:

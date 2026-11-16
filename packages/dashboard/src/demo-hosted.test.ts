@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hostedDemo } from "./demo-hosted.ts";
-import { VAULT_HEADER, type AdminReferrals, type HostedInvites, type HostedMembers, type HostedNewInvite, type HostedSetupStatus, type HostedVaults } from "./setup.ts";
+import { VAULT_HEADER, type HostedActionsSecretsResult, type HostedCuratorActionsState, type AdminReferrals, type HostedInvites, type HostedMembers, type HostedNewInvite, type HostedSetupStatus, type HostedVaults } from "./setup.ts";
 import type { DashboardSource } from "./source.ts";
 // The demo's copy of the price list, checked against the real one.
 import { PRICES } from "../../curator/src/pricing.ts";
@@ -275,6 +275,50 @@ describe("hosted demo", () => {
     expect(((await api("setup/status")).body as HostedSetupStatus).hostedCurator?.vault?.standby).toBeUndefined();
     expect((await api("setup/curator-llm/vault", { hourUtc: null })).body).toMatchObject({ enabled: false, lastRun: { stop: "budget" } });
     expect((await api("setup/curator-llm/vault", { hourUtc: null })).body).not.toHaveProperty("hourUtc");
+  });
+
+  it("lets GitHub Actions curate: secrets by name only, the model, runs with a failure, Run now, and a missing permission", async () => {
+    const { api } = client();
+    await api("__demo/stage?to=ready");
+    const state = async () => (await api("setup/curator-actions/state")).body as HostedCuratorActionsState;
+    const first = await state();
+    expect(first).toMatchObject({ enabled: false, secrets: [], runs: [] });
+    expect(first).not.toHaveProperty("workflow");
+    expect((await api("setup/curator-actions/run", {})).body).toMatchObject({ code: "NOT_ENABLED" });
+    expect((await api("setup/curator-actions", { enable: true })).body).toMatchObject({ enabled: true, model: "sonnet" });
+    const runs = (await state()).runs!;
+    expect(runs.map((r) => r.conclusion)).toEqual(["success", "failure", "success"]);
+
+    const saved = (await api("setup/curator-actions/secrets", { claudeToken: "sk-ant-oat01-demo", model: "opus" })).body as HostedActionsSecretsResult;
+    expect(saved).toEqual({ saved: ["CLAUDE_CODE_OAUTH_TOKEN", "HIPPO_CURATOR_KEY"], removed: [], curatorKey: "replaced", model: "opus" });
+    const swapped = (await api("setup/curator-actions/secrets", { apiKey: "sk-ant-api03-demo" })).body as HostedActionsSecretsResult;
+    expect(swapped).toMatchObject({ removed: ["CLAUDE_CODE_OAUTH_TOKEN"], curatorKey: "replaced" });
+    expect((await api("setup/curator-actions/secrets", { model: "sonnet" })).body).toMatchObject({ curatorKey: "kept", saved: [] });
+    const after = await state();
+    expect(after.secrets!.sort()).toEqual(["ANTHROPIC_API_KEY", "HIPPO_CURATOR_KEY"]);
+    expect(after.workflow).toEqual({ mcpUrl: after.mcpUrl, model: "sonnet" });
+    // Off, a model has nowhere to go; turning it on takes it.
+    await api("setup/curator-actions", { enable: false });
+    expect((await api("setup/curator-actions/secrets", { model: "opus" })).body).not.toHaveProperty("model");
+    expect((await api("setup/curator-actions", { enable: true, model: "opus" })).body).toMatchObject({ model: "opus" });
+    expect((await state()).workflow?.model).toBe("opus");
+    // One curator key for Actions, replaced rather than piled up; nothing pasted is kept.
+    const keys = ((await api("setup/keys")).body as { keys: { app?: string }[] }).keys;
+    expect(keys.filter((k) => k.app === "github-actions")).toHaveLength(1);
+    expect(JSON.stringify(after)).not.toContain("sk-ant");
+    expect((await api("setup/curator-actions/secrets", { claudeToken: "a", apiKey: "b" })).body).toMatchObject({ code: "INVALID" });
+
+    expect((await api("setup/curator-actions/run", {})).body).toEqual({ queued: true });
+    expect((await state()).runs![0]).toMatchObject({ status: "queued", conclusion: null, event: "workflow_dispatch" });
+
+    expect((await api("__demo/actions?permission=missing")).location).toBe("/dashboard/setup/#curation");
+    const refused = await state();
+    expect(refused).toMatchObject({ enabled: true, needsPermission: { repo: "player/vault", settingsUrl: "/dashboard/api/__demo/actions?permission=granted", who: "owner" } });
+    expect(refused).not.toHaveProperty("secrets");
+    expect((await api("setup/curator-actions/secrets", { claudeToken: "sk-ant-oat01-demo" })).body).toMatchObject({ code: "NEEDS_PERMISSION" });
+    expect((await api("setup/curator-actions/run", {})).body).toMatchObject({ code: "NEEDS_PERMISSION" });
+    await api("__demo/actions?permission=granted");
+    expect((await state()).needsPermission).toBeUndefined();
   });
 
   it("prices the same models as hosted curation", async () => {

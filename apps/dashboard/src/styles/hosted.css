@@ -263,6 +263,44 @@
   color: var(--link);
 }
 
+/* ── The GitHub Actions curator ───────────────────────────────────────── */
+
+.hz-actions p {
+  margin: 0;
+}
+
+.hz-actions__checks,
+.hz-actions__runs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hz-actions__checks li,
+.hz-actions__runs li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+
+.hz-actions__checks li > span:last-child {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.hz-actions .sz-fieldset:disabled {
+  opacity: 0.6;
+}
+
+.hz-actions select {
+  max-width: 100%;
+}
+
 /* ── Admin ────────────────────────────────────────────────────────────── */
 
 .hz-chip {
