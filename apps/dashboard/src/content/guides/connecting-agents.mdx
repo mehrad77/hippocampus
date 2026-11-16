@@ -38,9 +38,11 @@ Every connection is to **one vault**. If you have several, each has its own addr
 
 ### Connect an app
 
-On the **Setup** page, for the vault the dashboard shows (switch vaults from the menu at the top of the sidebar), press **Connect an app** and pick the app: Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Grok (CLI), a Grok bot (xAI API), any other MCP app, or a script. That's the only question. The app gets **one key** (scopes read, remember and goal), and the agents that run in it name themselves.
+On the **Setup** page, for the vault the dashboard shows (switch vaults from the menu at the top of the sidebar), press **Connect an app** (in onboarding, it's the step **Add your first agent**). The first thing it offers is **Paste this into your agent**: one setup prompt, with a copy button. Paste it into any agent that can run commands. The agent connects itself with device sign-in (you approve it on the dashboard, see below), names itself, adds the memory routine to its own instructions with your OK, and checks who curates. The prompt holds no key, and pasting it again only fills what's missing. The card waits, then says **Connected as** the agent's name.
 
-You get exactly what to paste into that app, with the key already in it, shown **once** (only a hash is stored). The dialog then waits for the app's first call and says when it's **Connected**. Snippets for every other app sit underneath.
+For an app that can't run commands, two quieter links follow: **Claude.ai or ChatGPT** (the connector address, see below), and **Another app: get its config snippet**. That one asks which app: Claude Code, Claude Desktop, Cursor, VS Code, Windsurf, Grok (CLI), a Grok bot (xAI API), any other MCP app, or a script. The app gets **one key** (scopes read, remember and goal), and the agents that run in it name themselves.
+
+You get exactly what to paste into that app, with the key already in it, shown **once** (only a hash is stored), and the setup prompt to tell the agent next. It then waits for the app's first call and says when it's **Connected**. Snippets for every other app sit underneath.
 
 ```bash
 claude mcp add --transport http hippo-vault https://<your-instance>/mcp/<vault id> --header "Authorization: Bearer hippo_…"

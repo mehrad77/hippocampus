@@ -44,6 +44,8 @@ export interface HostedApp {
   fetch(request: Request, ctx: RequestContext): Promise<Response>;
   routes: HostedRoutes;
   oauth: OAuthHelpers;
+  /** The Cron's backstop for hosted curation: each scheduled vault's object re-arms a missing or late alarm. How many did. */
+  ensureHostedAlarms(): Promise<number>;
 }
 
 /** How long an isolate trusts what it read about a vault for OAuth requests. Keys are looked up every time. */
@@ -175,6 +177,9 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
       revokeVaultGrants: (accountId, vaultId) => apps.revokeVault(accountId, vaultId),
       releaseCredentials: (vaultId, credentials) => releaseClaims(vaultId, credentials),
       claims: async (vault) => (await stubFor(vaultMeta(vault))).claims(),
+      hostedCurator: async (vault) => (await stubFor(vaultMeta(vault))).hostedCurator(),
+      setHostedSchedule: async (vault, hourUtc) => (await stubFor(vaultMeta(vault))).setHostedSchedule(hourUtc),
+      runHostedCurator: async (vault) => (await stubFor(vaultMeta(vault))).runHostedCuratorNow(),
       setCurate: async (vault, grant, on) => (await stubFor(vaultMeta(vault))).setCurate(oauthCredential(grant), on),
       seatAgent: async (vault, agent, via) => {
         const stub = await stubFor(vaultMeta(vault));
@@ -344,9 +349,30 @@ export function createHostedApp(deps: HostedAppDeps): HostedApp {
     };
   }
 
+  async function ensureHostedAlarms(): Promise<number> {
+    if (!routes.llm) return 0;
+    let rearmed = 0;
+    for (const id of await routes.llm.scheduledVaults()) {
+      const started = Date.now();
+      try {
+        const vault = await routes.registry.vault(id);
+        if (vault?.status !== "ready") continue;
+        if (await (await stubFor(vaultMeta(vault))).ensureAlarm()) {
+          rearmed++;
+          await log("cron hosted-curator", started, 200, id, "REARMED");
+        }
+      } catch {
+        // One vault's object failing mustn't keep the others from their nights.
+        await log("cron hosted-curator", started, 500, id, "INTERNAL");
+      }
+    }
+    return rearmed;
+  }
+
   return {
     routes,
     oauth,
+    ensureHostedAlarms,
     async fetch(request, ctx) {
       const started = Date.now();
       try {

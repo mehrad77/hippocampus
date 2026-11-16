@@ -1,14 +1,16 @@
-import { useEffect, useState } from "react";
-import { CONNECT_APPS, CURATION_PLACES, connectSnippet, mcpServerName, type ConnectAppId, type CurationPlace } from "@hippocampus/dashboard/connect";
-import { ApiError, getJson, postJson } from "../../lib/api.ts";
+import { useState } from "react";
+import { CURATION_PLACES, type CurationPlace } from "@hippocampus/dashboard/connect";
+import { postJson } from "../../lib/api.ts";
 import { useResource } from "../../lib/cache.ts";
 import { toast } from "../../lib/events.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
 import type { AccountApp, HostedAgentClaim, HostedCuratorActionsResult, HostedKeyInfo, HostedMintedKey, HostedStatus } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
-import { CopyButton, Dialog, Empty, Panel, RelTime, SkeletonPanel } from "../../ui/Parts.tsx";
-import { ConfirmDialog, CopyLine, Effects, ErrorCallout, Facts, refreshSetup, Snippets, ToneTag, useAction } from "./common.tsx";
+import { Dialog, Empty, Panel, RelTime, SkeletonPanel } from "../../ui/Parts.tsx";
+import { AddAgent } from "./AddAgent.tsx";
+import { HostedCurator } from "./HostedCurator.tsx";
+import { ConfirmDialog, Effects, ErrorCallout, Facts, refreshSetup, Snippets, ToneTag, useAction } from "./common.tsx";
 import { actionsSnippets, connectionRows, type ConnectionRow } from "./hosted.ts";
 
 const SCOPE_WORDS: Record<string, string> = { read: "read: search and read", remember: "remember: add new memories", goal: "goal: update goals", curate: "curate: run sleep (sees secrets)" };
@@ -117,7 +119,9 @@ export function ConnectionsPanel({ status }: { status: HostedStatus }) {
         )}
       </div>
 
-      <ConnectDialog open={connecting} onClose={() => setConnecting(false)} status={status} onConnected={() => void keys.reload()} />
+      <Dialog open={connecting} onClose={() => setConnecting(false)} title={`Add an agent to ${vault.fullName}`} wide>
+        {connecting && <AddAgent status={status} onArrived={() => void keys.reload()} />}
+      </Dialog>
       <Dialog open={!!details} onClose={() => setDetails(undefined)} title={details?.name ?? "Details"}>
         {details && (
           <div className="stack">
@@ -175,154 +179,23 @@ function AgentsOf({ row, long }: { row: ConnectionRow; long?: boolean }) {
 }
 
 /**
- * Connecting an app: pick which one. That's all there is to ask: it gets one key, the agents that run
- * in it name themselves and join the Agents page, and the result is its snippet with the key (shown
- * once) and a check that it called in.
- */
-export function ConnectDialog({ open, onClose, status, onConnected }: { open: boolean; onClose: () => void; status: HostedStatus; onConnected?: () => void }) {
-  const vault = status.vault!;
-  const [app, setApp] = useState<ConnectAppId>("claude-code");
-  const [minted, setMinted] = useState<HostedMintedKey>();
-  const action = useAction();
-  const appName = CONNECT_APPS.find((a) => a.id === app)!.name;
-
-  const close = () => {
-    setApp("claude-code");
-    setMinted(undefined);
-    action.clear();
-    onClose();
-  };
-  const connect = async () => {
-    const res = await action.run(() => postJson<HostedMintedKey>("/setup/keys", { kind: "agent", label: appName, app }));
-    if (!res) return;
-    setMinted(res);
-    onConnected?.();
-    void refreshSetup();
-  };
-
-  const footer = minted ? (
-    <button type="button" className="btn btn--primary" onClick={close}>
-      <Icon name="check" /> Done
-    </button>
-  ) : (
-    <>
-      <button type="button" className="btn btn--ghost" onClick={close}>
-        Cancel
-      </button>
-      <button type="button" className="btn btn--primary" onClick={() => void connect()} disabled={action.busy}>
-        <Icon name="link" /> {action.busy ? "Connecting…" : "Connect"}
-      </button>
-    </>
-  );
-
-  return (
-    <Dialog open={open} onClose={minted ? () => undefined : close} title={minted ? `Connected to ${vault.fullName}` : `Connect an app to ${vault.fullName}`} footer={footer} wide>
-      {minted ? (
-        <Connected minted={minted} app={app} status={status} />
-      ) : (
-        <div className="stack">
-          <p className="small muted">Which app?</p>
-          <div className="hz-apps" role="radiogroup" aria-label="The app">
-            {CONNECT_APPS.map((a) => (
-              <label key={a.id} className={`hz-app${app === a.id ? " is-picked" : ""}`}>
-                <input type="radio" name="hz-app" checked={app === a.id} onChange={() => setApp(a.id as ConnectAppId)} />
-                <strong>{a.name}</strong>
-                <span className="small muted">{a.where}</span>
-              </label>
-            ))}
-          </div>
-          <p className="small muted">It gets one key. The agents in it name themselves, and join your Agents page with no authority until you give them some.</p>
-          <details className="sz-details">
-            <summary>Claude.ai or ChatGPT (sign-in, beta)</summary>
-            <div className="stack sz-tight">
-              <p className="small">These apps sign in with your account instead of a key. Add a custom connector with this address; the app asks you to sign in and which vault it is. Its agents then name themselves. Sign-in is still in beta: if it fails, connect another app with a key.</p>
-              <CopyLine value={`${status.publicUrl}/mcp`} label="MCP address for sign-in" />
-            </div>
-          </details>
-          {action.error !== undefined && <ErrorCallout error={action.error} />}
-        </div>
-      )}
-    </Dialog>
-  );
-}
-
-/** The key, shown once, with the chosen app's snippet first, and a check that the app called in. */
-function Connected({ minted, app, status }: { minted: HostedMintedKey; app: ConnectAppId; status: HostedStatus }) {
-  // The chosen app's snippet is made here, from the same module the server uses, so it's always that app's.
-  const first = connectSnippet(app, { url: status.mcpUrl, key: minted.token, server: mcpServerName(status.vault!.fullName) });
-  const rest = minted.snippets.filter((s) => s.label !== first.label);
-  const [seen, setSeen] = useState<string>();
-  useEffect(() => {
-    let stop = false;
-    const look = async () => {
-      try {
-        const { keys } = await getJson<{ keys: HostedKeyInfo[] }>("/setup/keys");
-        const used = keys.find((k) => k.id === minted.id)?.lastUsed;
-        if (used && !stop) return setSeen(used);
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 401) return;
-      }
-      if (!stop) timer = setTimeout(() => void look(), 5000);
-    };
-    let timer = setTimeout(() => void look(), 3000);
-    return () => {
-      stop = true;
-      clearTimeout(timer);
-    };
-  }, [minted.id]);
-  const appName = CONNECT_APPS.find((a) => a.id === app)!.name;
-  return (
-    <div className="stack">
-      <div className="callout callout--warn" role="note">
-        <Icon name="lock" />
-        <div>
-          <strong>Copy it now: you won't see this key again.</strong> It's inside the snippet below. If it's lost, disconnect this and connect again.
-        </div>
-      </div>
-      <h3 className="sz-subhead">In {appName}</h3>
-      <Snippets snippets={[first]} />
-      <div className="sz-token">
-        <pre className="sz-token__value" tabIndex={0} aria-label="The key">
-          <code>{minted.token}</code>
-        </pre>
-        <CopyButton text={minted.token} label="Copy the key" />
-      </div>
-      <div className="row" role="status" aria-live="polite">
-        {seen ? (
-          <ToneTag tone="done" word="Connected" title="It called in" />
-        ) : (
-          <>
-            <ToneTag tone="wait" word="Waiting" title="Not called in yet" />{" "}
-            <span className="small muted">
-              Waiting for its first call. {app === "xai-api" || app === "script" ? "Have it make a request, like recalling something." : `Start ${appName} (or a new session in it) and ask it to recall something.`}
-            </span>
-          </>
-        )}
-        {seen && (
-          <span className="small muted">
-            First call <RelTime at={seen} />.
-          </span>
-        )}
-      </div>
-      {rest.length > 0 && (
-        <details className="sz-details">
-          <summary>Other apps</summary>
-          <Snippets snippets={rest} />
-        </details>
-      )}
-    </div>
-  );
-}
-
-/**
  * Where the nightly curator runs: the same three choices as the `sleep-setup` skill, with what each
  * needs. The curator sees secret memories, so only the owner sets it up.
  */
-export function CurationSetup({ status, bare, runs }: { status: HostedStatus; bare?: boolean; runs?: React.ReactNode }) {
+export function CurationSetup({ status, bare, runs, curated }: { status: HostedStatus; bare?: boolean; runs?: React.ReactNode; curated?: boolean }) {
   const { v } = useTerms();
   const github = (status.vault?.provider ?? "github") === "github";
+  // Hippocampus's own curation, where the instance offers it; in the bare (onboarding) list it has a choice of its own.
+  const hosted = !bare && !!status.hostedCurator?.available;
+  const hostedOn = hosted && !!(status.hostedCurator?.vault?.enabled || status.hostedCurator?.keyHint);
   // An agent they already have first: it costs nothing new. Actions needs Claude paid for.
-  const [place, setPlace] = useState<CurationPlace>(status.curatorActions ? "actions" : "schedule");
+  // Until the person picks, the choice follows the status: what runs now, else Hippocampus's own where offered.
+  const [picked, setPlace] = useState<CurationPlace>();
+  // Once hosted curation is set up, its card stands on its own above the other places.
+  const places = CURATION_PLACES.filter((p) => (github || p.id !== "actions") && (p.id !== "hosted" || (hosted && !hostedOn)));
+  const wanted = picked ?? (status.curatorActions ? "actions" : hosted && !hostedOn ? "hosted" : "schedule");
+  // A place that left the list (hosted curation just saved) falls back to the first agent choice.
+  const place: CurationPlace = places.some((p) => p.id === wanted) ? wanted : "schedule";
   const [minted, setMinted] = useState<HostedMintedKey>();
   const action = useAction();
   const mint = async () => {
@@ -331,23 +204,16 @@ export function CurationSetup({ status, bare, runs }: { status: HostedStatus; ba
     setMinted(res);
     void refreshSetup();
   };
-  const places = CURATION_PLACES.filter((p) => github || p.id !== "actions");
   const snippets = minted?.snippets ?? [];
   const forPlace =
     place === "actions" ? snippets.filter((s) => /Actions/.test(s.label)) : place === "schedule" ? snippets.filter((s) => !/Actions|cron/.test(s.label)) : snippets.filter((s) => /cron|prompt/.test(s.label));
   // Once a curator is set up, its runs come first and the setup folds away.
-  const configured = !!status.curatorActions || (status.keys ?? []).some((k) => k.kind === "curator");
+  const configured = curated ?? (!!status.curatorActions || hostedOn || (status.keys ?? []).some((k) => k.kind === "curator"));
   const setup = (
     <div className="stack">
       <p className="small">
         Every night, a curator turns what your agents saved into notes: it settles facts, updates goals and the timeline, and empties the inbox. Pick where it runs. In Claude Code, <code>/hippocampus:sleep-setup</code> walks you through the same choices.
       </p>
-      <div className="callout callout--warn" role="note">
-        <Icon name="lock" />
-        <div>
-          <strong>The curator sees secret memories.</strong> Give sleep <strong>a bot of its own</strong>: a separate agent (its own Claude Code project or scheduled task, its own Grok bot) that only curates, with its own curator key. Not the agent you chat with every day, and only with an AI provider you trust with your secrets. One curator per vault is enough.
-        </div>
-      </div>
       <fieldset className="sz-fieldset">
         <legend className="label">Where it runs</legend>
         {places.map((p) => (
@@ -360,8 +226,18 @@ export function CurationSetup({ status, bare, runs }: { status: HostedStatus; ba
           </label>
         ))}
       </fieldset>
+      {place !== "hosted" && (
+        <div className="callout callout--warn" role="note">
+          <Icon name="lock" />
+          <div>
+            <strong>The curator sees secret memories.</strong> Give sleep <strong>a bot of its own</strong>: a separate agent (its own Claude Code project or scheduled task, its own Grok bot) that only curates, with its own curator key. Not the agent you chat with every day, and only with an AI provider you trust with your secrets. One curator per vault is enough.
+          </div>
+        </div>
+      )}
       {action.error !== undefined && <ErrorCallout error={action.error} />}
-      {minted ? (
+      {place === "hosted" ? (
+        <HostedCurator status={status} />
+      ) : minted ? (
         <div className="stack sz-tight">
           <p className="small">
             <strong>Your curator key</strong> is in the snippets below; you won't see it again.
@@ -388,6 +264,7 @@ export function CurationSetup({ status, bare, runs }: { status: HostedStatus; ba
   return (
     <Panel title={v("Nightly curation", "The nightly sleep")} icon="moonStars" id="curation">
       <div className="stack">
+        {hostedOn && <HostedCurator status={status} />}
         {runs}
         {configured && runs ? (
           <details className="sz-details">

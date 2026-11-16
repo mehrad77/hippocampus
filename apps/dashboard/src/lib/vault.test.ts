@@ -29,7 +29,11 @@ describe("adding a vault", () => {
       expect(addingVaultNow("", "#repo")).toBe(false);
       expect(addingVaultNow("?add", "#create")).toBe(true);
       expect(addingVaultNow("", "#repo")).toBe(true);
+      // The new step ids and the old ones it keeps as aliases; past the vault, adding is over.
+      expect(addingVaultNow("", "#vault")).toBe(true);
+      expect(addingVaultNow("", "#init")).toBe(true);
       expect(addingVaultNow("", "#agents")).toBe(false);
+      expect(addingVaultNow("", "#agent")).toBe(false);
       expect(addingVaultNow("", "")).toBe(false);
       stopAddingVault();
       expect(addingVaultNow("", "#repo")).toBe(false);

@@ -35,6 +35,9 @@ importers:
       '@ai-sdk/anthropic':
         specifier: ^4.0.65
         version: 4.0.65(zod@4.6.5)
+      '@ai-sdk/mistral':
+        specifier: ^4.0.52
+        version: 4.0.52(zod@4.6.5)
       '@ai-sdk/openai-compatible':
         specifier: ^3.0.57
         version: 3.0.57(zod@4.6.5)
@@ -230,6 +233,9 @@ importers:
       '@ai-sdk/anthropic':
         specifier: ^4.0.65
         version: 4.0.65(zod@4.6.5)
+      '@ai-sdk/mistral':
+        specifier: ^4.0.52
+        version: 4.0.52(zod@4.6.5)
       '@ai-sdk/openai-compatible':
         specifier: ^3.0.57
         version: 3.0.57(zod@4.6.5)
@@ -245,6 +251,10 @@ importers:
       zod:
         specifier: ^4.6.5
         version: 4.6.5
+    devDependencies:
+      '@hippocampus/template':
+        specifier: workspace:*
+        version: link:../template
 
   packages/dashboard:
     dependencies:
@@ -342,6 +352,12 @@ packages:
 
   '@ai-sdk/gateway@4.0.96':
     resolution: {integrity: sha512-1aniRTzEf9T7uRHdKnBQ36WgEVQswK6wDgkPVsNMl+sPy7otcmrBa2HEurdFBS51s1q3/UXlh8nNcguwU79Hkg==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/mistral@4.0.52':
+    resolution: {integrity: sha512-ytqGhPHulDQA+NzDYCsulKFuB1xPo63XcWx+jGuAK7MK98mp8wBF+SddHK/UXa5hv+4CBJMmGgJHWZemzRs/HQ==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -3662,6 +3678,12 @@ snapshots:
       '@ai-sdk/provider': 4.0.18
       '@ai-sdk/provider-utils': 5.0.49(zod@4.6.5)
       '@vercel/oidc': 3.2.0
+      zod: 4.6.5
+
+  '@ai-sdk/mistral@4.0.52(zod@4.6.5)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.18
+      '@ai-sdk/provider-utils': 5.0.49(zod@4.6.5)
       zod: 4.6.5
 
   '@ai-sdk/openai-compatible@3.0.57(zod@4.6.5)':

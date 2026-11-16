@@ -30,6 +30,19 @@ Ask the person for their Hippocampus address (like `https://hippocampus.example.
 2. **Connected apps → Connect an app**: pick the app. That's all it asks.
 3. They paste the snippet it shows into that app. The key is shown once; never ask them to paste it into this chat.
 
+## 4. Keep using it
+
+Once `onboard` answers:
+
+1. **Memory routine.** With the person's OK, add a short standing instruction to your persistent instructions (user-level `CLAUDE.md`, Cursor rules, custom instructions, or a bot's system prompt), with your agent id in it: call `onboard` and `recall` before acting on the person's plans, people, places or projects; `remember` durable things one per call with exact values, `secret: true` for IDs and credentials, `confidential: true` for private matters; never edit notes. In Claude Code, the plugin's `memory` skill already is this routine.
+2. **Curation.** `onboard` ends with who curates the vault.
+   - Hippocampus curates it with the person's key: say so, and ask once whether you should stand by in case it pauses.
+   - Nobody curates it, or they want a standby: follow the `sleep-setup` skill (`/hippocampus:sleep-setup`).
+   - Another agent already curates or stands by: do nothing.
+3. **Report** in two lines: what is connected, and who curates when.
+
+The dashboard's setup prompt (**Paste this into your agent**) asks for the same steps.
+
 ## Rules
 
 - One key per app; one agent id per agent, the same every session (`<platform>-<role>`). An id another connection uses is refused.

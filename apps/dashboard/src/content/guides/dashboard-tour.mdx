@@ -112,20 +112,17 @@ Settings it saves go to `~/.config/hippocampus/env` (mode 0600; `HIPPO_CONFIG_DI
 
 ## Setup on the hosted app
 
-On the hosted app, Setup walks you from signing in to a working vault. Nothing happens until you press a button, and every button says what it will do.
+On the hosted app, Setup walks you from signing in to a working vault in five steps. Nothing happens until you press a button, and every button says what it will do.
 
 | Step | What happens |
 | --- | --- |
-| Request access | Ask once, with an optional note. An admin approves accounts by hand; the rest unlocks then |
-| Create a repo | Opens GitHub's new-repository form, filled in: private, named `vault`. You create it yourself |
-| Install the app | Installs the Hippocampus GitHub App on that one repository |
-| Pick the repo | Lists the app's repositories and says which can become a vault: private, and empty or already a vault |
-| Name it | The vault's name, your id, time zone and domains, optionally the fictional example, and a key for secrets made in this browser |
-| Set up the vault | One commit puts the template into the repo. A repo that's already a vault is adopted: only missing guardrail files are added |
-| Connect agents | **Connect an app**: pick the app, what it may do and its name, and get exactly what to paste into it; or connect Claude.ai and ChatGPT with the MCP address (beta) |
-| Set up curation | A curator key and how to run it, or the GitHub Actions curator |
+| Request access | Only while you wait for approval. Ask once, with an optional note. An admin approves accounts by hand; the rest unlocks then |
+| Repository | Create a private repo (GitHub's form, filled in), install the Hippocampus GitHub App on it (or connect GitLab), and pick it. The only repo that can become a vault is picked for you, and your own disconnected vault shows **Reconnect** |
+| Your vault | Only a name. Your id, time zone, domains, presets and the fictional example are under **More options**. A key for secrets, made in this browser, is preselected but never in the way: **Not now** skips it. **Create the vault** makes one commit; a repo that's already a vault is reconnected or adopted as it is |
+| Add your first agent | **Paste this into your agent**: one prompt that connects the agent by device sign-in (you approve it on the dashboard), adds the memory routine and checks who curates. For Claude.ai and ChatGPT there's the connector address; for any other app, its config snippet |
+| Curation | One of your agents (the setup prompt offers it), or **Advanced**: a cron line or the GitHub Actions curator. **Finish** takes you to Home |
 
-Keys are shown once and stored only as a hash. Afterwards, **Connected apps** on the Setup page lists every connection (keys and sign-in apps), and **Nightly curation** sets up the curator. See <Link guide="connecting-agents">Connecting agents</Link> and <Link guide="nightly-sleep">The curator</Link>.
+Keys are shown once and stored only as a hash. Afterwards, Setup & health is one page in sections (Vault, Agents, Curation, People, Account) with a bar to jump between them. **Connected apps** lists every connection (keys and sign-in apps), and its **Connect an app** opens the same one-prompt card; **Nightly curation** sets up the curator. See <Link guide="connecting-agents">Connecting agents</Link> and <Link guide="nightly-sleep">The curator</Link>.
 
 **The curator panel**, on the same page, shows the sleep run in progress (who holds it, how far it got, when its lease ends) and past runs, newest first. Stop a run there if it's stuck.
 

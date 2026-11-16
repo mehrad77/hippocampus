@@ -13,8 +13,8 @@ The vault depends on the tool, and the tool never knows about any vault. Nothing
 
 There are two ways to run it:
 
-- **The hosted app** (§8): sign in with GitHub, and the app keeps your vault in a private repo you own, serves MCP to your agents, and lets one of them curate. You need only a GitHub account. You can also run your own instance on Cloudflare.
-- **The local CLI** (§0–§7): `hippo` on your own machine. Requirements: Node 24+, git, and (for the nightly curator) [LM Studio](https://lmstudio.ai) or [Ollama](https://ollama.com), an Anthropic or xAI API key, or an agent of your own (§5).
+- **The hosted app** (§8): sign in with GitHub, and the app keeps your vault in a private repo you own, serves MCP to your agents, and lets one of them curate (or curates itself with your own model key). You need only a GitHub account. You can also run your own instance on Cloudflare.
+- **The local CLI** (§0–§7): `hippo` on your own machine. Requirements: Node 24+, git, and (for the nightly curator) [LM Studio](https://lmstudio.ai) or [Ollama](https://ollama.com), an Anthropic, xAI or Mistral API key, or an agent of your own (§5).
 
 ## 0. The dashboard and Session Zero
 
@@ -142,7 +142,7 @@ Tools: `onboard`, `introduce`, `remember`, `recall`, `get`, `neighbors`, `ask_ca
 
 **Confidential** values stay in your notes but out of search, summaries, the chronicle and every agent's view, except an agent bound to its id (a single-agent key, an OAuth connection, `serve --agent`) with authority over them. The curator sees them while curating. For remote agents and Claude.ai or ChatGPT connectors, use the hosted app (§8).
 
-Agent ids are exact: lowercase letters, digits and dashes, matching `party/<id>.md`. Your humans' ids (the config's `humans:`) and the reserved ids `human`, `curator`, `unknown` and `hippocampus` are refused. An agent without a party sheet can still write, but its memories count as rumors until you approve it (§6). One `remember` call takes at most 8 KB; split longer memories.
+Agent ids are exact: lowercase letters, digits and dashes, matching `party/<id>.md`. Your humans' ids (the config's `humans:`) and the reserved ids `human`, `curator`, `unknown`, `hippocampus` and `hosted` are refused. An agent without a party sheet can still write, but its memories count as rumors until you approve it (§6). One `remember` call takes at most 8 KB; split longer memories.
 
 **Inbox files (local tools without MCP):** a tool that can't speak MCP may write one new file per memory to `inbox/<its-id>/`, in the format `HANDBOOK.md` shows. It must never edit other files. The vault's `AGENTS.md` tells agents to use MCP instead, since the tools run the checks.
 
@@ -269,12 +269,11 @@ The tool refuses to write to a vault whose format version differs from its own. 
 
 ### Using a hosted instance
 
-1. **Sign in** with GitHub on the instance's welcome page and ask for access, with an optional note. An admin approves accounts by hand; the setup page unlocks once you're in.
-2. **Create a private repo.** The setup page opens GitHub's form, filled in (`vault`, private). It must be empty, or hold only a README, LICENSE or .gitignore. A repo that already holds a Hippocampus vault is adopted instead: only missing guardrail files are added.
-3. **Install the app** on that repo only. GitHub asks you to authorize it, then sends you back.
-4. **Pick the repo and name the vault:** your id, time zone and domains, optionally the fictional example campaign and presets. A key for secret facts is made in your browser; download the key file and keep it safe. Only its public half goes into the vault.
-5. **Set up the vault.** One commit puts the template into the repo.
-6. **Connect agents** (below) and **set up a curator** (§5).
+1. **Request access.** Sign in with GitHub on the instance's welcome page and ask for access, with an optional note. An admin approves accounts by hand; the setup page unlocks once you're in. (Approved and invited people skip this step.)
+2. **Repository.** Create a private repo (the setup page opens GitHub's form, filled in: `vault`, private), install the app on that repo only (GitHub sends you back), and pick it; the only usable repo is picked for you. It must be empty, or hold only a README, LICENSE or .gitignore. A repo that already holds a Hippocampus vault is adopted instead (your own disconnected vault shows **Reconnect**): only missing guardrail files are added.
+3. **Your vault:** a name. Your id, time zone, domains, presets and the fictional example campaign are under **More options**. A key for secret facts is made in your browser, preselected: download the key file, keep it safe and tick that you saved it, or choose **Not now**. Only its public half goes into the vault. **Create the vault** makes one commit.
+4. **Add your first agent:** paste the setup prompt into it (below).
+5. **Curation:** one of your agents, or a cron line or GitHub Actions (§5). **Finish** lands on Home.
 
 **Several vaults.** Add another from the vault menu at the top of the sidebar, or **Setup → Your vaults → Add a vault**: the same steps, for another repo (add it to the GitHub App's installation, or pick another GitLab project). Each vault has its own keys, its own curator and its own MCP address, `https://<your-instance>/mcp/<vault id>`. The vault menu switches the dashboard between them; each browser tab keeps its own, and a new tab opens the one you used last. **Remove** forgets a vault here (its keys, connected apps, index and cache); its repo stays where it is, and you can add it again.
 
@@ -290,7 +289,7 @@ The tool refuses to write to a vault whose format version differs from its own. 
 
 **Inviting people to the app.** Anyone approved can invite someone to the hosted app itself (**Setup → Invite someone to Hippocampus**): it lets them in without the waitlist and shares nothing. Ten open invites at a time; admins have no cap, and can turn a person's invites off.
 
-**Connecting apps.** **Setup → Connected apps → Connect an app** asks only which app. The app gets one key (`read`, `remember`, `goal`), and the agents in it name themselves on each call, so one key can carry several. It shows the snippet for that app with the key in it, once (only a hash is stored), then waits for the app's first call. A key opens only its own vault: used at another vault's address, it's refused (`403 wrong_vault`), so a mixed-up config fails loudly instead of writing to the wrong vault. The list shows every connection, keys and sign-in apps alike, and disconnects any of them at once.
+**Connecting apps.** **Setup → Connected apps → Connect an app** first offers the setup prompt: paste it into an agent that can run commands, and it connects itself with device sign-in (you approve it at `/dashboard/connect/`), adds the memory routine and checks who curates. For any other app, **Another app: get its config snippet** asks only which app. The app gets one key (`read`, `remember`, `goal`), and the agents in it name themselves on each call, so one key can carry several. It shows the snippet for that app with the key in it, once (only a hash is stored), then waits for the app's first call. A key opens only its own vault: used at another vault's address, it's refused (`403 wrong_vault`), so a mixed-up config fails loudly instead of writing to the wrong vault. The list shows every connection, keys and sign-in apps alike, and disconnects any of them at once.
 
 | Kind | Scopes | For |
 | --- | --- | --- |
@@ -306,7 +305,20 @@ The setup page has snippets for Claude Code, Claude Desktop, Cursor, VS Code, Wi
 
 **Agents connecting themselves.** An agent that can run commands can ask to connect: it calls `POST https://<your-instance>/connect/device`, shows you a code, and you approve it at `/dashboard/connect/` (the vault, the agent's name, what it may do). It then collects a key for that vault. `/llms.txt` on the instance tells agents how, and the plugin's `/hippocampus:connect` skill does it in Claude Code. See [AGENT-STANDARDS.md](AGENT-STANDARDS.md) for the conventions behind it.
 
-**Nightly curation.** **Setup → Nightly curation** asks where the curator runs (one of your own agents, such as Claude Code or a Grok bot, at no new charge; a cron line; or GitHub Actions, which needs Claude paid for), makes its key and shows what to run there. Give curation a bot of its own that only curates. In Claude Code, `/hippocampus:sleep-setup` does the same, step by step.
+**Nightly curation.** **Setup → Nightly curation** asks where the curator runs: **Hippocampus runs it with your key** (below, where the instance offers it), one of your own agents (such as Claude Code or a Grok bot, at no new charge), a cron line, or GitHub Actions (which needs Claude paid for). For an agent, it makes the curator's key and shows what to run there. Give curation a bot of its own that only curates. In Claude Code, `/hippocampus:sleep-setup` does the same, step by step.
+
+**Hippocampus runs it with your key.** On an instance that offers it, the app runs sleep itself every night, with your own Anthropic or Mistral API key. It's owner only; under **Setup → Nightly curation**:
+
+1. Pick the provider and paste its API key. The app checks it with the provider, seals it, and never shows it again: you see only its last four characters, and **Replace key** to change it. A new provider needs its own key.
+2. Pick the models. **The recommended mix** is the curator eval's pick, per step the cheapest model that does the step well; until the eval has been run for a provider, pick **one model for every step**. **Advanced** sets a model per step. Each model shows its price per million tokens, and the card estimates what 100 memories cost at most, assuming one call per step for every memory, each with a 4,000-token prompt and the most output the step allows. Real runs usually cost less.
+3. Set a **monthly cap** and a **per-run cap**, in US dollars, and save.
+4. Tick **Curate this vault every night** and pick the hour, shown in your own time (it's stored in UTC). **Run now** starts a run at once, giving set-aside memories another try.
+
+The card shows this month's spend against the cap, the last hosted run, and its cost. Past runs list each run's cost, and why one stopped early ("Paused at the budget", "Key refused").
+
+- **The budget.** Every model call is reserved at its worst case before it's made, so a run never spends past a cap. When a run reaches the per-run cap, it stops there, and what it finished stays. When the account reaches the monthly cap, the run stops and curation pauses until the next month (UTC), or until you raise the cap. If the provider refuses the key or runs out of credit, curation pauses until you save a new key. A memory too large for the per-run cap waits until you raise that cap. Set a spending limit at the provider too.
+- **Privacy.** Every new memory, secret and confidential ones included, goes to the provider you chose, under your key. Members' agents add to the inbox your key pays for, and the monthly cap is what bounds it. See [SECURITY.md](../SECURITY.md).
+- **A standby curator.** Your own curator agent can stand by in case hosted curation pauses. Schedule it after the hosted hour (the setup prompt asks whether you want one). While hosted curation is on, unpaused and nothing has waited 36 hours, its `sleep_start` answers `not_needed`, and it stops after that one call. Otherwise it runs as usual. The card shows its last check-in ("Standby: `claude-code-curator`, checked in …"). When curation pauses, a banner says whether the standby will run tonight. Every agent's `onboard` ends with who curates.
 
 **Sign-in apps (Claude.ai, ChatGPT; beta).** Add a custom connector with the URL `https://<your-instance>/mcp`. The app signs you in with GitHub and shows a consent page: pick the vault it connects to (one per connection). The app's agents name themselves on each call and join your Agents page. For a vault you own, the page also has a ticked box, **Let this app run nightly curation**: leave it ticked and the app can run sleep (`sleep_start` and the other tools), with a curator key's view of secrets. You can turn that off and on again any time under **Setup → Connected apps** (**May curate**), and only a vault's owner can. A member's app can't curate at all. An app connected before this existed has to be connected again to get the switch. An agent that can't run sleep is told why in its instructions and in `onboard`, and says where you can change it. Your account menu lists connected apps and disconnects them.
 
@@ -368,6 +380,8 @@ Until they're all set, the Worker answers with a page naming the missing ones (n
 | `GITLAB_URL` | Optional: the instance's https origin. Default `https://gitlab.com` |
 
 All three must be set together or the Worker says what's missing. One GitLab host per instance. A Cron Trigger (`wrangler.jsonc`) checks GitLab vaults every six hours.
+
+**3c. Hosted curation (optional).** To offer **Hippocampus runs it with your key**, set `HIPPO_HOSTED_CURATOR=on` together with `HIPPO_TOKEN_KEY` (made as above), which seals the keys owners save. It's off until you do, even on an instance that already has the key for GitLab. It needs the Workers paid plan. Removing the setting switches it off for everyone at once: no run starts, and an open one closes at its next alarm. Saved keys stay sealed until it's back on.
 
 **4. Deploy.** From the repository root. This builds the dashboard, applies the registry's migrations (`apps/worker/migrations/`), then deploys:
 

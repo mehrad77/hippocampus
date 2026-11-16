@@ -35,7 +35,7 @@ export function HostedVaultsPanel({ status }: { status: HostedStatus }) {
       id="vaults"
       aside={
         add.ok ? (
-          <a className="btn btn--sm" href={`${href.page("setup")}?add#create`}>
+          <a className="btn btn--sm" href={`${href.page("setup")}?add#repo`}>
             <Icon name="plus" /> Add a vault
           </a>
         ) : undefined

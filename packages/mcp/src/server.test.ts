@@ -44,6 +44,24 @@ describe("MCP server", () => {
     expect((await connect("residency-agent")).client.getInstructions()).not.toContain("sleep");
   });
 
+  it("ends every connection's onboard with who curates, when the host says", async () => {
+    const line = "Nightly curation: Hippocampus runs it at 03:00 UTC (last run 2026-11-15).";
+    const server = createHippoServer({ service: new HippoService(fixtureStore({})), agent: "residency-agent", curationState: async () => line });
+    const client = new Client({ name: "test", version: "0" });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(a), client.connect(b)]);
+    const onboard = (await client.callTool({ name: "onboard", arguments: {} })) as { content: { text: string }[] };
+    expect(onboard.content[0]!.text.endsWith(`\n\n${line}`)).toBe(true);
+    // A host that can't say leaves onboard as it was.
+    const quiet = createHippoServer({ service: new HippoService(fixtureStore({})), agent: "residency-agent", curationState: async () => Promise.reject(new Error("registry down")) });
+    const c2 = new Client({ name: "test", version: "0" });
+    const [a2, b2] = InMemoryTransport.createLinkedPair();
+    await Promise.all([quiet.connect(a2), c2.connect(b2)]);
+    const plain = (await c2.callTool({ name: "onboard", arguments: {} })) as { content: { text: string }[] };
+    expect(plain.content[0]!.text).not.toContain("registry down");
+    expect(plain.content[0]!.text).toContain("You are Residency Agent");
+  });
+
   it("round-trips remember → recall with a bound identity", async () => {
     const { call, store } = await connect("residency-agent");
     expect((await call("onboard")).text).toContain("You are Residency Agent");

@@ -1,5 +1,5 @@
 import { HippoService, Vault } from "@hippocampus/core";
-import { MemoryRunStore, SLEEP_PROCEDURE, SleepRelay, type Question } from "@hippocampus/curator";
+import { MemoryRunStore, SLEEP_PROCEDURE, SleepRelay, type Question, type SleepGate } from "@hippocampus/curator";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
@@ -8,11 +8,11 @@ import { createHippoServer, type Scope } from "./server.ts";
 
 const now = () => new Date("2026-09-27T21:00:00.000Z");
 
-async function connect(o: { agent?: string; scopes?: Scope[] } = {}) {
+async function connect(o: { agent?: string; scopes?: Scope[]; gate?: SleepGate } = {}) {
   const store = fixtureStore({
     "inbox/home-finder/2026-09-27T120000-landlord.md": "---\nagent: home-finder\nkind: fact\nat: 2026-09-27T12:00:00Z\n---\nNew landlord is João Silva.\n",
   });
-  const relay = new SleepRelay({ open: async (at) => ({ vault: await Vault.load(store, { now: () => at }), store }), runs: new MemoryRunStore(), clock: now });
+  const relay = new SleepRelay({ open: async (at) => ({ vault: await Vault.load(store, { now: () => at }), store }), runs: new MemoryRunStore(), clock: now, gate: o.gate });
   const server = createHippoServer({ service: new HippoService(store), agent: o.agent, scopes: o.scopes, relay });
   const client = new Client({ name: "test", version: "0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
@@ -48,7 +48,10 @@ describe("sleep over MCP", () => {
     expect(client.getInstructions()).toContain("sleep_start");
     expect((await client.listPrompts()).prompts.map((p) => p.name)).toEqual(["sleep"]);
     const prompt = await client.getPrompt({ name: "sleep" });
-    expect((prompt.messages[0]!.content as { text: string }).text).toBe(`${SLEEP_PROCEDURE}\n\nStart by calling sleep_start with your model name.`);
+    const text = (prompt.messages[0]!.content as { text: string }).text;
+    expect(text.startsWith(`${SLEEP_PROCEDURE}\n\nStart by calling sleep_start with your model name.`)).toBe(true);
+    expect(text).toContain('"not_needed"');
+    expect(text).toContain("force: true");
 
     const agentOnly = await connect({ agent: "home-finder", scopes: ["read", "remember"] });
     expect((await agentOnly.client.listTools()).tools.map((t) => t.name).filter((t) => t.startsWith("sleep_"))).toEqual([]);
@@ -99,5 +102,18 @@ describe("sleep over MCP", () => {
     const again = (await call("sleep_start", { model: "test-model" })).json();
     expect((await call("sleep_abort", { run: again.run })).json()).toMatchObject({ history: [{ id: again.run, outcome: "aborted" }, { id: step.run, outcome: "done" }] });
     expect((await call("sleep_answer", { run: again.run, answers: [] })).isError).toBe(true);
+  });
+
+  it('answers "not_needed" in full words when the gate says so, and runs with force', async () => {
+    const gate: SleepGate = async () => ({ needed: false, reason: "hosted", hosted: { lastRun: "2026-09-27T03:00:00.000Z" } });
+    const { call } = await connect({ agent: "archivist", gate });
+    const quiet = (await call("sleep_start", { model: "test-model" })).json();
+    expect(quiet).toMatchObject({ state: "not_needed", reason: "hosted" });
+    expect(quiet.message).toContain("Stop here");
+    expect(quiet.message).toContain("2026-09-27 03:00 UTC");
+    expect(quiet.run).toBeUndefined();
+    expect((await call("sleep_status")).json()).toEqual({ history: [] });
+    const forced = (await call("sleep_start", { model: "test-model", force: true })).json();
+    expect(forced.state).toBe("ask");
   });
 });

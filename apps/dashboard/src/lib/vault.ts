@@ -68,8 +68,11 @@ export function switchVault(id: string, to?: string): void {
 }
 
 const ADDING = "hippo:adding-vault";
-/** The setup steps of adding a vault; GitHub and GitLab send people back to one of them (`#repo`), without `?add`. */
-const ADD_STEPS = new Set(["create", "install", "repo", "campaign", "init"]);
+/**
+ * The setup steps of adding a vault (`repo`, `vault`), and the old step ids that alias them; GitHub and GitLab send
+ * people back to one of them (`#repo`), without `?add`.
+ */
+const ADD_STEPS = new Set(["repo", "vault", "create", "install", "campaign", "init"]);
 
 /**
  * Whether this tab is adding another vault: `?add` on the setup page, or a step of it after a trip to

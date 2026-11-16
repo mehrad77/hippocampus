@@ -1,7 +1,7 @@
 import { isConnectApp, keySnippets } from "./connect.ts";
 import { demoPresets } from "./demo-setup.ts";
 import { HttpError, errorResponse, json, readJson, securityHeaders } from "./http.ts";
-import { VAULT_HEADER, byRecentPush, type AdminReferrals, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedAgentClaim, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem } from "./setup.ts";
+import { VAULT_HEADER, byRecentPush, type AdminReferrals, type HostedDeviceRequest, type HostedIncomingInvite, type HostedInvite, type HostedInvites, type HostedMember, type HostedMembers, type HostedNewInvite, type HostedConnectedApp, type HostedCuratorActionsResult, type HostedCuratorRunResult, type HostedCuratorStatus, type HostedLlmProvider, type HostedStepMix, type HostedVaultCurator, type HostedAgentClaim, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSessionInfo, type HostedSetupStatus, type HostedVault, type HostedVaults, type SetupItem } from "./setup.ts";
 import { capabilities, readOnlySource, type CuratorStatus, type DashboardSource, type SessionInfo } from "./source.ts";
 
 // The hosted app for `astro dev` (HIPPO_DEMO_HOSTED=1): an in-memory stand-in for the Worker's
@@ -13,11 +13,23 @@ import { capabilities, readOnlySource, type CuratorStatus, type DashboardSource,
 //
 // `GET <base>/api/__demo/key` downloads the demo vault's key file, for walking Reveal and Rotate.
 // `GET <base>/api/__demo/stage?to=<stage>` jumps straight to a stage: signed-out, waitlisted,
-// requested, approved, installed, ready. Add `&provider=gitlab` for the GitLab path: `installed`
-// then means GitLab is connected, and `ready` is a vault on GitLab. `ready` gives two vaults (one on
-// each host), so the vault switcher has something to switch; both show the same demo campaign.
+// requested, denied, fresh (approved, nothing set up), approved, installed, disconnected (your own
+// vault, cut off: Reconnect it), bootstrapping (a vault being set up), ready. Add `&provider=gitlab`
+// for the GitLab path: `installed` then means GitLab is connected (one of its projects is an existing
+// vault), and `ready` is a vault on GitLab. `ready` gives two vaults (one on each host), so the vault
+// switcher has something to switch; both show the same demo campaign. A jump clears this browser's
+// setup drafts, so the wizard starts where the stage is.
+//
+// `GET <base>/api/__demo/device` plays an agent starting device sign-in (`?access=curate` for a
+// curator): it opens the approval page with the request's code, and approving makes the connection,
+// which calls in a few seconds later.
+//
+// Hosted curation (Setup → Nightly curation) answers with a fake spend, a made-up recommended mix
+// and instant runs; a key with "refused" in it is refused. `GET <base>/api/__demo/curator` plays its
+// states: `?pause=budget|auth|credit|none` pauses it (saving a pretend key first if there is none),
+// and `?standby=<curator>|none` records a standby curator's check-in, or forgets it.
 
-export type HostedDemoStage = "signed-out" | "waitlisted" | "requested" | "approved" | "installed" | "ready";
+export type HostedDemoStage = "signed-out" | "waitlisted" | "requested" | "denied" | "fresh" | "approved" | "installed" | "disconnected" | "bootstrapping" | "ready";
 
 export interface HostedDemoOptions {
   /** Where the dashboard lives, e.g. `/dashboard`. */
@@ -32,6 +44,8 @@ export interface HostedDemoOptions {
   initDelay?: number;
   /** How long after a key is made the demo pretends its app called in (ms). */
   firstCallAfter?: number;
+  /** How long the `bootstrapping` stage's vault takes to be ready (ms). */
+  bootstrapFor?: number;
   now?: () => Date;
 }
 
@@ -53,7 +67,31 @@ const USER_ID = 1001;
 const VAULT_LIMIT = 5;
 /** Demo vault ids, shaped like the Worker's (ULIDs), so the dashboard takes them in `?vault=`. */
 const vaultId = (n: number) => `01J9Z8D3M0V${String(n).padStart(15, "0")}`;
-const STAGES: HostedDemoStage[] = ["signed-out", "waitlisted", "requested", "approved", "installed", "ready"];
+export const DEMO_STAGES: readonly HostedDemoStage[] = ["signed-out", "waitlisted", "requested", "denied", "fresh", "approved", "installed", "disconnected", "bootstrapping", "ready"];
+/** Device sign-in's code alphabet (consonants), as the Worker's. */
+const CODE_LETTERS = "BCDFGHJKLMNPQRSTVWXZ";
+
+/** The name hosted runs carry in the run history (`HOSTED_CURATOR` in packages/curator/src/relay.ts). */
+const HOSTED = "hosted";
+const DEMO_STEPS = ["mentions", "match", "claims", "summary"] as const;
+/** The models hosted curation can price: a copy of packages/curator/src/pricing.ts's rows, which the dashboard can't import. */
+const DEMO_MODELS: HostedCuratorStatus["models"] = [
+  { provider: "anthropic", model: "claude-haiku-5-5", inputUsdPerMTok: 0.1, outputUsdPerMTok: 0.5 },
+  { provider: "anthropic", model: "claude-sonnet-5-5", inputUsdPerMTok: 2, outputUsdPerMTok: 10 },
+  { provider: "anthropic", model: "claude-opus-5-5", inputUsdPerMTok: 4, outputUsdPerMTok: 20 },
+  { provider: "mistral", model: "ministral-14b-2512", inputUsdPerMTok: 0.2, outputUsdPerMTok: 0.2 },
+  { provider: "mistral", model: "mistral-small-2603", inputUsdPerMTok: 0.15, outputUsdPerMTok: 0.6 },
+  { provider: "mistral", model: "mistral-large-4", inputUsdPerMTok: 0.7, outputUsdPerMTok: 2.1 },
+];
+/**
+ * A made-up recommended mix, so the demo can show one. Not the eval's: the real list is empty until the
+ * curator eval has run. Mistral has none here, so "no recommended mix yet" can be walked too.
+ */
+const DEMO_RECOMMENDED: HostedCuratorStatus["recommended"] = {
+  anthropic: { mentions: "claude-haiku-5-5", match: "claude-haiku-5-5", claims: "claude-sonnet-5-5", summary: "claude-haiku-5-5" },
+};
+/** What a stage jump clears in the browser: setup drafts, the add-a-vault flag, and the tab's vault (ids repeat per stage). */
+const STAGE_CLEARS = `for(const k of Object.keys(sessionStorage))if(k.startsWith("hippo:hosted-draft:")||k==="hippo:adding-vault"||k==="hippo:vault")sessionStorage.removeItem(k);`;
 
 const REPOS: DemoRepo[] = [
   { id: 501, fullName: `${LOGIN}/vault`, private: true, empty: true, ageDays: 30 },
@@ -65,6 +103,7 @@ const REPOS: DemoRepo[] = [
 const GITLAB_URL = "https://gitlab.example";
 const GITLAB_REPOS: DemoRepo[] = [
   { id: 701, fullName: `${LOGIN}/lisbon-vault`, private: true, empty: true },
+  { id: 704, fullName: `${LOGIN}/old-vault`, private: true, empty: false, adoptable: true },
   { id: 702, fullName: `${LOGIN}/dotfiles`, private: true, empty: false, adoptable: false },
   { id: 703, fullName: `${LOGIN}/harbor-notes`, private: false },
 ];
@@ -106,8 +145,18 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     /** The demo's one inviter an admin stopped, if any. */
     referralsOff: undefined as string | undefined,
     apps: [] as HostedConnectedApp[],
+    /** Device sign-in requests an agent started (`__demo/device`). */
+    devices: [] as { code: string; client: string; access: "remember" | "curate"; expires: string; status: "pending" | "approved" | "denied" }[],
     run: undefined as CuratorStatus["run"],
     history: [] as CuratorStatus["history"],
+    /** Hosted curation's settings for the account: only the key's hint is kept, never the key. */
+    llm: undefined as (Omit<HostedCuratorStatus, "available" | "spentThisMonthUsd" | "recommended" | "models" | "vault"> & { provider: HostedLlmProvider; steps: HostedStepMix }) | undefined,
+    /** This month's pretend spend, in micro-dollars. */
+    spent: 0,
+    /** Each vault's nightly hour (UTC), when hosted curation is on for it. */
+    hours: {} as Record<string, number>,
+    /** Each vault's last standby check-in. */
+    standby: {} as Record<string, NonNullable<HostedVaultCurator["standby"]>>,
     others: [
       { id: 2001, login: "harbor-student", status: "waitlisted", note: "Starting at Harbor University in the spring; my agents keep losing track of deadlines.", created: ago(2 * DAY), updated: ago(2 * DAY), admin: false },
       { id: 2002, login: "lisbon-newcomer", status: "waitlisted", created: ago(5 * HOUR), updated: ago(5 * HOUR), admin: false },
@@ -117,6 +166,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
   });
   let state = fresh();
   let approval: ReturnType<typeof setTimeout> | undefined;
+  let bootstrap: ReturnType<typeof setTimeout> | undefined;
 
   const approve = () => {
     state.status = "approved";
@@ -161,30 +211,131 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
   };
   const owned = () => state.vaults.filter((v) => (v.role ?? "owner") === "owner");
 
-  /** Curator runs for a vault that has been around a while: two finished, one that ran out of time, one going now. */
-  const seedCurator = () => {
+  /**
+   * Curator runs for a vault that has been around a while: two finished, one that ran out of time, one going now.
+   * With `apps`, a Claude.ai connection that may curate too; a vault just set up has no agent yet, so its first can be walked.
+   */
+  const seedCurator = (apps = true) => {
     state.history = [
       { id: "run-3", curator: "archivist", model: "claude-sonnet-4-5", started: ago(DAY + 6 * 60_000), ended: ago(DAY), outcome: "done", consolidated: 9, failed: 0, skipped: 1, summaries: 4, remaining: 0, commits: 3 },
       { id: "run-2", curator: "archivist", model: "claude-sonnet-4-5", started: ago(2 * DAY + 5 * 60_000), ended: ago(2 * DAY), outcome: "done", consolidated: 6, failed: 1, skipped: 0, summaries: 3, remaining: 0, commits: 2 },
       { id: "run-1", curator: "game-master", model: "qwen3.5-9b", started: ago(3 * DAY + 20 * 60_000), ended: ago(3 * DAY), outcome: "expired", consolidated: 2, failed: 0, skipped: 0, summaries: 0, remaining: 5, commits: 1 },
     ];
     state.run = { id: "run-4", curator: "archivist", model: "claude-sonnet-4-5", started: ago(3 * 60_000), leaseUntil: new Date(now().getTime() + 2 * 60_000).toISOString(), live: true, progress: { done: 3, total: 8, unit: "episode" } };
-    state.apps = [{ id: "grant-1", client: "Claude", scopes: ["read", "remember", "goal", "curate"], agent: "home-finder", vault: state.vaults[0]?.id ?? vaultId(1), created: ago(DAY / 2), curate: true, mayCurate: true }];
+    if (apps) state.apps = [{ id: "grant-1", client: "Claude", scopes: ["read", "remember", "goal", "curate"], agent: "home-finder", vault: state.vaults[0]?.id ?? vaultId(1), created: ago(DAY / 2), curate: true, mayCurate: true }];
+    // archivist stands by too: it checked in last night and ran, since nothing else curated.
+    const first = state.vaults[0];
+    if (apps && first) state.standby[first.id] = { curator: "archivist", at: ago(DAY), decision: "needed" };
+  };
+
+  // ── Hosted curation with the owner's key ──
+
+  const mixOf = (b: Record<string, unknown>, provider: HostedLlmProvider): HostedStepMix => {
+    if (b.steps !== undefined) {
+      const s = (b.steps ?? {}) as Record<string, unknown>;
+      for (const step of DEMO_STEPS) if (typeof s[step] !== "string" || !(s[step] as string).trim()) throw new HttpError(400, `steps.${step}: a model id`, "INVALID");
+      return Object.fromEntries(DEMO_STEPS.map((step) => [step, (s[step] as string).trim()])) as HostedStepMix;
+    }
+    if (typeof b.model === "string" && b.model.trim()) return Object.fromEntries(DEMO_STEPS.map((step) => [step, (b.model as string).trim()])) as HostedStepMix;
+    const mix = DEMO_RECOMMENDED[provider];
+    if (!mix) throw new HttpError(400, "steps: pick a model for each step, or one model for all (there's no recommended mix for this provider yet)", "INVALID");
+    return mix;
+  };
+  const capOf = (v: unknown, field: string): number => {
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 10_000) throw new HttpError(400, `${field}: US dollars, 0 to 10000`, "INVALID");
+    return v;
+  };
+  const month = () => now().toISOString().slice(0, 7);
+  /** When the hour next comes round, UTC. */
+  const nextAt = (hourUtc: number) => {
+    const t = now();
+    const at = Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate(), hourUtc);
+    return new Date(at > t.getTime() ? at : at + DAY).toISOString();
+  };
+  const vaultCurator = (v: HostedVault): HostedVaultCurator => {
+    const hour = state.hours[v.id];
+    const last = state.history.find((h) => h.curator === HOSTED);
+    return {
+      enabled: hour !== undefined,
+      ...(hour !== undefined ? { hourUtc: hour, nextRun: nextAt(hour) } : {}),
+      ...(last ? { lastRun: { id: last.id, ended: last.ended, outcome: last.outcome, ...(last.stop ? { stop: last.stop } : {}), consolidated: last.consolidated, ...(last.cost ? { costUsd: last.cost.micros / 1e6 } : {}) } } : {}),
+      ...(state.standby[v.id] ? { standby: state.standby[v.id] } : {}),
+    };
+  };
+  const hostedCurator = (vault: HostedVault | undefined): HostedCuratorStatus => ({
+    available: true,
+    ...(state.llm ?? {}),
+    spentThisMonthUsd: state.spent / 1e6,
+    recommended: DEMO_RECOMMENDED,
+    models: DEMO_MODELS,
+    ...(vault?.role === "owner" && vault.status === "ready" ? { vault: vaultCurator(vault) } : {}),
+  });
+  const pauseFor = (reason: "auth" | "credit" | "budget") => {
+    if (state.llm) state.llm.paused = reason === "budget" ? { reason, until: month() } : { reason };
+  };
+
+  /** A hosted run, done at once: it spends a little, and stops at the month's cap, which pauses the account. */
+  const hostedRun = (llm: NonNullable<typeof state.llm>): string => {
+    const id = `run-h${state.history.length + 1}`;
+    const left = Math.max(0, (llm.monthCapUsd ?? 0) * 1e6 - state.spent);
+    const want = Math.min(370_000, (llm.runCapUsd ?? 0) * 1e6);
+    const micros = Math.min(want, left);
+    const stopped = micros < want ? "budget" : undefined;
+    state.spent += micros;
+    const consolidated = stopped ? Math.floor((7 * micros) / Math.max(1, want)) : 7;
+    state.history.unshift({
+      id,
+      curator: HOSTED,
+      model: `${llm.provider}:${llm.steps.mentions}`,
+      started: ago(90_000),
+      ended: now().toISOString(),
+      outcome: stopped ? "aborted" : "done",
+      consolidated,
+      failed: 0,
+      skipped: 0,
+      summaries: stopped ? 0 : 3,
+      remaining: 7 - consolidated,
+      commits: consolidated ? 2 : 0,
+      ...(stopped ? { stop: stopped } : {}),
+      cost: { micros, calls: consolidated * 4 },
+    });
+    if (stopped) pauseFor("budget");
+    return id;
   };
 
   const toStage = (stage: HostedDemoStage, provider?: string) => {
     clearTimeout(approval);
+    clearTimeout(bootstrap);
     state = fresh();
-    const at = STAGES.indexOf(stage);
-    if (at >= 1) state.signedIn = true;
-    if (at >= 2) state.note = "Moving to Lisbon; I'd like my agents to share one memory.";
-    if (at >= 3) approve();
     const gitlab = provider === "gitlab";
-    if (at >= 4) {
-      if (gitlab) state.gitlab = true;
-      else state.installation = { id: 9001 };
+    if (stage === "signed-out") return;
+    state.signedIn = true;
+    if (stage === "waitlisted") return;
+    state.note = "Moving to Lisbon; I'd like my agents to share one memory.";
+    if (stage === "requested") return;
+    if (stage === "denied") {
+      state.status = "denied";
+      return;
     }
-    if (at >= 5) {
+    approve();
+    if (stage === "fresh" || stage === "approved") return;
+    if (gitlab) state.gitlab = true;
+    else state.installation = { id: 9001 };
+    if (stage === "installed") return;
+    if (stage === "disconnected") {
+      // Their own vault, cut off (the app uninstalled, or GitLab's connection revoked) and connected again: picking it reconnects it as it is.
+      addVault(gitlab ? { ...gitlabVault(`${LOGIN}/old-vault`), status: "disconnected", reason: "token_revoked" } : { fullName: `${LOGIN}/lisbon-arc`, branch: "main", status: "disconnected", reason: "uninstalled", provider: "github" });
+      return;
+    }
+    if (stage === "bootstrapping") {
+      const v = addVault(gitlab ? { ...gitlabVault(`${LOGIN}/lisbon-vault`), status: "bootstrapping" } : { fullName: `${LOGIN}/vault`, branch: "main", status: "bootstrapping", provider: "github" });
+      bootstrap = setTimeout(() => {
+        v.status = "ready";
+        state.installation = undefined;
+      }, opts.bootstrapFor ?? 8000);
+      return;
+    }
+    {
       state.installation = undefined;
       const github = { fullName: `${LOGIN}/vault`, branch: "main", status: "ready" as const, provider: "github" as const };
       const lab = gitlabVault(`${LOGIN}/lisbon-vault`);
@@ -221,8 +372,8 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     );
     out.push(v ? { id: "vault", title: "Vault", state: "done", detail: `${v.fullName}@${v.branch}`, how: "performed" } : { id: "vault", title: "Vault", state: "todo", detail: s.installation || s.gitlab?.connected ? "Pick the repo and name the campaign" : "Install the app first", how: "performed" });
     if (v) {
-      const n = s.keys?.length ?? 0;
-      out.push({ id: "keys", title: "Agent keys", state: n ? "done" : "todo", detail: n ? `${n} ${n === 1 ? "key" : "keys"} issued` : "Mint a key for your agents (or connect Claude.ai or ChatGPT with the connector URL)", how: "performed" });
+      const n = (s.keys ?? []).filter((k) => k.kind !== "curator").length;
+      out.push({ id: "keys", title: "Connected apps", state: n ? "done" : "todo", detail: n ? `${n} ${n === 1 ? "app" : "apps"} connected with a key` : "Add your first agent: paste the setup prompt into it (or connect Claude.ai or ChatGPT with the connector address)", how: "performed" });
     }
     return out;
   }
@@ -254,6 +405,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       publicUrl,
       mcpUrl: vault ? `${publicUrl}/mcp/${vault.id}` : `${publicUrl}/mcp`,
       presets: demoPresets(),
+      ...(state.status === "approved" ? { hostedCurator: hostedCurator(adding ? undefined : vault) } : {}),
       items: [],
     };
     s.items = items(s);
@@ -269,6 +421,43 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     // Only the owner sets the secrets key: it decides who can read the vault's secrets.
     const shared = v.role === "viewer" ? readOnlySource(source) : (v.role ?? "owner") === "owner" ? source : member;
     return { ...info, mode: "worker", vault: { kind: v.provider === "gitlab" ? "gitlab" : "github", repo: v.fullName, branch: v.branch, ...(v.url ? { url: v.url } : {}) }, user: { login: LOGIN }, account, capabilities: { ...capabilities(shared, "hosted"), curator: (v.role ?? "owner") === "owner" } };
+  }
+
+  /** The app calls in a few seconds later, so "Waiting for its first call" turns into "Connected"; a shared key's agents name themselves. */
+  const callsIn = (vault: HostedVault, key: HostedKeyInfo, agent?: string) =>
+    setTimeout(() => {
+      key.lastUsed = now().toISOString();
+      if (agent) (state.claims[vault.id] ??= []).push({ agent, credential: `key:${key.id}`, since: key.lastUsed });
+    }, opts.firstCallAfter ?? 6000);
+
+  /** Device sign-in's approval page: what the agent asked for, and the person's answer. On approval the agent picks up its key (the Worker mints it then). */
+  function connectRoute(request: Request, method: string, sub: string, body: unknown, url: URL): unknown {
+    const code = String((method === "GET" ? url.searchParams.get("code") : (body as { code?: unknown } | undefined)?.code) ?? "")
+      .trim()
+      .toUpperCase();
+    const r = state.devices.find((d) => d.code === code || d.code.replace("-", "") === code);
+    if (!r || r.status !== "pending") throw new HttpError(410, "This code was used, or it expired. Ask the app to start again.", "CODE_GONE");
+    const vaults = state.vaults.filter((v) => v.status === "ready" && v.role !== "viewer");
+    if (sub === "" && method === "GET") {
+      const current = pick(request);
+      const found: HostedDeviceRequest = { code: r.code, client: r.client, access: r.access, expires: r.expires, vaults, ...(current && vaults.includes(current) ? { current: current.id } : {}) };
+      return found;
+    }
+    if (sub === "deny" && method === "POST") {
+      r.status = "denied";
+      return { ok: true };
+    }
+    if (sub !== "approve" || method !== "POST") throw new HttpError(404, `No such route: ${method} connect/${sub}`, "NOT_FOUND");
+    const vault = vaults.find((v) => v.id === (body as { vault?: unknown } | undefined)?.vault);
+    if (!vault) throw new HttpError(400, "vault: one of your vaults that's ready", "INVALID");
+    if (r.access === "curate" && (vault.role ?? "owner") !== "owner") throw new HttpError(403, "Only the vault's owner can approve a curator.", "OWNER_ONLY");
+    r.status = "approved";
+    const curator = r.access === "curate";
+    // As the Worker mints it when the agent collects it: one shared key for the app, or a curator key.
+    const key: HostedKeyInfo = { id: hex(32), kind: curator ? "curator" : "agent", scopes: curator ? ["read", "curate"] : ["read", "remember", "goal"], label: r.client, created: now().toISOString() };
+    (state.keys[vault.id] ??= []).push(key);
+    callsIn(vault, key, curator ? undefined : "claude-code-home-finder");
+    return { ok: true };
   }
 
   async function mint(request: Request, body: unknown): Promise<HostedMintedKey> {
@@ -291,11 +480,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
     const app = (body as { app?: unknown } | undefined)?.app;
     const key: HostedKeyInfo = { id: hex(32), kind, ...(agent ? { agent } : {}), scopes, label: label || (kind === "curator" ? "Curator" : kind === "bound" ? agent! : "Any agent"), ...(isConnectApp(app) ? { app } : {}), created: now().toISOString() };
     (state.keys[vault.id] ??= []).push(key);
-    // The app calls in a few seconds later, so "Waiting for its first call" turns into "Connected"; a shared key's agents name themselves.
-    setTimeout(() => {
-      key.lastUsed = now().toISOString();
-      if (kind === "agent" && isConnectApp(app)) (state.claims[vault.id] ??= []).push({ agent: `${app}-home-finder`, credential: `key:${key.id}`, since: key.lastUsed });
-    }, opts.firstCallAfter ?? 6000);
+    callsIn(vault, key, kind === "agent" && isConnectApp(app) ? `${app}-home-finder` : undefined);
     return { ...key, token, snippets: keySnippets({ publicUrl: origin(request), token, kind, vault, ...(isConnectApp(app) ? { app } : {}) }) };
   }
 
@@ -339,7 +524,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       claimable(repo.fullName, "gitlab");
       await new Promise((r) => setTimeout(r, opts.initDelay ?? 1200));
       const vault = reconnect(repo.fullName, "gitlab") ?? addVault(gitlabVault(repo.fullName));
-      if (state.vaults.length === 1) seedCurator();
+      if (state.vaults.length === 1) seedCurator(false);
       const result: HostedInitResult = { vault, mode: repo.adoptable ? "adopted" : "initialized" };
       return result;
     }
@@ -357,7 +542,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       await new Promise((r) => setTimeout(r, opts.initDelay ?? 1200));
       state.installation = undefined;
       const vault = reconnect(repo.fullName, "github") ?? addVault({ fullName: repo.fullName, branch: "main", status: "ready", provider: "github" });
-      if (state.vaults.length === 1) seedCurator();
+      if (state.vaults.length === 1) seedCurator(false);
       const result: HostedInitResult = { vault, mode: repo.adoptable ? "adopted" : "initialized" };
       return result;
     }
@@ -388,6 +573,48 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       state.curatorActions[vault.id] = enabled;
       const result: HostedCuratorActionsResult = { enabled, path: ".github/workflows/sleep.yml" };
       return result;
+    }
+    if ((sub === "curator-llm" || sub.startsWith("curator-llm/")) && method === "POST") {
+      if (!vault || (vault.role ?? "owner") !== "owner") throw new HttpError(403, "Only the vault's owner can set up hosted curation.", "OWNER_ONLY");
+      if (sub === "curator-llm") {
+        const b = (body ?? {}) as Record<string, unknown>;
+        const provider = b.provider as HostedLlmProvider;
+        if (provider !== "anthropic" && provider !== "mistral") throw new HttpError(400, "provider: anthropic or mistral", "INVALID");
+        const steps = mixOf(b, provider);
+        const unpriced = [...new Set(DEMO_STEPS.map((s) => steps[s]))].filter((m) => !DEMO_MODELS.some((x) => x.provider === provider && x.model === m));
+        if (unpriced.length) throw new HttpError(400, `${unpriced.join(", ")}: no price for ${unpriced.length === 1 ? "this model" : "these models"}, pick a listed one`, "INVALID");
+        const monthCapUsd = capOf(b.monthCapUsd, "monthCapUsd");
+        const runCapUsd = capOf(b.runCapUsd, "runCapUsd");
+        if (b.key !== undefined && typeof b.key !== "string") throw new HttpError(400, "key: the provider's API key, as text", "INVALID");
+        const key = typeof b.key === "string" ? b.key.trim() : "";
+        if (!key && !state.llm) throw new HttpError(400, "key: paste the provider's API key", "INVALID");
+        if (!key && state.llm && state.llm.provider !== provider) throw new HttpError(400, "key: a new provider needs its own key", "INVALID");
+        // The demo's stand-in for the provider's check: a key with "refused" in it is refused. Only its hint is kept.
+        if (/refused/i.test(key)) throw new HttpError(400, "The provider refused that key. Check it and paste it again.", "KEY_AUTH");
+        let paused = state.llm?.paused;
+        if (key && paused && paused.reason !== "budget") paused = undefined;
+        if (paused?.reason === "budget" && monthCapUsd * 1e6 > state.spent) paused = undefined;
+        state.llm = { provider, steps, keyHint: key ? `…${key.slice(-4)}` : state.llm!.keyHint!, monthCapUsd, runCapUsd, ...(paused ? { paused } : {}) };
+        return hostedCurator(vault);
+      }
+      if (vault.status !== "ready") throw new HttpError(409, "This vault isn't ready.", "NOT_READY");
+      if (sub === "curator-llm/vault") {
+        const raw = (body as { hourUtc?: unknown } | undefined)?.hourUtc;
+        if (raw !== null && !(typeof raw === "number" && Number.isInteger(raw) && raw >= 0 && raw < 24)) throw new HttpError(400, "hourUtc: 0 to 23 (UTC), or null to turn it off", "INVALID");
+        if (raw !== null && !state.llm) throw new HttpError(409, "Save a model key first.", "NO_KEY");
+        if (raw === null) delete state.hours[vault.id];
+        else state.hours[vault.id] = raw as number;
+        return vaultCurator(vault);
+      }
+      if (sub === "curator-llm/run") {
+        const llm = state.llm;
+        if (!llm) throw new HttpError(409, "Hosted curation can't run: no model key is saved.", "NO_KEY");
+        if (llm.paused?.reason === "budget" || state.spent >= (llm.monthCapUsd ?? 0) * 1e6) throw new HttpError(409, "Hosted curation can't run: this month's budget is spent.", "BUDGET");
+        if (llm.paused) throw new HttpError(409, `Hosted curation can't run: ${llm.paused.reason === "auth" ? "the model key was refused" : "the model provider's credit ran out"}.`, "PAUSED");
+        // The demo's runs finish at once, so they never wait on the open agent run it shows.
+        const result: HostedCuratorRunResult = { run: hostedRun(llm) };
+        return result;
+      }
     }
     throw new HttpError(404, `No such setup route: ${method} ${sub}`, "NOT_FOUND");
   }
@@ -579,9 +806,31 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
   async function demoRoute(sub: string, url: URL): Promise<Response> {
     if (sub === "stage") {
       const to = url.searchParams.get("to") as HostedDemoStage;
-      if (!STAGES.includes(to)) throw new HttpError(400, `to: one of ${STAGES.join(", ")}`, "INVALID");
+      if (!DEMO_STAGES.includes(to)) throw new HttpError(400, `to: one of ${DEMO_STAGES.join(", ")}`, "INVALID");
       toStage(to, url.searchParams.get("provider") ?? undefined);
-      return redirect(to === "signed-out" ? `${base}/welcome/` : `${base}/setup/`);
+      return await cleared(to === "signed-out" ? `${base}/welcome/` : `${base}/setup/`);
+    }
+    if (sub === "device") {
+      if (!state.signedIn) return redirect(`${base}/auth/login?return=${encodeURIComponent(`${base}/api/__demo/device${url.search}`)}`);
+      const letters = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => CODE_LETTERS[b % CODE_LETTERS.length]).join("");
+      const code = `${letters.slice(0, 4)}-${letters.slice(4)}`;
+      const access = url.searchParams.get("access") === "curate" ? "curate" : "remember";
+      state.devices.push({ code, client: access === "curate" ? "Claude Code (curator)" : "Claude Code", access, expires: new Date(now().getTime() + 10 * 60_000).toISOString(), status: "pending" });
+      return redirect(`${base}/connect/?code=${code}`);
+    }
+    if (sub === "curator") {
+      // Hosted curation's states: a pause (saving a key first if none is), and a standby curator's check-in.
+      const vault = state.vaults.find((v) => v.id === state.last) ?? state.vaults[0];
+      const pause = url.searchParams.get("pause");
+      if (pause === "budget" || pause === "auth" || pause === "credit") {
+        state.llm ??= { provider: "anthropic", steps: DEMO_RECOMMENDED.anthropic!, keyHint: "…demo", monthCapUsd: 5, runCapUsd: 1 };
+        if (pause === "budget") state.spent = Math.max(state.spent, (state.llm.monthCapUsd ?? 0) * 1e6);
+        pauseFor(pause);
+      } else if (pause === "none" && state.llm) delete state.llm.paused;
+      const standby = url.searchParams.get("standby");
+      if (vault && standby === "none") delete state.standby[vault.id];
+      else if (vault && standby) state.standby[vault.id] = { curator: standby.slice(0, 40), at: now().toISOString(), decision: state.hours[vault.id] !== undefined && !state.llm?.paused ? "hosted" : "needed" };
+      return redirect(`${base}/setup/#curation`);
     }
     if (sub === "key") {
       if (!opts.demoKey) throw new HttpError(404, "The demo has no key", "NOT_FOUND");
@@ -641,6 +890,7 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       if (section === "admin") return json(200, adminRoute(method, sub, body, url));
       if (section === "account") return json(200, accountRoute(method, sub, body));
       if (section === "invites") return json(200, invitesRoute(request, method, sub, body));
+      if (section === "connect") return json(200, connectRoute(request, method, sub, body, url));
       if (section === "vaults" && sub) return json(200, vaultsRoute(request, method, sub, body));
       if (section === "vaults" && method === "GET") {
         const current = state.vaults.length ? pick(request) : undefined;
@@ -671,6 +921,15 @@ function hex(bytes: number): string {
 
 function redirect(location: string): Response {
   return new Response(null, { status: 302, headers: { location, "cache-control": "no-store", ...securityHeaders() } });
+}
+
+/** A page that clears the browser's setup drafts (sessionStorage) and goes on to `to`: a 302 can't. Its one script is allowed by its hash. */
+async function cleared(to: string): Promise<Response> {
+  const script = `${STAGE_CLEARS}location.replace(${JSON.stringify(to)});`;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(script));
+  const hash = btoa(String.fromCharCode(...new Uint8Array(digest)));
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Demo stage</title></head><body><p><a href="${to}">Continue</a></p><script>${script}</script></body></html>`;
+  return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-demo-next": to, ...securityHeaders(), "content-security-policy": `default-src 'none'; script-src 'sha256-${hash}'; frame-ancestors 'none'` } });
 }
 
 function page(title: string, body: string): Response {
