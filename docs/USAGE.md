@@ -286,6 +286,7 @@ The tool refuses to write to a vault whose format version differs from its own. 
 - The first time, the organization waits for an admin of this Hippocampus to approve it (**Admin → Organizations**). Your setup page lists it with its state, and offers **Continue with @org** once it's approved.
 - You can only pick repos you're an **admin or maintainer** of. Hippocampus checks that with your own GitHub sign-in, and the token it lists repos with reaches no other repo of the organization.
 - The vault is yours (you're its owner here). Invite your teammates as members.
+- Reconnecting a disconnected org vault also goes through **Continue with @org**, so your role there and the organization's approval are checked again.
 - Deleting your account removes the vault from Hippocampus, but never the app's install on the organization. The repo stays the organization's.
 - An admin turning the organization down stops new vaults there; ones already set up keep running.
 

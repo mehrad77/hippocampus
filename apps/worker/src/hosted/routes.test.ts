@@ -382,6 +382,23 @@ describe("the install redirect", () => {
     expect((await get<HostedSetupStatus>(player, "setup/status?add")).body.installation?.repos.map((r) => r.fullName).sort()).toEqual(["player/notes", "player/vault"]);
   });
 
+  it("says GitHub didn't answer at setup, even after another install missed the repo", async () => {
+    // The app on player's account is down to look up, and a stale pending install doesn't have the repo.
+    const { gh, kv, player, signIn, routes, post } = await setup({ down: (url) => url.pathname.startsWith("/users/") });
+    await signIn(player, "player");
+    await routes.registry.setAccountStatus(PLAYER, "approved");
+    gh.addInstallation({ account: { id: PLAYER, login: "player", type: "User" }, repos: ["player/vault"] });
+    const stale = gh.addInstallation({ account: { id: PLAYER, login: "player", type: "User" }, repos: [] });
+    await kv.put(`hosted:install:${PLAYER}`, JSON.stringify({ installationId: stale.id, at: new Date().toISOString() }));
+    expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS })).body).toMatchObject({ code: "GITHUB" });
+  });
+
+  it("says GitHub didn't answer when minting a token fails, rather than that the repo isn't installed", async () => {
+    const { player, approvedPlayer, post } = await setup({ down: (url) => /\/app\/installations\/\d+\/access_tokens$/.test(url.pathname) });
+    await approvedPlayer();
+    expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS })).body).toMatchObject({ code: "GITHUB" });
+  });
+
   it("says GitHub didn't answer, rather than that the app isn't installed", async () => {
     const { github, player, signIn, routes, get, post } = await setup({ down: (url) => url.pathname.startsWith("/users/") });
     await signIn(player, "player");
@@ -497,13 +514,47 @@ describe("organization vaults", () => {
     expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS })).body).toMatchObject({ vault: { status: "ready", fullName: "player/vault" } });
   });
 
-  it("reconnects a broken org vault through its own install, past the person's own account", async () => {
-    const { kv, player, routes, post } = await picked();
+  it("reconnects a broken org vault only through a fresh pick of its org, past the person's own account", async () => {
+    const { gh, github, org, kv, player, routes, post } = await picked();
     const made = await post<{ vault: { id: string } }>(player, "setup/init", { repoId: 9301, ...SETTINGS });
     await routes.registry.setVaultStatus(made.body.vault.id, "disconnected", "bootstrap_failed");
     expect(await kv.get(`hosted:install-org:${PLAYER}`, "json")).toBeNull();
-    const again = await post(player, "setup/init", { repoId: 9301, adopt: true });
-    expect(again.body).toMatchObject({ vault: { id: made.body.vault.id, status: "ready" } });
+    // Not through the vault's own install alone: the person's role there is checked again first.
+    expect((await post(player, "setup/init", { repoId: 9301, adopt: true })).body).toMatchObject({ code: "NOT_FOUND" });
+    await player(github.installed("player", org.id));
+    expect((await post(player, "setup/init", { repoId: 9301, adopt: true })).body).toMatchObject({ vault: { id: made.body.vault.id, status: "ready" } });
+    // Demoted to write access, a fresh pick no longer covers it.
+    await routes.registry.setVaultStatus(made.body.vault.id, "disconnected", "bootstrap_failed");
+    gh.users.get("player")!.roles["migration-agency/vault"] = { admin: false, maintain: false, push: true, triage: true, pull: true };
+    await player(github.installed("player", org.id));
+    expect((await post(player, "setup/init", { repoId: 9301, adopt: true })).body).toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("drops a turned-down org's pick from the setup page, not just at setup", async () => {
+    const { kv, player, gm, get, post } = await picked();
+    await post(gm, "admin/orgs/deny", { id: "31337" });
+    const status = (await get<HostedSetupStatus>(player, "setup/status")).body;
+    expect(status.installation?.org).toBeUndefined();
+    expect(status.orgs).toEqual([{ login: "migration-agency", status: "denied" }]);
+    expect(await kv.get(`hosted:install-org:${PLAYER}`, "json")).toBeNull();
+  });
+
+  it("still lists the person's repos after another one left the org's install", async () => {
+    const { org, player, get } = await picked();
+    // An owner takes notes out of the install after the pick: a token narrowed to it is refused.
+    org.repos.splice(org.repos.indexOf("migration-agency/notes"), 1);
+    const status = (await get<HostedSetupStatus>(player, "setup/status")).body;
+    expect(status.installation).toMatchObject({ org: "migration-agency" });
+    expect(status.installation?.error).toBeUndefined();
+    expect(status.installation?.repos.map((r) => r.fullName)).toEqual(["migration-agency/vault"]);
+    // Never the repo the person can only write to, though the fallback token could list it.
+    expect((await get<{ repos: { fullName: string }[] }>(player, "setup/repos")).body.repos.map((r) => r.fullName)).toEqual(["migration-agency/vault"]);
+  });
+
+  it("names the right accounts when no install reaches the repo", async () => {
+    const { gh, player, post } = await picked();
+    await gh.addRepo({ fullName: "player/notes", id: 9010, empty: true });
+    expect((await post<{ error: string }>(player, "setup/init", { repoId: 9010, ...SETTINGS })).body).toMatchObject({ code: "NOT_FOUND", error: expect.stringContaining("app's install on your account") });
   });
 
   it("checks a resumed install with the person's own token", async () => {

@@ -81,8 +81,7 @@ export async function pendingOrgInstallation(kv: SessionKV, accountId: number): 
 }
 
 export const clearPendingInstallation = async (kv: SessionKV, accountId: number) => {
-  await kv.delete(installKey(accountId));
-  await kv.delete(orgInstallKey(accountId));
+  await Promise.all([kv.delete(installKey(accountId)), kv.delete(orgInstallKey(accountId))]);
 };
 
 /** Drop only the org's pick: the person goes back to their own account's install. */

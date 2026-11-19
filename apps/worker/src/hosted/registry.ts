@@ -775,6 +775,12 @@ export class Registry {
     return row && toOrg(row);
   }
 
+  /** The org whose install this is, if it's an org's. */
+  async orgByInstallation(installationId: number): Promise<Org | undefined> {
+    const row = await this.one<OrgRow>("SELECT * FROM orgs WHERE provider = 'github' AND installation_id = ?", [installationId]);
+    return row && toOrg(row);
+  }
+
   async orgs(status?: OrgStatus): Promise<Org[]> {
     const rows = status
       ? await this.db.all<OrgRow>("SELECT * FROM orgs WHERE status = ? ORDER BY created, subject", [status])
