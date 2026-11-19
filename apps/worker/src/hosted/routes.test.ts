@@ -446,7 +446,9 @@ describe("organization vaults", () => {
     const toGitHub = await player(`${ORIGIN}${offered![0]!.continueUrl}`);
     const back = await player(github.signIn(toGitHub.headers.get("location")!, "player"));
     expect(back.headers.get("location")).toBe("/dashboard/setup/#repo");
-    expect(await kv.get(`hosted:install:${PLAYER}`, "json")).toMatchObject({ installationId: org.id, org: "migration-agency", repoIds: [9301, 9302] });
+    // Under its own key, which the previous Worker never reads: after a rollback it would offer the whole install.
+    expect(await kv.get(`hosted:install-org:${PLAYER}`, "json")).toMatchObject({ installationId: org.id, org: "migration-agency", subject: "31337", repoIds: expect.arrayContaining([9301, 9302]) });
+    expect(await kv.get(`hosted:install:${PLAYER}`, "json")).toBeNull();
 
     // The repo they can only write to isn't offered, nor anything else of the org's.
     const status = (await get<HostedSetupStatus>(player, "setup/status")).body;
@@ -458,6 +460,69 @@ describe("organization vaults", () => {
 
     const init = await post<{ vault: { status: string; fullName: string } }>(player, "setup/init", { repoId: 9301, ...SETTINGS });
     expect(init.body).toMatchObject({ vault: { status: "ready", fullName: "migration-agency/vault" } });
+  });
+
+  /** withOrg, approved, with player's pick of it made (as after "Continue with @org"). */
+  async function picked() {
+    const s = await withOrg();
+    await s.player(s.github.installed("player", s.org.id));
+    await s.post(s.gm, "admin/orgs/approve", { id: "31337" });
+    await s.player(s.github.installed("player", s.org.id));
+    return s;
+  }
+
+  it("sets a vault up in a repo the person only maintains", async () => {
+    const { player, post } = await picked();
+    expect((await post(player, "setup/init", { repoId: 9302, ...SETTINGS })).body).toMatchObject({ vault: { status: "ready", fullName: "migration-agency/notes" } });
+  });
+
+  it("refuses a vault in an org turned down after the person picked it up", async () => {
+    const { player, gm, post } = await picked();
+    await post(gm, "admin/orgs/deny", { id: "31337" });
+    expect((await post(player, "setup/init", { repoId: 9301, ...SETTINGS })).body).toMatchObject({ code: "ORG_NOT_APPROVED" });
+  });
+
+  it("lets an org's pick give way to the person's own account", async () => {
+    const { kv, player, get, post } = await picked();
+    // The app is on player's own account too (approvedPlayer): its repo still sets up, past the org's pick.
+    expect((await get<HostedSetupStatus>(player, "setup/status")).body.installation?.org).toBe("migration-agency");
+    expect((await post(player, "setup/installation/forget", {})).body).toEqual({ ok: true });
+    expect(await kv.get(`hosted:install-org:${PLAYER}`, "json")).toBeNull();
+    expect((await get<HostedSetupStatus>(player, "setup/status")).body.installation?.org).toBeUndefined();
+    expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS })).body).toMatchObject({ vault: { status: "ready", fullName: "player/vault" } });
+  });
+
+  it("sets up the person's own repo even while an org's pick is open", async () => {
+    const { player, post } = await picked();
+    expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS })).body).toMatchObject({ vault: { status: "ready", fullName: "player/vault" } });
+  });
+
+  it("reconnects a broken org vault through its own install, past the person's own account", async () => {
+    const { kv, player, routes, post } = await picked();
+    const made = await post<{ vault: { id: string } }>(player, "setup/init", { repoId: 9301, ...SETTINGS });
+    await routes.registry.setVaultStatus(made.body.vault.id, "disconnected", "bootstrap_failed");
+    expect(await kv.get(`hosted:install-org:${PLAYER}`, "json")).toBeNull();
+    const again = await post(player, "setup/init", { repoId: 9301, adopt: true });
+    expect(again.body).toMatchObject({ vault: { id: made.body.vault.id, status: "ready" } });
+  });
+
+  it("checks a resumed install with the person's own token", async () => {
+    const { gh, github, kv, player } = await withOrg();
+    const elsewhere = gh.addInstallation({ account: { id: 4545, login: "harbor-university", type: "Organization" }, repos: [] });
+    const toGitHub = await player(`${ORIGIN}/dashboard/auth/installation?installation_id=${elsewhere.id}`);
+    const back = await player(github.signIn(toGitHub.headers.get("location")!, "player"));
+    expect(back.status).toBe(403);
+    expect(await back.text()).toContain("can't see that installation");
+    expect(await kv.get(`hosted:install-org:${PLAYER}`, "json")).toBeNull();
+  });
+
+  it("keeps the org's install when the vault's owner deletes their account", async () => {
+    const { gh, org, player, routes, post } = await picked();
+    const made = await post<{ vault: { id: string } }>(player, "setup/init", { repoId: 9301, ...SETTINGS });
+    expect((await post(player, "account/delete", { confirm: "player" })).body).toEqual({ ok: true });
+    expect(gh.installations.has(org.id)).toBe(true);
+    expect(await routes.registry.vault(made.body.vault.id)).toBeUndefined();
+    expect(await routes.registry.org("31337")).toMatchObject({ status: "approved" });
   });
 
   it("turns away an org an admin denied", async () => {

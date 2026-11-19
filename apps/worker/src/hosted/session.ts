@@ -1,4 +1,4 @@
-import { cookie, json, safeEqual, securityHeaders } from "@hippocampus/dashboard";
+import { byRecentPush, cookie, json, safeEqual, securityHeaders } from "@hippocampus/dashboard";
 import { hashToken, type KVLike } from "../auth.ts";
 import { CALLBACK_PATH, base64url, githubAuthorizeUrl, githubToken, githubTokenUser, type GitHubClient } from "../github-login.ts";
 import { escape, page } from "../pages.ts";
@@ -36,18 +36,26 @@ interface PendingLogin {
   installation?: number;
 }
 
-/** An installation the person proved is theirs (or an org's they may set up in), waiting for them to pick its repo. */
+/** An installation the person proved is theirs, waiting for them to pick its repo. */
 export interface PendingInstallation {
   installationId: number;
   at: string;
-  /**
-   * On an organization's install: the repos the person may make a vault of (admin or maintain there),
-   * checked with their own token. Listings and setup go no further than these.
-   */
-  repoIds?: number[];
-  /** The organization's login, on an org's install. */
-  org?: string;
 }
+
+/**
+ * An organization's install the person may set a vault up from. Kept under its own key, which the
+ * previous Worker never reads: it would take the install as the person's own and offer every repo in it.
+ */
+export interface PendingOrgInstallation extends PendingInstallation {
+  /** The repos the person may make a vault of (admin or maintain there), checked with their own token. */
+  repoIds: number[];
+  /** The organization's login, and GitHub's id for it (the `orgs` row). */
+  org: string;
+  subject: string;
+}
+
+/** At most this many of an org's repos are kept for one person: GitHub narrows a token to 500 repos at most. */
+export const MAX_ORG_REPOS = 100;
 
 export interface SignedIn {
   account: Account;
@@ -58,16 +66,27 @@ export interface SignedIn {
 const loginKey = (state: string) => `hosted:login:${state}`;
 const sessionKey = async (id: string) => `hosted:session:${await hashToken(id)}`;
 const installKey = (accountId: number) => `hosted:install:${accountId}`;
+const orgInstallKey = (accountId: number) => `hosted:install-org:${accountId}`;
 const randomId = () => base64url(crypto.getRandomValues(new Uint8Array(32)));
 
 export async function pendingInstallation(kv: SessionKV, accountId: number): Promise<PendingInstallation | undefined> {
   const p = (await kv.get(installKey(accountId), "json")) as PendingInstallation | null;
-  if (typeof p?.installationId !== "number") return undefined;
-  // An org's install always carries the repos the person may use; one that doesn't says none.
-  return p.org !== undefined && !Array.isArray(p.repoIds) ? { ...p, repoIds: [] } : p;
+  return typeof p?.installationId === "number" ? p : undefined;
 }
 
-export const clearPendingInstallation = (kv: SessionKV, accountId: number) => kv.delete(installKey(accountId));
+export async function pendingOrgInstallation(kv: SessionKV, accountId: number): Promise<PendingOrgInstallation | undefined> {
+  const p = (await kv.get(orgInstallKey(accountId), "json")) as PendingOrgInstallation | null;
+  const ok = typeof p?.installationId === "number" && Array.isArray(p.repoIds) && p.repoIds.every((id) => typeof id === "number") && typeof p.org === "string" && typeof p.subject === "string";
+  return ok ? p : undefined;
+}
+
+export const clearPendingInstallation = async (kv: SessionKV, accountId: number) => {
+  await kv.delete(installKey(accountId));
+  await kv.delete(orgInstallKey(accountId));
+};
+
+/** Drop only the org's pick: the person goes back to their own account's install. */
+export const clearPendingOrgInstallation = (kv: SessionKV, accountId: number) => kv.delete(orgInstallKey(accountId));
 
 /**
  * Where to land after signing in: a dashboard page, or the connector consent page (`/authorize?…`),
@@ -205,7 +224,8 @@ export function createSessions(deps: SessionDeps): Sessions {
       return fail(202, "Waiting for approval", `<p>${name} asked to hold vaults here. Once an admin of this Hippocampus approves it, continue from the dashboard's setup page: it lists ${name} with a button to go on.</p>`, cookies);
     const repos = await app.installationRepos(userToken, installation.id).catch(() => undefined);
     if (!repos) return fail(502, "Couldn't check your repos", "<p>GitHub didn't answer. Try again from the setup page in a minute.</p>", cookies);
-    const usable = repos.filter((r) => r.permissions?.admin || r.permissions?.maintain);
+    // The most recently pushed first, so a cut for a big org keeps the ones in use.
+    const usable = repos.filter((r) => r.permissions?.admin || r.permissions?.maintain).sort(byRecentPush).slice(0, MAX_ORG_REPOS);
     if (!usable.length)
       return fail(
         403,
@@ -213,13 +233,16 @@ export function createSessions(deps: SessionDeps): Sessions {
         `<p>A vault in ${name} needs a repo you're an admin or maintainer of, among those the app was installed on. Ask an owner of ${name} to add one to the app's install or to give you that role, then continue from the setup page.</p>`,
         cookies,
       );
-    const pending: PendingInstallation = { installationId: installation.id, at: now().toISOString(), repoIds: usable.map((r) => r.id), org: org.login };
-    await kv.put(installKey(account.id), JSON.stringify(pending), { expirationTtl: INSTALL_TTL });
+    const pending: PendingOrgInstallation = { installationId: installation.id, at: now().toISOString(), repoIds: usable.map((r) => r.id), org: org.login, subject: org.subject };
+    await kv.put(orgInstallKey(account.id), JSON.stringify(pending), { expirationTtl: INSTALL_TTL });
     return redirect(SETUP_REPO, cookies);
   }
 
   async function resumeInstallation(request: Request): Promise<Response> {
-    const raw = new URL(request.url).searchParams.get("installation_id") ?? "";
+    const url = new URL(request.url);
+    // As with signing in: the login cookie has to live on the origin GitHub sends the person back to.
+    if (url.origin !== settings.publicUrl) return redirect(`${settings.publicUrl}${url.pathname}${url.search}`);
+    const raw = url.searchParams.get("installation_id") ?? "";
     if (!/^\d{1,15}$/.test(raw)) return fail(400, "That link is broken", "<p>It has no installation id.</p>");
     // The sign-in proves who it is, and `adoptInstallation` checks the install with their own token.
     return startLogin(SETUP_REPO, Number(raw));

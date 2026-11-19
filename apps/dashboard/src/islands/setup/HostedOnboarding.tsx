@@ -525,6 +525,7 @@ function InstallGitHub({ status }: HostedStepProps) {
         </p>
       )}
       {status.orgs?.length ? <OrgList orgs={status.orgs} current={inst?.org} /> : null}
+      {inst?.org && <UseOwnAccount />}
       {!inst && status.installationError && (
         <div className="callout callout--warn" role="alert">
           <Icon name="warn" />
@@ -555,6 +556,24 @@ const ORG_TONE: Record<HostedOrg["status"], { tone: BadgeState; word: string; de
   approved: { tone: "done", word: "Approved", detail: "Continue to pick one of its repos." },
   denied: { tone: "error", word: "Turned down", detail: "It can't hold vaults here." },
 };
+
+/** Leave an org's install for the app's install on the person's own account. */
+function UseOwnAccount() {
+  const act = useAction();
+  const forget = async () => {
+    if (await act.run(() => postJson("/setup/installation/forget", {}))) await refreshSetup();
+  };
+  return (
+    <>
+      <div className="row">
+        <button type="button" className="btn btn--sm" onClick={() => void forget()} disabled={act.busy}>
+          Use my own account instead
+        </button>
+      </div>
+      {act.error !== undefined && <ErrorCallout error={act.error} />}
+    </>
+  );
+}
 
 /** The organizations the person installed the app on, and how far each got. */
 function OrgList({ orgs, current }: { orgs: HostedOrg[]; current?: string }) {
