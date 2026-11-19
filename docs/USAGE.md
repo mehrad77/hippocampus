@@ -281,6 +281,15 @@ The tool refuses to write to a vault whose format version differs from its own. 
 
 **Several vaults.** Add another from the vault menu at the top of the sidebar, or **Setup → Your vaults → Add a vault**: the same steps, for another repo (add it to the GitHub App's installation, or pick another GitLab project). Each vault has its own keys, its own curator and its own MCP address, `https://<your-instance>/mcp/<vault id>`. The vault menu switches the dashboard between them; each browser tab keeps its own, and a new tab opens the one you used last. **Remove** forgets a vault here (its keys, connected apps, index and cache); its repo stays where it is, and you can add it again.
 
+**In an organization.** A vault can live in a GitHub organization's private repo, for a team or a business:
+- An owner of the organization installs the app on it (GitHub asks one to when a member tries), with *Only select repositories* and the vault repo.
+- The first time, the organization waits for an admin of this Hippocampus to approve it (**Admin → Organizations**). Your setup page lists it with its state, and offers **Continue with @org** once it's approved.
+- You can only pick repos you're an **admin or maintainer** of. Hippocampus checks that with your own GitHub sign-in, and the token it lists repos with reaches no other repo of the organization.
+- The vault is yours (you're its owner here). Invite your teammates as members.
+- Reconnecting a disconnected org vault also goes through **Continue with @org**, so your role there and the organization's approval are checked again.
+- Deleting your account removes the vault from Hippocampus, but never the app's install on the organization. The repo stays the organization's.
+- An admin turning the organization down stops new vaults there; ones already set up keep running.
+
 **Using GitLab instead.** If the instance offers it, step 2 lets you choose GitLab. Create an empty private project in your **personal namespace** (not a group), then **Connect GitLab**: you authorize the Hippocampus application on GitLab (scope `api`), pick the project, and go on from step 4. Differences from GitHub:
 
 - The connection isn't limited to one project (GitLab has no narrower permission that can write files), so it reaches every project you can. Hippocampus uses it only for your vault. [SECURITY.md](../SECURITY.md) has the details.

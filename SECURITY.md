@@ -72,7 +72,7 @@ Every commit Hippocampus makes names its actor in a `Hippo-Actor` trailer (`agen
 - **Before `hippo sleep` writes**, it runs the same audit on its own changes.
 - **Afterwards**, the vault's CI runs `hippo audit` daily over the last day's commits. It prints commit, path and rule, never content.
 
-Trailers are claims. Anyone who can push to the vault repo can forge them, so the audit catches bugs and misbehaving models, not a hostile pusher. Keep push access to the repo to yourself.
+Trailers are claims. Anyone who can push to the vault repo can forge them, so the audit catches bugs and misbehaving models, not a hostile pusher. Keep push access to the repo to yourself. In an organization's repo everyone with push access can forge them, so give push access only to people you'd trust with the vault. The secrets key (the age identity) stays with whoever holds it: Hippocampus never shares it with the team.
 
 Each vault also has a house-rules file (`_hippo/curator.md`) and guardrail files (`AGENTS.md`, `CLAUDE.md`) that tell agents not to edit files directly. Those are instructions, not enforcement; the audit is the enforcement.
 

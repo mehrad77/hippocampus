@@ -1,5 +1,5 @@
 import { AGE_RECIPIENT, SLUG, presetCatalog, validTimezone, type HumanSetting, type VaultSettings } from "@hippocampus/core";
-import { HttpError, byRecentPush, type HostedGitLab, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedRepo, type HostedSetupPort, type HostedSetupStatus, type HostedVault, type SetupItem } from "@hippocampus/dashboard";
+import { HttpError, byRecentPush, type HostedGitLab, type HostedInitResult, type HostedKeyInfo, type HostedMintedKey, type HostedOrg, type HostedRepo, type HostedSetupPort, type HostedSetupStatus, type HostedVault, type SetupItem } from "@hippocampus/dashboard";
 import { isConnectApp, keySnippets } from "@hippocampus/dashboard/connect";
 import { EmptyRepositoryError, GitHubStore } from "@hippocampus/store-github";
 import { GitLabStore } from "@hippocampus/store-gitlab";
@@ -8,11 +8,11 @@ import { TOKEN_ID } from "../auth.ts";
 import { keyCredential } from "../oauth.ts";
 import { bootstrapVault, plan } from "./bootstrap.ts";
 import { ACTIONS_CURATOR_APP, ACTIONS_DISPATCH, ACTIONS_WRITE_SECRETS, ActionsApi, credential, curatorActionsEnabled, curatorActionsState, setCuratorActions } from "./curator-actions.ts";
-import type { GitHubApp, InstallationRepo } from "./github-app.ts";
+import { GitHubAppError, type GitHubApp, type InstallationRepo } from "./github-app.ts";
 import { GitLabAuthError, type GitLabAccess, type GitLabProject } from "./gitlab.ts";
 import type { AgentClaim } from "./agent-claims.ts";
-import { KIND_SCOPES, MAX_VAULTS_PER_USER, keyRequest, type DisconnectReason, type MemberVault, type Provider, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
-import { clearPendingInstallation, pendingInstallation, type SessionKV } from "./session.ts";
+import { KIND_SCOPES, MAX_VAULTS_PER_USER, keyRequest, type DisconnectReason, type MemberVault, type Org, type Provider, type KeyRecord, type Registry, type VaultRecord } from "./registry.ts";
+import { RESUME_INSTALL_PATH, clearPendingInstallation, clearPendingOrgInstallation, pendingInstallation, pendingOrgInstallation, type SessionKV } from "./session.ts";
 import { GITLAB_CONNECT_PATH } from "./gitlab.ts";
 import type { Caller } from "./routes.ts";
 import { hostedCurationAvailable, installUrl, installationSettingsUrl, newRepoUrl, oauthUrlOf, type HostedSettings } from "./settings.ts";
@@ -59,6 +59,22 @@ export interface HostedSetupDeps {
   runHostedCurator?: (vault: MemberVault) => Promise<StartResult>;
 }
 
+/** An installation to set a vault up from; on an org's, the repos the person may use there. */
+interface Picked {
+  id: number;
+  repoIds?: number[];
+  org?: string;
+  /** GitHub's id for the org (its `orgs` row), on an org's pick. */
+  subject?: string;
+}
+
+/** An org the person tried to set a vault up in, for their setup page. */
+const hostedOrg = (o: Org): HostedOrg => ({
+  login: o.login,
+  status: o.status,
+  ...(o.status === "approved" && o.installationId ? { continueUrl: `${RESUME_INSTALL_PATH}?installation_id=${o.installationId}` } : {}),
+});
+
 /** Checking emptiness costs a few requests per repo, so only this many get checked. */
 const MAX_CHECKED = 8;
 /** GitHub's login rule: alphanumerics and single inner dashes, up to 39 characters. */
@@ -92,10 +108,13 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
   /**
    * The installation's repos, newest push first, through a read-only token. With `check`, each private
    * one (the first few, so the most recently pushed) says whether it's empty or already holds a vault.
+   * On an org's pick, only the repos the person administers or maintains.
    */
-  async function listRepos(installationId: number, check: boolean): Promise<HostedRepo[]> {
-    const { token } = await app.installationToken(installationId, { permissions: { ...READ_ONLY } });
-    const repos = (await app.installationRepositories(token)).sort(byRecentPush);
+  async function listRepos(picked: Picked, check: boolean): Promise<HostedRepo[]> {
+    if (picked.repoIds && !picked.repoIds.length) return [];
+    const token = await listingToken(picked);
+    const allowed = picked.repoIds && new Set(picked.repoIds);
+    const repos = (await app.installationRepositories(token)).filter((r) => !allowed || allowed.has(r.id)).sort(byRecentPush);
     // The person's disconnected vaults are always checked: they get no pushes, so they would sink below the cap.
     const lost = new Set(vaults.filter((v) => v.provider === "github" && v.status === "disconnected").map((v) => v.repoId));
     let checked = 0;
@@ -116,31 +135,106 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
   }
 
   /**
-   * The installation to set a vault up from: the one GitHub just sent the person back with, or else the
-   * app's install on their own account. The pending one lasts an hour and goes once a vault is made, while
-   * an install made earlier (another vault, a closed tab, GitHub not redirecting) still reaches the repos.
+   * A read-only token to list a pick's repos with. On an org's pick it reaches only the person's repos, but
+   * GitHub refuses that whole token (422) once one of them has left the install. Then it's the install's,
+   * and `listRepos` filters to the person's repos before it lists or checks anything.
    */
-  async function installationId(): Promise<number | undefined> {
-    return (await pendingId()) ?? ownInstallation();
+  async function listingToken(picked: Picked): Promise<string> {
+    const permissions = { ...READ_ONLY };
+    if (!picked.repoIds) return (await app.installationToken(picked.id, { permissions })).token;
+    try {
+      return (await app.installationToken(picked.id, { repositoryIds: picked.repoIds, permissions })).token;
+    } catch (err) {
+      if (!(err instanceof GitHubAppError && err.status === 422)) throw err;
+      return (await app.installationToken(picked.id, { permissions })).token;
+    }
   }
 
-  const pendingId = async () => (await pendingInstallation(kv, account.id))?.installationId;
+  /**
+   * The install to list repos from: the one GitHub (or "Continue with @org") sent the person back with
+   * last, or else the app's install on their own account. A pending one lasts an hour and goes once a vault
+   * is made, while an install made earlier (another vault, a closed tab, no redirect) still reaches the repos.
+   */
+  async function installationId(): Promise<Picked | undefined> {
+    return (await pending()).picks[0] ?? ownInstallation();
+  }
+
+  /**
+   * Both pending installs, newest first. An org's pick whose org an admin turned down since is dropped
+   * here, for listing and setup alike; `denied` says which, for setup's answer.
+   */
+  async function pending(): Promise<{ picks: Picked[]; denied?: Picked }> {
+    const [mine, org] = await Promise.all([pendingInstallation(kv, account.id), pendingOrgInstallation(kv, account.id)]);
+    const orgPick: Picked | undefined = org && { id: org.installationId, repoIds: org.repoIds, org: org.org, subject: org.subject };
+    const minePick: Picked | undefined = mine && { id: mine.installationId };
+    if (orgPick && (await registry.org(org!.subject))?.status !== "approved") {
+      await clearPendingOrgInstallation(kv, account.id);
+      return { picks: minePick ? [minePick] : [], denied: orgPick };
+    }
+    const both = [orgPick, minePick].filter((p): p is Picked => !!p);
+    // The newer one first: what GitHub sent the person back with last.
+    return { picks: org && mine && mine.at > org.at ? both.reverse() : both };
+  }
+
+  /**
+   * The install to set `repoId` up from: either pending pick that covers it (newest first), the existing
+   * vault's own install (reconnecting a personal vault), or the app's install on the person's account,
+   * whichever reaches the repo first. An org vault reconnects only through a fresh pick of its org, so
+   * the person's role there and the org's approval are checked again. Each install is tried once.
+   */
+  async function pickFor(repoId: number, existing?: VaultRecord): Promise<{ picked: Picked; repo: InstallationRepo }> {
+    const { picks, denied } = await pending();
+    const candidates: (() => Promise<Picked | undefined>)[] = [
+      ...picks.map((p) => async () => p),
+      async () => (existing && !(await registry.orgByInstallation(existing.installationId)) ? { id: existing.installationId } : undefined),
+      ownInstallation,
+    ];
+    const tried = new Set<number>();
+    let failure: unknown;
+    for (const next of candidates) {
+      const picked = await next().catch((err: unknown) => void (failure = err));
+      if (!picked || tried.has(picked.id) || (picked.repoIds && !picked.repoIds.includes(repoId))) continue;
+      tried.add(picked.id);
+      const repo = await findRepo(picked, repoId);
+      if (repo) return { picked, repo };
+    }
+    if (denied?.repoIds?.includes(repoId)) throw new HttpError(403, `@${denied.org} can't hold new vaults here: an admin turned it down.`, "ORG_NOT_APPROVED");
+    // GitHub not answering isn't "not installed".
+    if (failure) throw failure;
+    if (!tried.size && !picks.length) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
+    const org = picks.find((p) => p.org);
+    throw new HttpError(
+      404,
+      org
+        ? `Hippocampus can't set that repo up for you: it isn't in the app's install on your account, and in @${org.org} you can only pick repos you're an admin or maintainer of.`
+        : "That repo isn't one the app was installed on. Add it to the installation on GitHub, or pick another.",
+      "NOT_FOUND",
+    );
+  }
 
   /** The app's install on the person's own account. GitHub failing throws: it isn't "not installed". */
-  async function ownInstallation(): Promise<number | undefined> {
+  async function ownInstallation(): Promise<Picked | undefined> {
     const own = await app.accountInstallation(account.login).catch((err: unknown) => {
       throw new HttpError(502, `GitHub didn't say whether the app is installed on your account: ${(err as Error).message}`, "GITHUB");
     });
     // The same rule as adopting an install after GitHub's redirect: the person's own personal account.
-    return own && own.account.type === "User" && own.account.id === account.id ? own.id : undefined;
+    return own && own.account.type === "User" && own.account.id === account.id ? { id: own.id } : undefined;
   }
 
-  async function findRepo(installationId: number, repoId: number): Promise<InstallationRepo> {
+  /**
+   * The repo through this install, if it reaches it. GitHub refusing a token for it (422, or 404 for an
+   * install that's gone) means it doesn't; any other failure is GitHub not answering, and says so.
+   */
+  async function findRepo(picked: Picked, repoId: number): Promise<InstallationRepo | undefined> {
+    const unanswered = (err: unknown): never => {
+      throw new HttpError(502, `GitHub didn't answer about that repo: ${(err as Error).message}`, "GITHUB");
+    };
     // Narrowed to the one repo: GitHub refuses (422) if it isn't part of the installation.
-    const minted = await app.installationToken(installationId, { repositoryIds: [repoId], permissions: { metadata: "read" } }).catch(() => undefined);
-    const repo = minted && (await app.installationRepositories(minted.token)).find((r) => r.id === repoId);
-    if (!repo) throw new HttpError(404, "That repo isn't one the app was installed on. Add it to the installation on GitHub, or pick another.", "NOT_FOUND");
-    return repo;
+    const minted = await app.installationToken(picked.id, { repositoryIds: [repoId], permissions: { metadata: "read" } }).catch((err: unknown) =>
+      err instanceof GitHubAppError && (err.status === 422 || err.status === 404) ? undefined : unanswered(err),
+    );
+    if (!minted) return undefined;
+    return (await app.installationRepositories(minted.token).catch(unanswered)).find((r) => r.id === repoId);
   }
 
   const needGitLab = (): GitLabAccess => {
@@ -254,18 +348,19 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
     const adding = url?.searchParams.has("add") ?? false;
     // Only while there's a GitHub repo to pick: a ready vault's status doesn't need the app's repos.
     const picking = account.status === "approved" && (adding || vault?.status !== "ready");
-    let id = picking ? await pendingId() : undefined;
+    let picked = picking ? (await pending()).picks[0] : undefined;
     let installationError: string | undefined;
     // Connected to GitLab, the person is setting up there unless they just installed the app on GitHub (the
     // pending one): an old install from a removed vault mustn't switch them over. Picking GitHub and
     // installing again brings GitHub's redirect, so the picker still opens.
-    if (picking && id === undefined && !(gitlab && (await gitlab.login(account.id))))
-      id = await ownInstallation().catch((err: unknown) => void (installationError = (err as Error).message));
-    const [installation, keys, curatorActions, hostedCurator] = await Promise.all([
-      id !== undefined
-        ? listRepos(id, false).then(
-            (repos) => ({ id, repos }),
-            (err: unknown) => ({ id, repos: [], error: (err as Error).message }),
+    if (picking && picked === undefined && !(gitlab && (await gitlab.login(account.id))))
+      picked = await ownInstallation().catch((err: unknown) => void (installationError = (err as Error).message));
+    const p = picked;
+    const [installation, keys, curatorActions, hostedCurator, orgs] = await Promise.all([
+      p
+        ? listRepos(p, false).then(
+            (repos) => ({ id: p.id, repos, ...(p.org ? { org: p.org } : {}) }),
+            (err: unknown) => ({ id: p.id, repos: [], ...(p.org ? { org: p.org } : {}), error: (err as Error).message }),
           )
         : undefined,
       // A viewer manages no keys; a member sees the ones they made.
@@ -274,6 +369,8 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       // GitHub Actions only: a GitLab vault has no workflow to read.
       vault?.status === "ready" && vault.role === "owner" && vault.provider === "github" && account.status === "approved" ? curatorActionsEnabled(app, vault).catch(() => undefined) : undefined,
       hostedCuratorStatus().catch(() => undefined),
+      // The orgs the person tried, so one approved since (or whose pending install expired) can be picked up again.
+      picking ? registry.orgsRequestedBy(account.user) : undefined,
     ]);
     const gitlabInfo = gitlab && account.status === "approved" && (adding || vault?.status !== "ready") ? await gitlabStatus() : undefined;
     const s: HostedSetupStatus = {
@@ -285,6 +382,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       ...(gitlabInfo ? { gitlab: gitlabInfo } : {}),
       ...(installation ? { installation } : {}),
       ...(installationError ? { installationError } : {}),
+      ...(orgs?.length ? { orgs: orgs.map((o) => hostedOrg(o)) } : {}),
       ...(vault ? { vault: hostedVault(vault, settings) } : {}),
       vaults: vaults.map((v) => hostedVault(v, settings)),
       vaultLimit: MAX_VAULTS_PER_USER,
@@ -328,16 +426,15 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       return { vault: hostedVault(result.vault, settings), mode: result.mode, ...(result.recipientKept ? { recipientKept: true } : {}) };
     }
     // A retry on the same repo can go on with the vault's own installation once the pending one has expired.
-    const existing = vaults.find((v) => v.repoId === req.repoId && v.provider === "github");
-    const found = (await installationId()) ?? existing?.installationId;
-    if (found === undefined) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
-    const repo = await findRepo(found, req.repoId);
+    // Their own vault on this repo, to reconnect through its installation; a vault shared with them isn't theirs to reclaim.
+    const existing = vaults.find((v) => v.repoId === req.repoId && v.provider === "github" && v.role === "owner");
+    const { picked: found, repo } = await pickFor(req.repoId, existing);
     const result = await bootstrapVault({
       app,
       registry,
       accountId: account.id,
       owner: account.user,
-      installationId: found,
+      installationId: found.id,
       repo: { id: repo.id, fullName: repo.fullName, branch: repo.defaultBranch },
       ...from(),
       now: now(),
@@ -453,9 +550,14 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
         return { ok: true };
       }
       if (path === "repos" && method === "GET") {
-        const id = await installationId();
-        if (id === undefined) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
-        return { installation: { id }, repos: await listRepos(id, true) };
+        const picked = await installationId();
+        if (picked === undefined) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
+        return { installation: { id: picked.id, ...(picked.org ? { org: picked.org } : {}) }, repos: await listRepos(picked, true) };
+      }
+      if (path === "installation/forget" && method === "POST") {
+        // Back to the person's own account after picking an org's install up.
+        await clearPendingOrgInstallation(kv, account.id);
+        return { ok: true };
       }
       if (path === "init" && method === "POST") return init(body);
       if (path === "vaults/remove" && method === "POST") return removeVault(body);

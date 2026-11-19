@@ -12,6 +12,20 @@
   gap: var(--space-2);
 }
 
+.hz-orgs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hz-orgs > li {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 .hz-repo {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

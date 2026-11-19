@@ -410,6 +410,46 @@ const toInvite = (r: InviteRow): Invite => ({
 
 const VAULT_COLUMNS = "id, account_id, owner, provider, installation_id, repo_id, full_name, branch, status, reason, quotas, created, updated";
 
+export type OrgStatus = "waitlisted" | "approved" | "denied";
+export const ORG_STATUSES: OrgStatus[] = ["waitlisted", "approved", "denied"];
+
+/** An organization that asked to hold vaults, and whether an admin let it. GitHub only for now. */
+export interface Org {
+  provider: "github";
+  /** The provider's id for the org (GitHub's numeric account id, as text). */
+  subject: string;
+  login: string;
+  /** The app's install on the org, as last seen. */
+  installationId?: number;
+  status: OrgStatus;
+  /** The user who first asked. */
+  requestedBy?: string;
+  created: string;
+  updated: string;
+}
+
+interface OrgRow {
+  provider: "github";
+  subject: string;
+  login: string;
+  installation_id: number | null;
+  status: OrgStatus;
+  requested_by: string | null;
+  created: string;
+  updated: string;
+}
+
+const toOrg = (r: OrgRow): Org => ({
+  provider: r.provider,
+  subject: r.subject,
+  login: r.login,
+  ...(r.installation_id === null ? {} : { installationId: r.installation_id }),
+  status: r.status,
+  ...(r.requested_by ? { requestedBy: r.requested_by } : {}),
+  created: r.created,
+  updated: r.updated,
+});
+
 export interface GitLabCredentialRow {
   accountId: number;
   gitlabUserId: number;
@@ -558,6 +598,7 @@ export class Registry {
       { sql: "DELETE FROM keys WHERE vault_id IN (SELECT id FROM vaults WHERE account_id = ?)", params: [id] },
       // Their keys and seats in vaults shared with them go too; the owners keep their vaults.
       { sql: "DELETE FROM keys WHERE created_by = (SELECT id FROM users WHERE legacy_account = ?)", params: [id] },
+      { sql: "DELETE FROM org_requests WHERE user_id = (SELECT id FROM users WHERE legacy_account = ?)", params: [id] },
       { sql: "DELETE FROM vault_members WHERE vault_id IN (SELECT id FROM vaults WHERE account_id = ?)", params: [id] },
       { sql: "DELETE FROM vault_members WHERE user_id = (SELECT id FROM users WHERE legacy_account = ?)", params: [id] },
       { sql: "UPDATE invites SET revoked = ? WHERE accepted IS NULL AND revoked IS NULL AND (created_by = (SELECT id FROM users WHERE legacy_account = ?) OR vault_id IN (SELECT id FROM vaults WHERE account_id = ?))", params: [this.stamp(), id, id] },
@@ -708,6 +749,54 @@ export class Registry {
   async renameVault(id: string, fullName: string): Promise<VaultRecord | undefined> {
     const row = await this.one<VaultRow>(`UPDATE vaults SET full_name = ?, updated = ? WHERE id = ? RETURNING ${VAULT_COLUMNS}`, [fullName, this.stamp(), id]);
     return row && toVault(row);
+  }
+
+  // ── Organizations ──────────────────────────────────────────────────────────
+
+  /**
+   * Someone tied an org's install to their account: the org asks (waitlisted) the first time, and
+   * keeps whatever an admin decided after that. Its login and install are refreshed either way.
+   */
+  async requestOrg(o: { subject: string; login: string; installationId: number; user: string }): Promise<Org> {
+    const at = this.stamp();
+    await this.db.batch([
+      {
+        sql: `INSERT INTO orgs (provider, subject, login, installation_id, status, requested_by, created, updated) VALUES ('github', ?, ?, ?, 'waitlisted', ?, ?, ?)
+              ON CONFLICT (provider, subject) DO UPDATE SET login = excluded.login, installation_id = excluded.installation_id, updated = excluded.updated`,
+        params: [o.subject, o.login, o.installationId, o.user, at, at],
+      },
+      { sql: "INSERT INTO org_requests (provider, subject, user_id, at) VALUES ('github', ?, ?, ?) ON CONFLICT (provider, subject, user_id) DO UPDATE SET at = excluded.at", params: [o.subject, o.user, at] },
+    ]);
+    return (await this.org(o.subject))!;
+  }
+
+  async org(subject: string): Promise<Org | undefined> {
+    const row = await this.one<OrgRow>("SELECT * FROM orgs WHERE provider = 'github' AND subject = ?", [subject]);
+    return row && toOrg(row);
+  }
+
+  /** The org whose install this is, if it's an org's. */
+  async orgByInstallation(installationId: number): Promise<Org | undefined> {
+    const row = await this.one<OrgRow>("SELECT * FROM orgs WHERE provider = 'github' AND installation_id = ?", [installationId]);
+    return row && toOrg(row);
+  }
+
+  async orgs(status?: OrgStatus): Promise<Org[]> {
+    const rows = status
+      ? await this.db.all<OrgRow>("SELECT * FROM orgs WHERE status = ? ORDER BY created, subject", [status])
+      : await this.db.all<OrgRow>("SELECT * FROM orgs ORDER BY created, subject");
+    return rows.map(toOrg);
+  }
+
+  /** The orgs a user tried to set a vault up in, newest first. */
+  async orgsRequestedBy(user: string): Promise<Org[]> {
+    return (await this.db.all<OrgRow>("SELECT o.* FROM orgs o JOIN org_requests r ON r.provider = o.provider AND r.subject = o.subject WHERE r.user_id = ? ORDER BY r.at DESC", [user])).map(toOrg);
+  }
+
+  async setOrgStatus(subject: string, status: "approved" | "denied"): Promise<Org> {
+    const row = await this.one<OrgRow>("UPDATE orgs SET status = ?, updated = ? WHERE provider = 'github' AND subject = ? RETURNING *", [status, this.stamp(), subject]);
+    if (!row) throw new HttpError(404, "No such organization", "NOT_FOUND");
+    return toOrg(row);
   }
 
   // ── GitLab connections ─────────────────────────────────────────────────────

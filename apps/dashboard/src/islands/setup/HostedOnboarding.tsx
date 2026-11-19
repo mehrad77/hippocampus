@@ -7,7 +7,7 @@ import { plural, relTime } from "../../lib/format.ts";
 import { useTerms } from "../../lib/prefs.ts";
 import { href } from "../../lib/routes.ts";
 import { switchVault } from "../../lib/vault.ts";
-import type { AccountApp, HostedAgentClaim, HostedInitResult, HostedKeyInfo, HostedRepoView, HostedReposResponse, HostedStatus, SessionInfo } from "../../lib/types.ts";
+import type { AccountApp, HostedAgentClaim, HostedInitResult, HostedKeyInfo, HostedOrg, HostedRepoView, HostedReposResponse, HostedStatus, SessionInfo } from "../../lib/types.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { RelTime, SkeletonPanel } from "../../ui/Parts.tsx";
 import { AddAgent } from "./AddAgent.tsx";
@@ -43,7 +43,7 @@ import {
   type HostedProvider,
   type HostedStepId,
 } from "./hosted.ts";
-import { domainProblem } from "./model.ts";
+import { domainProblem, type BadgeState } from "./model.ts";
 import { KeyFile, makeAgeKey } from "./SecretsPanel.tsx";
 import { StepRailView } from "./StepRail.tsx";
 
@@ -401,7 +401,7 @@ function HostChoice({ status, host, setProvider }: Pick<HostedStepProps, "status
           </label>
         ))}
       </div>
-      <span className="hint">{locked ? "Your vault is already set up there." : "Either way it's a private repository that you own, and Hippocampus only reads and writes that one."}</span>
+      <span className="hint">{locked ? "Your vault is already set up there." : "Either way it's a private repository you own or administer, and Hippocampus only reads and writes that one."}</span>
     </div>
   );
 }
@@ -450,7 +450,7 @@ function RepoStep(p: HostedStepProps) {
       )}
       <Task n={1} title={gitlab ? "Create a private project" : "Create a private repo"} done={connected || !!vault}>
         <p className="small">
-          {gitlab ? "Empty, private, in your personal namespace. Public and internal projects are refused." : "Empty, private, on your personal account. Public repositories are refused."} Already have one, or an existing vault? Skip to the next part.
+          {gitlab ? "Empty, private, in your personal namespace. Public and internal projects are refused." : "Empty, private, on your personal account or in an organization where you're an admin or maintainer of it. Public repositories are refused."} Already have one, or an existing vault? Skip to the next part.
         </p>
         <div className="row">
           <a className="btn btn--sm" href={gitlab ? status.gitlab?.newRepoUrl : status.newRepoUrl} target="_blank" rel="noopener noreferrer">
@@ -510,12 +510,22 @@ function InstallGitHub({ status }: HostedStepProps) {
   return (
     <>
       {inst && !inst.error ? (
-        <p className="small">The app can see {plural(inst.repos.length, "repository", "repositories")}.</p>
+        <p className="small">
+          {inst.org ? (
+            <>
+              The app is on <strong>@{inst.org}</strong>: {plural(inst.repos.length, "repository", "repositories")} there {inst.repos.length === 1 ? "is" : "are"} yours to set up (you're an admin or maintainer).
+            </>
+          ) : (
+            <>The app can see {plural(inst.repos.length, "repository", "repositories")}.</>
+          )}
+        </p>
       ) : (
         <p className="small">
-          On GitHub, install it on your personal account (@{status.account.login}). Under <em>Repository access</em>, choose <strong>Only select repositories</strong> and pick just that repo. GitHub sends you back here.
+          On GitHub, install it on your personal account (@{status.account.login}) or on an organization. Under <em>Repository access</em>, choose <strong>Only select repositories</strong> and pick just that repo. GitHub sends you back here. On an organization, an owner of it installs the app, and an admin of this Hippocampus approves the organization once.
         </p>
       )}
+      {status.orgs?.length ? <OrgList orgs={status.orgs} current={inst?.org} /> : null}
+      {inst?.org && <UseOwnAccount />}
       {!inst && status.installationError && (
         <div className="callout callout--warn" role="alert">
           <Icon name="warn" />
@@ -541,6 +551,53 @@ function InstallGitHub({ status }: HostedStepProps) {
   );
 }
 
+const ORG_TONE: Record<HostedOrg["status"], { tone: BadgeState; word: string; detail: string }> = {
+  waitlisted: { tone: "wait", word: "Waiting", detail: "An admin of this Hippocampus has to approve it." },
+  approved: { tone: "done", word: "Approved", detail: "Continue to pick one of its repos." },
+  denied: { tone: "error", word: "Turned down", detail: "It can't hold vaults here." },
+};
+
+/** Leave an org's install for the app's install on the person's own account. */
+function UseOwnAccount() {
+  const act = useAction();
+  const forget = async () => {
+    if (await act.run(() => postJson("/setup/installation/forget", {}))) await refreshSetup();
+  };
+  return (
+    <>
+      <div className="row">
+        <button type="button" className="btn btn--sm" onClick={() => void forget()} disabled={act.busy}>
+          Use my own account instead
+        </button>
+      </div>
+      {act.error !== undefined && <ErrorCallout error={act.error} />}
+    </>
+  );
+}
+
+/** The organizations the person installed the app on, and how far each got. */
+function OrgList({ orgs, current }: { orgs: HostedOrg[]; current?: string }) {
+  return (
+    <ul className="hz-orgs">
+      {orgs.map((o) => {
+        const tone = ORG_TONE[o.status];
+        return (
+          <li key={o.login} className="row sz-tight-row">
+            <strong>@{o.login}</strong>
+            <ToneTag tone={tone.tone} word={tone.word} title={tone.detail} compact />
+            <span className="small muted">{o.login === current ? "Picking from it now." : tone.detail}</span>
+            {o.continueUrl && o.login !== current && (
+              <a className="btn btn--sm" href={o.continueUrl}>
+                Continue with @{o.login} <Icon name="chevron" size={14} />
+              </a>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function RepoPicker({ status, ctx, adopting, host, picked, setPicked, checking }: HostedStepProps) {
   const gitlab = host === "gitlab";
   if (checking) return <SkeletonPanel lines={3} />;
@@ -558,7 +615,15 @@ function RepoPicker({ status, ctx, adopting, host, picked, setPicked, checking }
               </>
             ) : (
               <>
-                <strong>The app can't see any repositories.</strong> Add your vault repo to the installation on GitHub, then come back.
+                {status.installation?.org ? (
+                  <>
+                    <strong>No repo here is yours to set up.</strong> In @{status.installation.org} you need to be an admin or maintainer of a repo the app was installed on.
+                  </>
+                ) : (
+                  <>
+                    <strong>The app can't see any repositories.</strong> Add your vault repo to the installation on GitHub, then come back.
+                  </>
+                )}
               </>
             )}
           </div>

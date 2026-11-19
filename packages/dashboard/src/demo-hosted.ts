@@ -179,6 +179,11 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       { id: 2003, login: "player-two", status: "approved", note: "Same move, different family.", created: ago(20 * DAY), updated: ago(19 * DAY), admin: false },
       { id: 2004, login: "campus-visitor", status: "denied", note: "Just looking around.", created: ago(12 * DAY), updated: ago(11 * DAY), admin: false },
     ] as DemoAccount[],
+    /** Organizations asking to hold vaults, as admins see them. */
+    orgs: [
+      { id: "3101", login: "migration-agency", status: "waitlisted", created: ago(3 * HOUR), updated: ago(3 * HOUR) },
+      { id: "3102", login: "harbor-university", status: "approved", created: ago(9 * DAY), updated: ago(8 * DAY) },
+    ] as { id: string; login: string; status: "waitlisted" | "approved" | "denied"; created: string; updated: string }[],
   });
   let state = fresh();
   let approval: ReturnType<typeof setTimeout> | undefined;
@@ -725,6 +730,18 @@ export function hostedDemo(opts: HostedDemoOptions): (request: Request) => Promi
       a.status = decision === "approve" ? "approved" : "denied";
       a.updated = now().toISOString();
       return { account: a };
+    }
+    if (sub === "orgs" && method === "GET") {
+      const want = url.searchParams.get("status");
+      return { orgs: state.orgs.filter((o) => !want || o.status === want) };
+    }
+    const orgDecision = /^orgs\/(approve|deny)$/.exec(sub)?.[1];
+    if (orgDecision && method === "POST") {
+      const o = state.orgs.find((x) => x.id === (body as { id?: unknown } | undefined)?.id);
+      if (!o) throw new HttpError(404, "No such organization", "NOT_FOUND");
+      o.status = orgDecision === "approve" ? "approved" : "denied";
+      o.updated = now().toISOString();
+      return { org: o };
     }
     if (sub === "vaults" && method === "GET") {
       const vaults = [

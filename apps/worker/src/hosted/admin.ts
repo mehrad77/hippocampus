@@ -1,8 +1,9 @@
 import { HttpError, type AdminReferrals } from "@hippocampus/dashboard";
-import type { Account, AccountStatus, Registry } from "./registry.ts";
+import { ORG_STATUSES, type Account, type AccountStatus, type Org, type OrgStatus, type Registry } from "./registry.ts";
 import { quotaOverrides } from "./quotas.ts";
 
-// Routes under /dashboard/api/admin/ for the admins in HIPPO_ADMINS: approve the waitlist, see which
+// Routes under /dashboard/api/admin/ for the admins in HIPPO_ADMINS: approve the waitlist and the
+// organizations asking to hold vaults, see which
 // vaults exist, raise one vault's limits, and see who invited whom (the referral graph). Admins see
 // names, states and limits, never what's in anyone's vault.
 
@@ -17,6 +18,7 @@ export interface AdminDeps {
 
 export function adminRoutes(deps: AdminDeps) {
   const { registry } = deps;
+  const orgView = (o: Org) => ({ id: o.subject, login: o.login, status: o.status, created: o.created, updated: o.updated });
   const accountView = (a: Account) => ({ id: a.id, login: a.login, status: a.status, note: a.note, created: a.created, updated: a.updated, admin: deps.admins.has(a.id) });
 
   /** `path` is relative to `/admin/`. */
@@ -34,6 +36,18 @@ export function adminRoutes(deps: AdminDeps) {
       if (typeof id !== "number" || !Number.isSafeInteger(id)) throw new HttpError(400, "id: the account's GitHub user id", "INVALID");
       if (decision === "deny" && deps.admins.has(id)) throw new HttpError(400, "Admins can't be denied; remove them from HIPPO_ADMINS first.", "INVALID");
       return { account: accountView(await registry.setAccountStatus(id, decision === "approve" ? "approved" : "denied")) };
+    }
+    if (path === "orgs" && method === "GET") {
+      const status = url.searchParams.get("status") ?? undefined;
+      if (status !== undefined && !ORG_STATUSES.includes(status as OrgStatus)) throw new HttpError(400, `status: one of ${ORG_STATUSES.join(", ")}`, "INVALID");
+      return { orgs: (await registry.orgs(status as OrgStatus | undefined)).map(orgView) };
+    }
+    const orgDecision = /^orgs\/(approve|deny)$/.exec(path)?.[1];
+    if (orgDecision && method === "POST") {
+      const id = (body as { id?: unknown } | undefined)?.id;
+      if (typeof id !== "string" || !/^\d{1,20}$/.test(id)) throw new HttpError(400, "id: the organization's GitHub id", "INVALID");
+      // Turning an org down stops new vaults there; ones already set up keep running, as their repos are their own.
+      return { org: orgView(await registry.setOrgStatus(id, orgDecision === "approve" ? "approved" : "denied")) };
     }
     if (path === "vaults" && method === "GET") {
       const vaults = await registry.vaults();

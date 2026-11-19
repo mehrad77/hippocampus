@@ -43,7 +43,26 @@ export interface FakeUser {
   login: string;
   /** Installations the user sees besides the one on their own account, e.g. an organization's. */
   installations: number[];
+  /** Their role on other accounts' repos, by `owner/name` (lowercase): a repo without one is hidden from them. */
+  roles: Record<string, FakeRepoRole>;
 }
+
+/** A user's permissions on a repo, as GitHub lists them. */
+export interface FakeRepoRole {
+  admin: boolean;
+  maintain: boolean;
+  push: boolean;
+  triage: boolean;
+  pull: boolean;
+}
+
+const ROLES = {
+  admin: { admin: true, maintain: true, push: true, triage: true, pull: true },
+  maintain: { admin: false, maintain: true, push: true, triage: true, pull: true },
+  write: { admin: false, maintain: false, push: true, triage: true, pull: true },
+  read: { admin: false, maintain: false, push: false, triage: false, pull: true },
+} satisfies Record<string, FakeRepoRole>;
+export type FakeRoleName = keyof typeof ROLES;
 
 export interface FakeRepoOptions {
   fullName: string;
@@ -271,8 +290,9 @@ export class FakeGitHub {
   }
 
   /** A GitHub user, signed in with `token` when given. */
-  addUser(opts: { login: string; id?: number; token?: string; installations?: number[] }): FakeUser {
-    const user = { id: opts.id ?? this.nextId++, login: opts.login, installations: opts.installations ?? [] };
+  addUser(opts: { login: string; id?: number; token?: string; installations?: number[]; roles?: Record<string, FakeRoleName> }): FakeUser {
+    const roles = Object.fromEntries(Object.entries(opts.roles ?? {}).map(([repo, role]) => [repo.toLowerCase(), ROLES[role]]));
+    const user = { id: opts.id ?? this.nextId++, login: opts.login, installations: opts.installations ?? [], roles };
     this.users.set(user.login, user);
     if (opts.token) this.tokens.set(opts.token, { user: user.login });
     return user;
@@ -530,7 +550,11 @@ export class FakeGitHub {
       if (!user) return badCredentials();
       const installation = this.installations.get(Number(m[1]));
       if (!installation || !visible(installation)) return notFound();
-      return json(200, this.repoList(installation.repos));
+      // As GitHub does: only the repos the user can reach, each with their role there.
+      const own = installation.account.id === user.id;
+      const list = this.repoList(installation.repos.filter((r) => own || user.roles[r.toLowerCase()]));
+      const repositories = list.repositories.map((r) => ({ ...r, permissions: own ? ROLES.admin : user.roles[r.full_name.toLowerCase()] }));
+      return json(200, { ...list, total_count: repositories.length, repositories });
     }
     return json(404, { message: `fake: unhandled ${method} ${path}` });
   }

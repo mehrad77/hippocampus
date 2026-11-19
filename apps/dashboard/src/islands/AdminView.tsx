@@ -4,7 +4,7 @@ import { invalidate, useResource } from "../lib/cache.ts";
 import { toast } from "../lib/events.ts";
 import { useTerms } from "../lib/prefs.ts";
 import { href } from "../lib/routes.ts";
-import type { AdminAccount, AdminVault, SessionInfo } from "../lib/types.ts";
+import type { AdminAccount, AdminOrg, AdminVault, SessionInfo } from "../lib/types.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { PageGate } from "../ui/PageGate.tsx";
 import { Empty, Panel, RelTime, SkeletonPanel } from "../ui/Parts.tsx";
@@ -60,7 +60,7 @@ function Admin() {
         <div>
           <div className="page-head__kicker">Admin</div>
           <h1>Accounts and vaults</h1>
-          <p className="page-head__lede">Approve who gets in, see which vaults exist, and who invited whom. Admins see names and states here, never what's in anyone's vault.</p>
+          <p className="page-head__lede">Approve who gets in and which organizations may hold vaults, see which vaults exist, and who invited whom. Admins see names and states here, never what's in anyone's vault.</p>
         </div>
       </header>
       <Panel title="Accounts" icon="party" id="accounts">
@@ -69,9 +69,87 @@ function Admin() {
           <Accounts status={tab} />
         </TabPanel>
       </Panel>
+      <Orgs />
       <Vaults />
       <Referrals />
     </div>
+  );
+}
+
+/** GitHub organizations asking to hold vaults. Turning one down stops new vaults there; existing ones keep running. */
+function Orgs() {
+  const list = useResource<{ orgs: AdminOrg[] }>("/admin/orgs");
+  const act = useAction();
+  const decide = async (o: AdminOrg, decision: "approve" | "deny") => {
+    const res = await act.run(() => postJson<{ org: AdminOrg }>(`/admin/orgs/${decision}`, { id: o.id }));
+    if (!res) return;
+    toast(decision === "approve" ? `@${o.login} may hold vaults.` : `@${o.login} was turned down.`, "ok");
+    await invalidate((k) => k.startsWith("/admin/"));
+  };
+  return (
+    <Panel title="Organizations" icon="map" id="orgs">
+      {list.error && !list.data ? (
+        <ErrorCallout error={list.error} onRetry={() => void list.reload()} />
+      ) : !list.data ? (
+        <SkeletonPanel lines={2} />
+      ) : !list.data.orgs.length ? (
+        <Empty icon="map" title="No organizations yet">
+          An organization lands here when someone installs the app on it to set up a vault.
+        </Empty>
+      ) : (
+        <div className="stack">
+          {act.error !== undefined && <ErrorCallout error={act.error} />}
+          <div className="table-wrap">
+            <table className="table hz-rtable">
+              <thead>
+                <tr>
+                  <th scope="col">Organization</th>
+                  <th scope="col">Since</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.data.orgs.map((o) => {
+                  const tone = ACCOUNT_TONE[o.status];
+                  return (
+                    <tr key={o.id}>
+                      <td data-label="Organization">
+                        <a href={`https://github.com/${encodeURIComponent(o.login)}`} rel="noopener noreferrer">
+                          <strong>@{o.login}</strong>
+                        </a>
+                      </td>
+                      <td data-label="Since">
+                        <RelTime at={o.status === "waitlisted" ? o.created : o.updated} />
+                      </td>
+                      <td data-label="Status">
+                        <ToneTag tone={tone.tone} word={tone.word} compact />
+                      </td>
+                      <td className="sz-tokens__act">
+                        <span className="row sz-tight-row hz-actions">
+                          {o.status !== "approved" && (
+                            <button type="button" className="btn btn--sm btn--primary" onClick={() => void decide(o, "approve")} disabled={act.busy} aria-label={`Approve @${o.login}`}>
+                              <Icon name="check" size={16} /> Approve
+                            </button>
+                          )}
+                          {o.status !== "denied" && (
+                            <button type="button" className="btn btn--sm btn--danger" onClick={() => void decide(o, "deny")} disabled={act.busy} aria-label={`Turn down @${o.login}`}>
+                              Turn down
+                            </button>
+                          )}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </Panel>
   );
 }
 
