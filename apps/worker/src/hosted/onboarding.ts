@@ -121,9 +121,16 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
    * an install made earlier (another vault, a closed tab, GitHub not redirecting) still reaches the repos.
    */
   async function installationId(): Promise<number | undefined> {
-    const pending = await pendingInstallation(kv, account.id);
-    if (pending) return pending.installationId;
-    const own = await app.accountInstallation(account.login).catch(() => undefined);
+    return (await pendingId()) ?? ownInstallation();
+  }
+
+  const pendingId = async () => (await pendingInstallation(kv, account.id))?.installationId;
+
+  /** The app's install on the person's own account. GitHub failing throws: it isn't "not installed". */
+  async function ownInstallation(): Promise<number | undefined> {
+    const own = await app.accountInstallation(account.login).catch((err: unknown) => {
+      throw new HttpError(502, `GitHub didn't say whether the app is installed on your account: ${(err as Error).message}`, "GITHUB");
+    });
     // The same rule as adopting an install after GitHub's redirect: the person's own personal account.
     return own && own.account.type === "User" && own.account.id === account.id ? own.id : undefined;
   }
@@ -247,7 +254,13 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
     const adding = url?.searchParams.has("add") ?? false;
     // Only while there's a GitHub repo to pick: a ready vault's status doesn't need the app's repos.
     const picking = account.status === "approved" && (adding || vault?.status !== "ready");
-    const id = picking ? await installationId() : undefined;
+    let id = picking ? await pendingId() : undefined;
+    let installationError: string | undefined;
+    // Connected to GitLab, the person is setting up there unless they just installed the app on GitHub (the
+    // pending one): an old install from a removed vault mustn't switch them over. Picking GitHub and
+    // installing again brings GitHub's redirect, so the picker still opens.
+    if (picking && id === undefined && !(gitlab && (await gitlab.login(account.id))))
+      id = await ownInstallation().catch((err: unknown) => void (installationError = (err as Error).message));
     const [installation, keys, curatorActions, hostedCurator] = await Promise.all([
       id !== undefined
         ? listRepos(id, false).then(
@@ -271,6 +284,7 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
       providers: gitlab ? ["github", "gitlab"] : ["github"],
       ...(gitlabInfo ? { gitlab: gitlabInfo } : {}),
       ...(installation ? { installation } : {}),
+      ...(installationError ? { installationError } : {}),
       ...(vault ? { vault: hostedVault(vault, settings) } : {}),
       vaults: vaults.map((v) => hostedVault(v, settings)),
       vaultLimit: MAX_VAULTS_PER_USER,

@@ -23,7 +23,8 @@ const SETTINGS = { campaign: "Lisbon relocation", human: "player", timezone: "Eu
 
 type Visit = ReturnType<typeof browser>;
 
-async function setup() {
+/** `down`: GitHub requests it matches answer 503, as in an outage. */
+async function setup(opts: { down?: (url: URL) => boolean } = {}) {
   const github = await hostedGitHub(keys);
   const { gh } = github;
   gh.addUser({ login: "player", id: PLAYER });
@@ -35,7 +36,7 @@ async function setup() {
     settings: testSettings(keys.privateKeyPem, [GM]),
     kv,
     registry: await registryDb(),
-    fetch: github.fetch,
+    fetch: opts.down ? async (input, init) => (opts.down!(new URL(input instanceof Request ? input.url : String(input))) ? new Response("down", { status: 503 }) : github.fetch(input, init)) : github.fetch,
     hooks: {
       onVaultChanged: (id) => void seen.changed.push(id),
       revokeOAuthGrants: async (id) => void seen.oauthRevoked.push(id),
@@ -379,6 +380,19 @@ describe("the install redirect", () => {
     await gh.addRepo({ fullName: "player/notes", id: 9002 });
     installation.repos.push("player/notes");
     expect((await get<HostedSetupStatus>(player, "setup/status?add")).body.installation?.repos.map((r) => r.fullName).sort()).toEqual(["player/notes", "player/vault"]);
+  });
+
+  it("says GitHub didn't answer, rather than that the app isn't installed", async () => {
+    const { github, player, signIn, routes, get, post } = await setup({ down: (url) => url.pathname.startsWith("/users/") });
+    await signIn(player, "player");
+    await routes.registry.setAccountStatus(PLAYER, "approved");
+    github.gh.addInstallation({ account: { id: PLAYER, login: "player", type: "User" }, repos: ["player/vault"] });
+    const s = (await get<HostedSetupStatus>(player, "setup/status")).body;
+    expect(s.installation).toBeUndefined();
+    expect(s.installationError).toMatch(/GitHub didn't say whether the app is installed/);
+    expect(s.items.find((i) => i.id === "install")?.state).not.toBe("done");
+    expect((await get(player, "setup/repos")).body).toMatchObject({ code: "GITHUB" });
+    expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS })).body).toMatchObject({ code: "GITHUB" });
   });
 
   it("doesn't take an install on another account that has the person's login", async () => {

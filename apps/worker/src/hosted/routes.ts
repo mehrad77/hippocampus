@@ -29,12 +29,8 @@ export const HOSTED_API = "/dashboard/api";
 export interface HostedHooks extends AccountHooks {
   /** A vault's registry row changed (status, name, keys): tell its Durable Object. */
   onVaultChanged?: (vaultId: string) => void | Promise<void>;
-  /** Link (or unlink, `null`) a GitHub login to one of a vault's humans, in its config (someone joining or leaving). */
-  linkHuman?: (vault: MemberVault, human: string, login: string | null, via: string, create?: { domains?: string[] }) => Promise<void>;
   /** Seat an agent in a vault's party as `via` (a connection made for a new agent). */
   seatAgent?: (vault: MemberVault, agent: { id: string; title: string }, via: string) => Promise<void>;
-  /** Connections to a vault were revoked (`key:<hash>`, `oauth:<grant>`): free the agent names they held. */
-  releaseCredentials?: (vaultId: string, credentials: string[]) => Promise<void>;
   /** An app connected over OAuth (by grant id) may or may not run sleep in a vault: its owner's switch. */
   setCurate?: (vault: MemberVault, grant: string, on: boolean) => Promise<void>;
   /** Which connection holds which agent name in a vault. */

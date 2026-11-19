@@ -516,6 +516,14 @@ function InstallGitHub({ status }: HostedStepProps) {
           On GitHub, install it on your personal account (@{status.account.login}). Under <em>Repository access</em>, choose <strong>Only select repositories</strong> and pick just that repo. GitHub sends you back here.
         </p>
       )}
+      {!inst && status.installationError && (
+        <div className="callout callout--warn" role="alert">
+          <Icon name="warn" />
+          <div>
+            <strong>Couldn't check GitHub for the app.</strong> {status.installationError} Reload in a minute; if you've installed it already, you don't need to again.
+          </div>
+        </div>
+      )}
       {inst?.error && (
         <div className="callout callout--warn" role="alert">
           <Icon name="warn" />

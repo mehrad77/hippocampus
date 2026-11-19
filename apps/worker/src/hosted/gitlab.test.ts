@@ -95,6 +95,25 @@ describe("connecting GitLab", () => {
     expect(repos.find((r) => r.id === 556)!.private).toBe(false);
   });
 
+  it("stays on GitLab when an old GitHub install is on the account, until the person installs it again", async () => {
+    // The real clock: the app's JWT has to be current for GitHub.
+    const h = await hostedApp({ gitlab: true });
+    const visit = h.browser();
+    await h.signIn(visit, "player");
+    await h.registry.setAccountStatus(PLAYER.id, "approved");
+    await h.gl!.addProject({ fullName: "player/vault", id: 555, empty: true });
+    const old = h.gh.addInstallation({ account: { id: PLAYER.id, login: "player", type: "User" }, repos: ["player/vault"] });
+    await h.connectGitLab(visit, "player");
+    const s = await status(h, visit);
+    expect(s.installation).toBeUndefined();
+    expect(s.items.find((i) => i.id === "install")).toMatchObject({ title: "Connect GitLab", state: "done" });
+    // Asking for GitHub's repos by name still finds the install.
+    expect((await h.api(visit, "setup/repos")).status).toBe(200);
+    // Installing again on GitHub (its redirect) is the person choosing GitHub.
+    await visit(h.github.installed("player", old.id));
+    expect((await status(h, visit)).installation).toMatchObject({ id: old.id });
+  });
+
   it("refuses a callback that wasn't started here, or by someone else, or twice", async () => {
     const { h, gl, visit } = await setup();
     const toGitLab = await visit(`${ORIGIN}/dashboard/setup/gitlab/connect`);
