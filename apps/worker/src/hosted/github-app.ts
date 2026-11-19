@@ -73,6 +73,17 @@ export interface InstallationRepo {
   defaultBranch: string;
   /** When the repo last got a push (ISO), so the latest commit pushed. Absent when GitHub didn't say. */
   pushedAt?: string;
+  /** What the signed-in user may do there, on a listing made with their token. */
+  permissions?: RepoPermissions;
+}
+
+/** A user's role on a repo, as GitHub reports it. */
+export interface RepoPermissions {
+  admin?: boolean;
+  maintain?: boolean;
+  push?: boolean;
+  triage?: boolean;
+  pull?: boolean;
 }
 
 export interface GitHubAppOptions {
@@ -101,9 +112,10 @@ interface RepoJson {
   private: boolean;
   default_branch: string;
   pushed_at?: string | null;
+  permissions?: RepoPermissions;
 }
 
-const toRepo = (r: RepoJson): InstallationRepo => ({ id: r.id, fullName: r.full_name, private: r.private, defaultBranch: r.default_branch, ...(r.pushed_at ? { pushedAt: r.pushed_at } : {}) });
+const toRepo = (r: RepoJson): InstallationRepo => ({ id: r.id, fullName: r.full_name, private: r.private, defaultBranch: r.default_branch, ...(r.pushed_at ? { pushedAt: r.pushed_at } : {}), ...(r.permissions ? { permissions: r.permissions } : {}) });
 
 export class GitHubApp {
   readonly apiUrl: string;

@@ -94,6 +94,7 @@ export type {
   SetupStatus,
   Snippet,
   VaultUpgrade,
+  HostedOrg,
 } from "@hippocampus/dashboard";
 
 // Shapes of hosted routes the shared contracts don't type yet (apps/worker/src/hosted). Optional
@@ -136,6 +137,15 @@ export interface AdminAccount {
   created: string;
   updated: string;
   admin: boolean;
+}
+
+/** `GET admin/orgs`: a GitHub organization asking to hold vaults. `id` is GitHub's, as text. */
+export interface AdminOrg {
+  id: string;
+  login: string;
+  status: "waitlisted" | "approved" | "denied";
+  created: string;
+  updated: string;
 }
 
 /** `GET admin/vaults`. Names and states only, never content. */

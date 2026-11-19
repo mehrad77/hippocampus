@@ -12,7 +12,7 @@ import { hostedSetup, hostedVault } from "./onboarding.ts";
 import type { AgentClaim } from "./agent-claims.ts";
 import { MAX_VAULTS_PER_USER, Registry, type Account, type MemberVault } from "./registry.ts";
 import { sharing } from "./sharing.ts";
-import { LOGIN_PATH, LOGOUT_PATH, createSessions, type SessionKV, type Sessions } from "./session.ts";
+import { LOGIN_PATH, LOGOUT_PATH, RESUME_INSTALL_PATH, createSessions, type SessionKV, type Sessions } from "./session.ts";
 import { apiUrlOf, type HostedSettings } from "./settings.ts";
 import { WEBHOOK_PATH, handleWebhook } from "./webhooks.ts";
 import { DEVICE_PATH, DEVICE_TOKEN_PATH, DeviceRequests } from "./device.ts";
@@ -264,10 +264,10 @@ export function createHostedRoutes(deps: HostedDeps): HostedRoutes {
     const url = new URL(request.url);
     const { pathname } = url;
     const method = request.method;
-    if (pathname === LOGIN_PATH) {
+    if (pathname === LOGIN_PATH || pathname === RESUME_INSTALL_PATH) {
       if (method !== "GET") return notAllowed("GET");
       if (!(await rateLimit(deps.limits?.signIn, `signin:${request.headers.get("cf-connecting-ip") ?? "unknown"}`))) return json(429, { error: "Too many sign-ins; try again in a minute.", code: "RATE_LIMITED" });
-      return sessions.login(request);
+      return pathname === LOGIN_PATH ? sessions.login(request) : sessions.resumeInstallation(request);
     }
     if (pathname === LOGOUT_PATH) return method === "POST" ? sessions.logout(request) : notAllowed("POST");
     if (pathname === CALLBACK_PATH) return method === "GET" ? sessions.callback(request) : notAllowed("GET");

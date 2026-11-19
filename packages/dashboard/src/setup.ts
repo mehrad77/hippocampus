@@ -366,6 +366,14 @@ export interface HostedMintedKey extends HostedKeyInfo {
   snippets: Snippet[];
 }
 
+/** An organization asking to hold vaults: waiting for an admin, approved (with where to pick its repos up again), or turned down. */
+export interface HostedOrg {
+  login: string;
+  status: "waitlisted" | "approved" | "denied";
+  /** Sign in again to recheck the install and pick its repos; set once approved. */
+  continueUrl?: string;
+}
+
 export interface HostedSetupStatus {
   kind: "hosted";
   account: { login: string; status: "waitlisted" | "approved" | "denied"; requested: boolean; admin: boolean };
@@ -377,8 +385,10 @@ export interface HostedSetupStatus {
   providers?: ("github" | "gitlab")[];
   /** The GitLab connection, until a vault is set up. Present when `providers` has `gitlab`. */
   gitlab?: HostedGitLab;
-  /** The installation just made, until a vault is set up on it. */
-  installation?: { id: number; repos: HostedRepo[]; error?: string };
+  /** The installation to pick a repo from, until a vault is set up on it. `org`: it's that organization's, and `repos` are only the ones the person administers or maintains there. */
+  installation?: { id: number; repos: HostedRepo[]; org?: string; error?: string };
+  /** GitHub organizations the person tried to set a vault up in, and how far each got. */
+  orgs?: HostedOrg[];
   /** GitHub didn't answer whether the app is installed on the person's account (so `installation` may be missing). */
   installationError?: string;
   /** The vault this status is about (VAULT_HEADER's, else the last one used). */

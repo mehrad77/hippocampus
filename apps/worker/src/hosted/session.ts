@@ -2,7 +2,7 @@ import { cookie, json, safeEqual, securityHeaders } from "@hippocampus/dashboard
 import { hashToken, type KVLike } from "../auth.ts";
 import { CALLBACK_PATH, base64url, githubAuthorizeUrl, githubToken, githubTokenUser, type GitHubClient } from "../github-login.ts";
 import { escape, page } from "../pages.ts";
-import type { GitHubApp } from "./github-app.ts";
+import type { GitHubApp, Installation } from "./github-app.ts";
 import type { Account, Registry } from "./registry.ts";
 import { apiUrlOf, oauthUrlOf, type HostedSettings } from "./settings.ts";
 
@@ -11,6 +11,8 @@ import { apiUrlOf, oauthUrlOf, type HostedSettings } from "./settings.ts";
 
 export const LOGIN_PATH = "/dashboard/auth/login";
 export const LOGOUT_PATH = "/dashboard/auth/logout";
+/** Picks an installation up again (an org's, after its pending one expired) by signing in to recheck it. */
+export const RESUME_INSTALL_PATH = "/dashboard/auth/installation";
 /** Where onboarding continues once the app is installed. */
 export const SETUP_REPO = "/dashboard/setup/#repo";
 
@@ -34,10 +36,17 @@ interface PendingLogin {
   installation?: number;
 }
 
-/** An installation the person proved is theirs, waiting for them to pick its repo. */
+/** An installation the person proved is theirs (or an org's they may set up in), waiting for them to pick its repo. */
 export interface PendingInstallation {
   installationId: number;
   at: string;
+  /**
+   * On an organization's install: the repos the person may make a vault of (admin or maintain there),
+   * checked with their own token. Listings and setup go no further than these.
+   */
+  repoIds?: number[];
+  /** The organization's login, on an org's install. */
+  org?: string;
 }
 
 export interface SignedIn {
@@ -53,7 +62,9 @@ const randomId = () => base64url(crypto.getRandomValues(new Uint8Array(32)));
 
 export async function pendingInstallation(kv: SessionKV, accountId: number): Promise<PendingInstallation | undefined> {
   const p = (await kv.get(installKey(accountId), "json")) as PendingInstallation | null;
-  return typeof p?.installationId === "number" ? p : undefined;
+  if (typeof p?.installationId !== "number") return undefined;
+  // An org's install always carries the repos the person may use; one that doesn't says none.
+  return p.org !== undefined && !Array.isArray(p.repoIds) ? { ...p, repoIds: [] } : p;
 }
 
 export const clearPendingInstallation = (kv: SessionKV, accountId: number) => kv.delete(installKey(accountId));
@@ -88,6 +99,8 @@ export interface Sessions {
   login(request: Request): Promise<Response>;
   /** `GET /oauth/github/callback`: a sign-in coming back, or the app's install redirect. */
   callback(request: Request): Promise<Response>;
+  /** `GET /dashboard/auth/installation?installation_id=…`: sign in again to recheck an install and pick its repos. */
+  resumeInstallation(request: Request): Promise<Response>;
   /** `POST /dashboard/auth/logout` */
   logout(request: Request): Promise<Response>;
   /** The signed-in account, if the session is live: the account exists, isn't denied or deleted, and its epoch hasn't moved. */
@@ -166,16 +179,50 @@ export function createSessions(deps: SessionDeps): Sessions {
     if (!installations) return fail(502, "Couldn't check the installation", "<p>GitHub didn't answer. Try installing again in a minute.</p>", cookies);
     const installation = installations.find((i) => i.id === installationId);
     if (!installation) return fail(403, "That installation isn't yours", "<p>Your GitHub account can't see that installation of the app. Install it from the dashboard's setup page.</p>", cookies);
+    if (installation.account.type === "Organization") return adoptOrgInstallation(userToken, account, installation, cookies);
     if (installation.account.type !== "User" || installation.account.id !== account.id)
       return fail(
         403,
-        "Personal accounts only",
-        `<p>The app was installed on <strong>@${escape(installation.account.login)}</strong>. Hippocampus keeps vaults in personal accounts: install it on <strong>@${escape(account.login)}</strong> and pick a repo there.</p>`,
+        "Someone else's account",
+        `<p>The app was installed on <strong>@${escape(installation.account.login)}</strong>, another person's account. Install it on your own account (<strong>@${escape(account.login)}</strong>) or on an organization, and pick a repo there.</p>`,
         cookies,
       );
     const pending: PendingInstallation = { installationId, at: now().toISOString() };
     await kv.put(installKey(account.id), JSON.stringify(pending), { expirationTtl: INSTALL_TTL });
     return redirect(SETUP_REPO, cookies);
+  }
+
+  /**
+   * An organization's install. The org asks to hold vaults the first time (an admin approves it, as with
+   * accounts), and the person may only use the repos they administer or maintain there: an org install
+   * reaches its members' other repos too, which aren't theirs to turn into a vault or to look through.
+   */
+  async function adoptOrgInstallation(userToken: string, account: Account, installation: Installation, cookies: string[]): Promise<Response> {
+    const org = await registry.requestOrg({ subject: String(installation.account.id), login: installation.account.login, installationId: installation.id, user: account.user });
+    const name = `<strong>@${escape(org.login)}</strong>`;
+    if (org.status === "denied") return fail(403, "Not on this Hippocampus", `<p>${name} can't hold vaults here: an admin turned it down. Set a vault up on your own account instead.</p>`, cookies);
+    if (org.status !== "approved")
+      return fail(202, "Waiting for approval", `<p>${name} asked to hold vaults here. Once an admin of this Hippocampus approves it, continue from the dashboard's setup page: it lists ${name} with a button to go on.</p>`, cookies);
+    const repos = await app.installationRepos(userToken, installation.id).catch(() => undefined);
+    if (!repos) return fail(502, "Couldn't check your repos", "<p>GitHub didn't answer. Try again from the setup page in a minute.</p>", cookies);
+    const usable = repos.filter((r) => r.permissions?.admin || r.permissions?.maintain);
+    if (!usable.length)
+      return fail(
+        403,
+        "No repo you can set up",
+        `<p>A vault in ${name} needs a repo you're an admin or maintainer of, among those the app was installed on. Ask an owner of ${name} to add one to the app's install or to give you that role, then continue from the setup page.</p>`,
+        cookies,
+      );
+    const pending: PendingInstallation = { installationId: installation.id, at: now().toISOString(), repoIds: usable.map((r) => r.id), org: org.login };
+    await kv.put(installKey(account.id), JSON.stringify(pending), { expirationTtl: INSTALL_TTL });
+    return redirect(SETUP_REPO, cookies);
+  }
+
+  async function resumeInstallation(request: Request): Promise<Response> {
+    const raw = new URL(request.url).searchParams.get("installation_id") ?? "";
+    if (!/^\d{1,15}$/.test(raw)) return fail(400, "That link is broken", "<p>It has no installation id.</p>");
+    // The sign-in proves who it is, and `adoptInstallation` checks the install with their own token.
+    return startLogin(SETUP_REPO, Number(raw));
   }
 
   async function finishLogin(request: Request, url: URL): Promise<Response> {
@@ -208,8 +255,6 @@ export function createSessions(deps: SessionDeps): Sessions {
     const raw = url.searchParams.get("installation_id") ?? "";
     if (!/^\d{1,15}$/.test(raw)) return fail(400, "That install link is broken", "<p>It has no installation id.</p>");
     const installationId = Number(raw);
-    if (url.searchParams.get("setup_action") === "request")
-      return fail(202, "Install requested", "<p>An organization owner has to approve that request. Hippocampus keeps vaults in personal accounts: install the app on your own account instead.</p>");
     const signedIn = await current(request);
     const code = url.searchParams.get("code");
     if (!signedIn || !code) return startLogin(SETUP_REPO, installationId);
@@ -225,8 +270,13 @@ export function createSessions(deps: SessionDeps): Sessions {
     return adoptInstallation(token, signedIn.account, installationId, []);
   }
 
+  const requested = () =>
+    fail(202, "Install requested", "<p>An owner of the organization has to approve the app's install on GitHub. Once they do, install it again from the dashboard's setup page (or have them do it) and pick the repo.</p>");
+
   async function callback(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // GitHub may send no installation id with a request: there's no install yet.
+    if (url.searchParams.get("setup_action") === "request") return requested();
     return url.searchParams.has("installation_id") ? install(request, url) : finishLogin(request, url);
   }
 
@@ -247,7 +297,7 @@ export function createSessions(deps: SessionDeps): Sessions {
     return new Response(null, { status: 303, headers });
   }
 
-  return { login, callback, logout, current, end };
+  return { login, callback, resumeInstallation, logout, current, end };
 }
 
 function redirect(location: string, cookies: string[] = []): Response {

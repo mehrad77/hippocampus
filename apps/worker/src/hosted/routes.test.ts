@@ -323,14 +323,14 @@ describe("the install redirect", () => {
     expect(await kv.get(`hosted:install:${PLAYER}`, "json")).toBeNull();
   });
 
-  it("is refused for an organization's installation", async () => {
+  it("still refuses another person's personal installation", async () => {
     const { gh, github, kv, player, approvedPlayer } = await setup();
     await approvedPlayer();
-    const org = gh.addInstallation({ account: { id: 777, login: "harbor-university", type: "Organization" }, repos: [] });
-    gh.users.get("player")!.installations.push(org.id);
-    const res = await player(github.installed("player", org.id));
+    const theirs = gh.addInstallation({ account: { id: SCOUT, login: "job-scout", type: "User" }, repos: [] });
+    gh.users.get("player")!.installations.push(theirs.id);
+    const res = await player(github.installed("player", theirs.id));
     expect(res.status).toBe(403);
-    expect(await res.text()).toContain("personal accounts");
+    expect(await res.text()).toContain("another person");
     expect(await kv.get(`hosted:install:${PLAYER}`, "json")).toBeNull();
   });
 
@@ -402,6 +402,96 @@ describe("the install redirect", () => {
     gh.addInstallation({ account: { id: 999, login: "player", type: "User" }, repos: ["player/vault"] });
     expect((await get<HostedSetupStatus>(player, "setup/status")).body.installation).toBeUndefined();
     expect((await get(player, "setup/repos")).body).toMatchObject({ code: "NO_INSTALLATION" });
+  });
+});
+
+describe("organization vaults", () => {
+  const AGENCY = { id: 31337, login: "migration-agency", type: "Organization" as const };
+
+  /** The app on migration-agency over three repos: player administers one, maintains one, can only write to the third. */
+  async function withOrg() {
+    const s = await setup();
+    const { gh } = s;
+    await s.approvedPlayer();
+    await gh.addRepo({ fullName: "migration-agency/vault", id: 9301, empty: true });
+    await gh.addRepo({ fullName: "migration-agency/notes", id: 9302, empty: true });
+    await gh.addRepo({ fullName: "migration-agency/site", id: 9303, empty: true });
+    const org = gh.addInstallation({ account: AGENCY, repos: ["migration-agency/vault", "migration-agency/notes", "migration-agency/site"] });
+    const player = gh.users.get("player")!;
+    player.installations.push(org.id);
+    player.roles["migration-agency/vault"] = { admin: true, maintain: true, push: true, triage: true, pull: true };
+    player.roles["migration-agency/notes"] = { admin: false, maintain: true, push: true, triage: true, pull: true };
+    player.roles["migration-agency/site"] = { admin: false, maintain: false, push: true, triage: true, pull: true };
+    const gm = browser(s.send);
+    await s.signIn(gm, "game-master");
+    return { ...s, org, gm };
+  }
+
+  it("asks an admin first, then lets the person set a vault up in a repo they administer or maintain", async () => {
+    const { github, kv, player, gm, org, get, post } = await withOrg();
+    const asked = await player(github.installed("player", org.id));
+    expect(asked.status).toBe(202);
+    expect(await asked.text()).toContain("Waiting for approval");
+    expect(await kv.get(`hosted:install:${PLAYER}`, "json")).toBeNull();
+    expect((await get<HostedSetupStatus>(player, "setup/status")).body.orgs).toEqual([{ login: "migration-agency", status: "waitlisted" }]);
+
+    // Only admins decide.
+    expect((await get(player, "admin/orgs")).body).toMatchObject({ code: "ADMIN" });
+    expect((await get(gm, "admin/orgs?status=waitlisted")).body).toEqual({ orgs: [expect.objectContaining({ id: "31337", login: "migration-agency", status: "waitlisted" })] });
+    expect((await post(gm, "admin/orgs/approve", { id: "31337" })).body).toMatchObject({ org: { status: "approved" } });
+
+    // The setup page offers to continue: signing in again rechecks the install with the person's own token.
+    const offered = (await get<HostedSetupStatus>(player, "setup/status")).body.orgs;
+    expect(offered).toEqual([{ login: "migration-agency", status: "approved", continueUrl: `/dashboard/auth/installation?installation_id=${org.id}` }]);
+    const toGitHub = await player(`${ORIGIN}${offered![0]!.continueUrl}`);
+    const back = await player(github.signIn(toGitHub.headers.get("location")!, "player"));
+    expect(back.headers.get("location")).toBe("/dashboard/setup/#repo");
+    expect(await kv.get(`hosted:install:${PLAYER}`, "json")).toMatchObject({ installationId: org.id, org: "migration-agency", repoIds: [9301, 9302] });
+
+    // The repo they can only write to isn't offered, nor anything else of the org's.
+    const status = (await get<HostedSetupStatus>(player, "setup/status")).body;
+    expect(status.installation).toMatchObject({ id: org.id, org: "migration-agency" });
+    expect(status.installation!.repos.map((r) => r.fullName).sort()).toEqual(["migration-agency/notes", "migration-agency/vault"]);
+    const picker = (await get<{ repos: { id: number; empty?: boolean }[] }>(player, "setup/repos")).body.repos;
+    expect(picker.map((r) => r.id).sort()).toEqual([9301, 9302]);
+    expect((await post(player, "setup/init", { repoId: 9303, ...SETTINGS })).body).toMatchObject({ code: "NOT_FOUND" });
+
+    const init = await post<{ vault: { status: string; fullName: string } }>(player, "setup/init", { repoId: 9301, ...SETTINGS });
+    expect(init.body).toMatchObject({ vault: { status: "ready", fullName: "migration-agency/vault" } });
+  });
+
+  it("turns away an org an admin denied", async () => {
+    const { github, player, gm, org, post } = await withOrg();
+    await player(github.installed("player", org.id));
+    await post(gm, "admin/orgs/deny", { id: "31337" });
+    const res = await player(github.installed("player", org.id));
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain("turned it down");
+  });
+
+  it("says so when none of the org's repos are the person's to set up", async () => {
+    const { gh, github, kv, player, gm, org, post } = await withOrg();
+    await player(github.installed("player", org.id));
+    await post(gm, "admin/orgs/approve", { id: "31337" });
+    gh.users.get("player")!.roles = { "migration-agency/site": { admin: false, maintain: false, push: true, triage: true, pull: true } };
+    const res = await player(github.installed("player", org.id));
+    expect(res.status).toBe(403);
+    expect(await res.text()).toContain("admin or maintainer");
+    expect(await kv.get(`hosted:install:${PLAYER}`, "json")).toBeNull();
+  });
+
+  it("explains an install an org owner still has to approve, with no installation id yet", async () => {
+    const { player } = await withOrg();
+    const res = await player(`${ORIGIN}/oauth/github/callback?setup_action=request`);
+    expect(res.status).toBe(202);
+    expect(await res.text()).toContain("owner of the organization");
+  });
+
+  it("checks admin decisions", async () => {
+    const { gm, get, post } = await withOrg();
+    expect((await get(gm, "admin/orgs?status=nope")).body).toMatchObject({ code: "INVALID" });
+    expect((await post(gm, "admin/orgs/approve", { id: 31337 })).body).toMatchObject({ code: "INVALID" });
+    expect((await post(gm, "admin/orgs/approve", { id: "424242" })).body).toMatchObject({ code: "NOT_FOUND" });
   });
 });
 
