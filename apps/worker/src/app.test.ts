@@ -332,6 +332,20 @@ describe("sharing a vault", () => {
     expect((await h.post(gm, "vaults/members/invite", { role: "member", human: "job-scout" })).status).toBe(403);
   });
 
+  it("leaves the owner's vault, keys and installation alone when a member deletes their account", async () => {
+    const { h, player, gm, made } = await sharedWith();
+    await h.post(gm, "invites/accept", { id: made.invite.id });
+    await h.post(player.visit, "setup/keys", { kind: "agent", label: "Player's" });
+    await h.post(gm, "setup/keys", { kind: "agent", label: "GM's" });
+    const installations = [...h.gh.installations.keys()];
+    expect((await h.post(gm, "account/delete", { confirm: "game-master" })).status).toBe(200);
+    expect([...h.gh.installations.keys()]).toEqual(installations);
+    expect(h.vaults.to(player.vault, "destroy")).toEqual([]);
+    expect(await h.registry.vault(player.vault)).toMatchObject({ status: "ready" });
+    // Only the member's own key went with them.
+    expect(((await (await h.api(player.visit, "setup/keys")).json()) as { keys: { label: string }[] }).keys.map((k) => k.label)).toEqual(["Player's"]);
+  });
+
   it("lets a member make their own agent keys, not a curator's, and see only theirs", async () => {
     const { h, player, gm, made } = await sharedWith();
     await h.post(gm, "invites/accept", { id: made.invite.id });

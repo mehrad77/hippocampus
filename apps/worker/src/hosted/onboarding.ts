@@ -115,6 +115,19 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
     );
   }
 
+  /**
+   * The installation to set a vault up from: the one GitHub just sent the person back with, or else the
+   * app's install on their own account. The pending one lasts an hour and goes once a vault is made, while
+   * an install made earlier (another vault, a closed tab, GitHub not redirecting) still reaches the repos.
+   */
+  async function installationId(): Promise<number | undefined> {
+    const pending = await pendingInstallation(kv, account.id);
+    if (pending) return pending.installationId;
+    const own = await app.accountInstallation(account.login).catch(() => undefined);
+    // The same rule as adopting an install after GitHub's redirect: the person's own personal account.
+    return own && own.account.type === "User" && own.account.id === account.id ? own.id : undefined;
+  }
+
   async function findRepo(installationId: number, repoId: number): Promise<InstallationRepo> {
     // Narrowed to the one repo: GitHub refuses (422) if it isn't part of the installation.
     const minted = await app.installationToken(installationId, { repositoryIds: [repoId], permissions: { metadata: "read" } }).catch(() => undefined);
@@ -232,12 +245,14 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
   /** With `adding`, the person is setting up another vault, so the GitLab projects are listed even beside a ready one. */
   async function status(url?: URL): Promise<HostedSetupStatus> {
     const adding = url?.searchParams.has("add") ?? false;
-    const pending = account.status === "approved" ? await pendingInstallation(kv, account.id) : undefined;
+    // Only while there's a GitHub repo to pick: a ready vault's status doesn't need the app's repos.
+    const picking = account.status === "approved" && (adding || vault?.status !== "ready");
+    const id = picking ? await installationId() : undefined;
     const [installation, keys, curatorActions, hostedCurator] = await Promise.all([
-      pending
-        ? listRepos(pending.installationId, false).then(
-            (repos) => ({ id: pending.installationId, repos }),
-            (err: unknown) => ({ id: pending.installationId, repos: [], error: (err as Error).message }),
+      id !== undefined
+        ? listRepos(id, false).then(
+            (repos) => ({ id, repos }),
+            (err: unknown) => ({ id, repos: [], error: (err as Error).message }),
           )
         : undefined,
       // A viewer manages no keys; a member sees the ones they made.
@@ -300,15 +315,15 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
     }
     // A retry on the same repo can go on with the vault's own installation once the pending one has expired.
     const existing = vaults.find((v) => v.repoId === req.repoId && v.provider === "github");
-    const installationId = (await pendingInstallation(kv, account.id))?.installationId ?? existing?.installationId;
-    if (installationId === undefined) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
-    const repo = await findRepo(installationId, req.repoId);
+    const found = (await installationId()) ?? existing?.installationId;
+    if (found === undefined) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
+    const repo = await findRepo(found, req.repoId);
     const result = await bootstrapVault({
       app,
       registry,
       accountId: account.id,
       owner: account.user,
-      installationId,
+      installationId: found,
       repo: { id: repo.id, fullName: repo.fullName, branch: repo.defaultBranch },
       ...from(),
       now: now(),
@@ -424,9 +439,9 @@ export function hostedSetup(deps: HostedSetupDeps): HostedSetupPort {
         return { ok: true };
       }
       if (path === "repos" && method === "GET") {
-        const pending = await pendingInstallation(kv, account.id);
-        if (!pending) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
-        return { installation: { id: pending.installationId }, repos: await listRepos(pending.installationId, true) };
+        const id = await installationId();
+        if (id === undefined) throw new HttpError(409, "Install the GitHub App on your vault repo first.", "NO_INSTALLATION");
+        return { installation: { id }, repos: await listRepos(id, true) };
       }
       if (path === "init" && method === "POST") return init(body);
       if (path === "vaults/remove" && method === "POST") return removeVault(body);

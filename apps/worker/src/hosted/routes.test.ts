@@ -366,6 +366,29 @@ describe("the install redirect", () => {
     const res = await player(github.installed("player", 31337, { action: "request" }));
     expect(res.status).toBe(202);
   });
+
+  it("finds an install made earlier, when GitHub didn't send the person back or it's been over an hour", async () => {
+    const { gh, kv, player, approvedPlayer, get, post } = await setup();
+    const installation = await approvedPlayer();
+    expect(await kv.get(`hosted:install:${PLAYER}`, "json")).toBeNull();
+    expect((await get<HostedSetupStatus>(player, "setup/status")).body.installation).toEqual({ id: installation.id, repos: [{ id: 9001, fullName: "player/vault", private: true }] });
+    expect((await get(player, "setup/repos")).body).toEqual({ installation: { id: installation.id }, repos: [{ id: 9001, fullName: "player/vault", private: true, empty: true }] });
+    expect((await post(player, "setup/init", { repoId: 9001, ...SETTINGS })).body).toMatchObject({ mode: "initialized", vault: { status: "ready" } });
+    // A ready vault's status leaves the app's repos alone, until the person adds another.
+    expect((await get<HostedSetupStatus>(player, "setup/status")).body.installation).toBeUndefined();
+    await gh.addRepo({ fullName: "player/notes", id: 9002 });
+    installation.repos.push("player/notes");
+    expect((await get<HostedSetupStatus>(player, "setup/status?add")).body.installation?.repos.map((r) => r.fullName).sort()).toEqual(["player/notes", "player/vault"]);
+  });
+
+  it("doesn't take an install on another account that has the person's login", async () => {
+    const { gh, player, signIn, routes, get } = await setup();
+    await signIn(player, "player");
+    await routes.registry.setAccountStatus(PLAYER, "approved");
+    gh.addInstallation({ account: { id: 999, login: "player", type: "User" }, repos: ["player/vault"] });
+    expect((await get<HostedSetupStatus>(player, "setup/status")).body.installation).toBeUndefined();
+    expect((await get(player, "setup/repos")).body).toMatchObject({ code: "NO_INSTALLATION" });
+  });
 });
 
 describe("webhooks", () => {
@@ -466,6 +489,32 @@ describe("account deletion", () => {
     // The repo is the person's own: it stays, untouched.
     expect(gh.at("player/vault").files()["_hippo/config.yaml"]).toBeDefined();
     expect((await get(player, "session")).status).toBe(401);
+  });
+
+  it("leaves an installation another account's vault uses", async () => {
+    const { gh, routes, player, post, readyPlayer } = await setup();
+    const { installation } = await readyPlayer();
+    await gh.addRepo({ fullName: "player/agency-notes", id: 9005 });
+    installation.repos.push("player/agency-notes");
+    await routes.registry.signIn({ id: SCOUT, login: "job-scout" });
+    const { vault: theirs } = await routes.registry.claimVault({ accountId: SCOUT, installationId: installation.id, repoId: 9005, fullName: "player/agency-notes", branch: "main" });
+    expect((await post(player, "account/delete", { confirm: "player" })).body).toEqual({ ok: true });
+    expect(gh.installations.has(installation.id)).toBe(true);
+    expect(await routes.registry.vault(theirs.id)).toBeDefined();
+  });
+
+  it("never uninstalls an organization's install, or one on someone else's account", async () => {
+    for (const account of [
+      { id: 31337, login: "migration-agency", type: "Organization" as const },
+      { id: SCOUT, login: "job-scout", type: "User" as const },
+    ]) {
+      const { gh, kv, player, post, approvedPlayer } = await setup();
+      await approvedPlayer();
+      const foreign = gh.addInstallation({ account, repos: [] });
+      await kv.put(`hosted:install:${PLAYER}`, JSON.stringify({ installationId: foreign.id, at: new Date().toISOString() }));
+      expect((await post(player, "account/delete", { confirm: "player" })).body).toEqual({ ok: true });
+      expect(gh.installations.has(foreign.id)).toBe(true);
+    }
   });
 });
 

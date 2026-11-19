@@ -495,6 +495,13 @@ export class FakeGitHub {
       const denied = await this.authorizeApp(bearer);
       return denied ?? json(200, { slug: "hippocampus", permissions: this.appPermissions });
     }
+    if (method === "GET" && (m = path.match(/^\/users\/([^/]+)\/installation$/))) {
+      const denied = await this.authorizeApp(bearer);
+      if (denied) return denied;
+      const login = decodeURIComponent(m[1]!).toLowerCase();
+      const i = [...this.installations.values()].find((x) => x.account.login.toLowerCase() === login);
+      return i ? json(200, { id: i.id, account: i.account, repository_selection: "selected", permissions: i.permissions }) : notFound();
+    }
     if (method === "DELETE" && (m = path.match(/^\/app\/installations\/(\d+)$/))) {
       const denied = await this.authorizeApp(bearer);
       if (denied) return denied;

@@ -82,7 +82,13 @@ export interface GitHubAppOptions {
   apiUrl?: string;
   fetch?: typeof fetch;
   now?: () => Date;
+  /** How to wait between retries; tests pass one that doesn't. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+const RETRY_DELAYS_MS = [300, 1000];
+const RETRY_STATUS = new Set([500, 502, 503, 504]);
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const PER_PAGE = 100;
 const MAX_PAGES = 10;
@@ -181,6 +187,23 @@ export class GitHubApp {
     return this.pages("/user/installations", userToken, (b) => (b as { installations?: Installation[] }).installations ?? []);
   }
 
+  /** One installation, with the account it's on; undefined once it's gone. */
+  async installation(installationId: number): Promise<Installation | undefined> {
+    const res = await this.call("GET", `/app/installations/${installationId}`, await this.jwt());
+    if (res.status === 404) return undefined;
+    return (await ok(res, APP_AUTH)) as Installation;
+  }
+
+  /**
+   * The app's installation on one account (`GET /users/{login}/installation`, with the app's JWT), or
+   * undefined where it isn't installed. Callers check `account.id`: a login can change hands.
+   */
+  async accountInstallation(login: string): Promise<Installation | undefined> {
+    const res = await this.call("GET", `/users/${encodeURIComponent(login)}/installation`, await this.jwt());
+    if (res.status === 404) return undefined;
+    return (await ok(res, APP_AUTH)) as Installation;
+  }
+
   /** The repos of one installation, as a signed-in user sees them. */
   async installationRepos(userToken: string, installationId: number): Promise<InstallationRepo[]> {
     const repos = await this.pages(`/user/installations/${installationId}/repositories`, userToken, (b) => (b as { repositories?: RepoJson[] }).repositories ?? []);
@@ -197,7 +220,26 @@ export class GitHubApp {
     return out;
   }
 
-  private call(method: string, path: string, token: string, body?: unknown): Promise<Response> {
+  /**
+   * One request, tried again after a network error or a 5xx: GitHub's API drops the odd request, and a
+   * listing that fails once otherwise leaves the repo picker empty. Every call here is safe to repeat
+   * (reads, minting a token, deleting an installation).
+   */
+  private async call(method: string, path: string, token: string, body?: unknown): Promise<Response> {
+    for (let attempt = 0; ; attempt++) {
+      const last = attempt >= RETRY_DELAYS_MS.length;
+      try {
+        const res = await this.send(method, path, token, body);
+        if (last || !RETRY_STATUS.has(res.status)) return res;
+        await res.body?.cancel();
+      } catch (err) {
+        if (last) throw err;
+      }
+      await (this.opts.sleep ?? sleep)(RETRY_DELAYS_MS[attempt]!);
+    }
+  }
+
+  private send(method: string, path: string, token: string, body?: unknown): Promise<Response> {
     return this.fetch(`${this.apiUrl}${path}`, {
       method,
       headers: {

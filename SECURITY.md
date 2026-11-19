@@ -99,11 +99,11 @@ Invocation logs are off, since they'd record every URL. The Worker writes one li
 
 From the account menu, after typing your GitHub login:
 1. all your keys are revoked, and connected apps are signed out;
-2. your vault's Durable Object is wiped (index, cache, tokens, runs);
+2. your vaults' Durable Objects are wiped (index, cache, tokens, runs);
 3. the GitHub App is uninstalled from your account, or your GitLab connection is revoked at GitLab and erased;
 4. your account and vault rows are removed. A tombstone of the account id remains, so old sessions can't come back to life.
 
-Your vault repo is yours and stays on GitHub or GitLab, untouched.
+Your vault repo is yours and stays on GitHub or GitLab, untouched. Vaults shared with you stay their owners': only your membership and the keys you made in them go. The app is uninstalled only from an installation GitHub reports as on your own personal account that no one else's vault uses; an organization's installation is never removed.
 
 ## The local CLI
 

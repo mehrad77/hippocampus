@@ -44,18 +44,31 @@ export interface DeleteAccountDeps {
 export async function deleteAccount(account: Pick<Account, "id" | "user">, deps: DeleteAccountDeps): Promise<{ vaults: string[] }> {
   const { registry, app, gitlab, kv, hooks } = deps;
   const accountId = account.id;
-  const vaults = await registry.vaultsOf(account);
+  // Only the vaults it owns: one shared with it stays its owner's, with their keys and their installation.
+  const vaults = (await registry.vaultsOf(account)).filter((v) => v.role === "owner");
   const pending = await pendingInstallation(kv, accountId);
   for (const vault of vaults) await registry.revokeAllKeys(vault.id);
   await hooks?.revokeOAuthGrants?.(accountId);
   for (const vault of vaults) await hooks?.destroyVault?.(vault.id);
   // GitLab vaults have no installation (0).
-  for (const id of new Set([...vaults.map((v) => v.installationId), pending?.installationId])) if (id) await app.deleteInstallation(id);
+  const owned = new Set(vaults.map((v) => v.id));
+  for (const id of new Set([...vaults.map((v) => v.installationId), pending?.installationId])) if (id && (await ownInstallation(id, accountId, owned, deps))) await app.deleteInstallation(id);
   await clearPendingInstallation(kv, accountId);
   // Before the rows go: revoking needs the stored tokens.
   await gitlab?.disconnect(accountId);
   await registry.removeAccount(accountId);
   return { vaults: vaults.map((v) => v.id) };
+}
+
+/**
+ * Whether deleting the account may uninstall the app from this installation: it's on the person's own
+ * personal account (GitHub says so, not the registry), and no vault of anyone else's uses it. An
+ * organization's install serves other people, so it's never removed on one person's say.
+ */
+async function ownInstallation(id: number, accountId: number, owned: Set<string>, { registry, app }: DeleteAccountDeps): Promise<boolean> {
+  if ((await registry.vaultsByInstallation(id)).some((v) => !owned.has(v.id))) return false;
+  const installation = await app.installation(id);
+  return installation?.account.type === "User" && installation.account.id === accountId;
 }
 
 /** The typed confirmation: the account's GitHub login, so a stray click can't delete anything. */
