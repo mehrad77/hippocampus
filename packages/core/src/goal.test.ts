@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CONFIG, fixtureStore } from "./__fixtures__/vault.ts";
-import { addDuration, applyGoalUpdate, getObjectives, goalProps, goalState, goalStateOf, nextDue, parseAfterLast, renderProgress } from "./goal.ts";
+import { addDuration, applyGoalUpdate, getObjectives, goalProps, goalState, goalStateOf, goalStatusWord, nextDue, parseAfterLast, renderProgress } from "./goal.ts";
 import { parseDoc } from "./markdown.ts";
-import { applyQuestUpdate } from "./ops.ts";
+import { applyFact, applyQuestUpdate } from "./ops.ts";
 import { Vault } from "./vault.ts";
 import { upcomingDates } from "./views.ts";
 
@@ -70,6 +70,51 @@ describe("goal props", () => {
       "▰▰▰▰▰▱▱▱▱▱ 50/100 · repeats 2w after the last interaction · last done 2026-10-01",
     );
     expect(renderProgress({})).toBe("");
+  });
+});
+
+describe("goalStatusWord", () => {
+  const deal = { open: "active", stalled: "blocked", won: "done", lost: "failed" };
+  it("takes the type's words first, then core states, then common synonyms", () => {
+    expect(goalStatusWord("Won", deal)).toBe("won");
+    expect(goalStatusWord("won")).toBe("done");
+    expect(goalStatusWord(" DONE ")).toBe("done");
+    expect(goalStatusWord("COMPLETE")).toBe("done");
+    expect(goalStatusWord("paused")).toBe("dormant");
+    expect(goalStatusWord("on-hold")).toBe("dormant");
+    expect(goalStatusWord("open", deal)).toBe("open");
+  });
+  it("reads a list of words that all mean one state, and nothing else", () => {
+    expect(goalStatusWord("won / resolved")).toBe("done");
+    expect(goalStatusWord("complete or finished")).toBe("done");
+    expect(goalStatusWord("done / paused")).toBeUndefined();
+    expect(goalStatusWord("maybe")).toBeUndefined();
+    expect(goalStatusWord("done / maybe")).toBeUndefined();
+  });
+});
+
+describe("a goal's status reported as a fact", () => {
+  it("speaks the goal's words, so synonyms corroborate instead of disputing", async () => {
+    const v = await load({ "goals/apartment-hunt.md": "---\ntype: goal\ntitle: Apartment hunt\nstatus: active\n---\n" });
+    const goal = v.resolve("apartment-hunt")!;
+    const at = (d: number) => `2026-10-0${d}T10:00:00.000Z`;
+    await applyFact(v, goal, "status", "paused", { by: "home-finder", at: at(1), src: ["ep-1"] });
+    await applyFact(v, goal, "status", "complete", { by: "job-scout", at: at(2), src: ["ep-2"] });
+    await applyFact(v, goal, "status", "COMPLETE", { by: "job-scout", at: at(3), src: ["ep-3"] });
+    await applyFact(v, goal, "status", "won / resolved", { by: "job-scout", at: at(4), src: ["ep-4"] });
+    expect(goal.fm.facts.status).toMatchObject({ value: "dormant", status: "disputed" });
+    expect(v.openDisputes()[0]!.fm.claims.map((c) => [c.value, c.by, c.src])).toEqual([
+      ["dormant", "home-finder", ["ep-1"]],
+      ["done", "job-scout", ["ep-2", "ep-3", "ep-4"]],
+    ]);
+  });
+
+  it("keeps a word that means nothing known as written, and leaves other types alone", async () => {
+    const v = await load({ "goals/apartment-hunt.md": "---\ntype: goal\ntitle: Apartment hunt\n---\n" });
+    await applyFact(v, v.resolve("apartment-hunt")!, "status", "Viewing flats", { by: "home-finder", at: "2026-10-01T10:00:00.000Z", src: ["ep-1"] });
+    await applyFact(v, v.resolve("landlord")!, "status", "Paused", { by: "home-finder", at: "2026-10-01T10:00:00.000Z", src: ["ep-2"] });
+    expect(v.resolve("apartment-hunt")!.fm.facts.status?.value).toBe("Viewing flats");
+    expect(v.resolve("landlord")!.fm.facts.status?.value).toBe("Paused");
   });
 });
 
