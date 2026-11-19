@@ -78,6 +78,53 @@ describe("installation tokens", () => {
     expect(gh.installations.has(installation.id)).toBe(false);
     await app.deleteInstallation(installation.id);
   });
+
+  it("finds the app's installation on an account, or none", async () => {
+    const { installation, app } = await setup();
+    expect(await app.accountInstallation("player")).toMatchObject({ id: installation.id, account: { id: 4242, login: "player", type: "User" } });
+    expect(await app.accountInstallation("job-scout")).toBeUndefined();
+  });
+});
+
+describe("flaky GitHub", () => {
+  /** The fake behind a fetch that fails the first `failures` calls: a 503, or a dropped connection. */
+  async function flaky(failures: number, how: "503" | "network") {
+    const github = await hostedGitHub(keys);
+    const installation = github.gh.addInstallation({ account: { id: 4242, login: "player", type: "User" }, repos: ["player/vault"] });
+    const seen = { calls: 0, waits: [] as number[] };
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      if (seen.calls++ < failures) {
+        if (how === "network") throw new TypeError("fetch failed");
+        return new Response("upstream", { status: 503 });
+      }
+      return github.fetch(input, init);
+    };
+    const app = new GitHubApp({ appId: APP.id, privateKey: keys.privateKeyPem, apiUrl: "https://api.github.test", fetch, now: () => github.gh.now(), sleep: async (ms) => void seen.waits.push(ms) });
+    return { app, installation, seen };
+  }
+
+  it("tries a 5xx or a dropped request again before giving up", async () => {
+    for (const how of ["503", "network"] as const) {
+      const { app, installation, seen } = await flaky(2, how);
+      const { token } = await app.installationToken(installation.id);
+      expect((await app.installationRepositories(token)).map((r) => r.fullName)).toEqual(["player/vault"]);
+      expect(seen.waits).toEqual([300, 1000]);
+    }
+  });
+
+  it("stops after three tries", async () => {
+    const down = await flaky(3, "503");
+    await expect(down.app.installationToken(down.installation.id)).rejects.toMatchObject({ status: 503 });
+    expect(down.seen.calls).toBe(3);
+    const gone = await flaky(3, "network");
+    await expect(gone.app.installationToken(gone.installation.id)).rejects.toThrow(/fetch failed/);
+  });
+
+  it("doesn't repeat a request GitHub refused", async () => {
+    const { app, seen } = await flaky(0, "503");
+    await expect(app.installationToken(123456)).rejects.toMatchObject({ status: 404 });
+    expect(seen.calls).toBe(1);
+  });
 });
 
 describe("webhook signatures", () => {

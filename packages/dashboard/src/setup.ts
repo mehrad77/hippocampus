@@ -379,6 +379,8 @@ export interface HostedSetupStatus {
   gitlab?: HostedGitLab;
   /** The installation just made, until a vault is set up on it. */
   installation?: { id: number; repos: HostedRepo[]; error?: string };
+  /** GitHub didn't answer whether the app is installed on the person's account (so `installation` may be missing). */
+  installationError?: string;
   /** The vault this status is about (VAULT_HEADER's, else the last one used). */
   vault?: HostedVault;
   /** All of the person's vaults, oldest first. */

@@ -330,7 +330,7 @@ The card shows this month's spend against the cap, the last hosted run, and its 
 
 **Limits.** Per vault: 2,000 episodes waiting in the inbox, 20 waiting introductions, 20,000 files, 50 MB of text, 24 sleep runs a day, and 50 keys. An admin can raise these for one vault (`POST /dashboard/api/admin/vaults/quotas` with `{"id", "quotas": {"sleepRunsPerDay": 96}}`); `null` restores the defaults. A vault also holds at most 20 people (the owner and 19 others) and 20 open invites, and a person owns at most 5 vaults and has 10 open invites to the app. Requests per minute (`ratelimits` in `wrangler.jsonc`): 10 sign-ins or device connects per IP (`RL_SIGNIN`), 120 dashboard writes per account (`RL_API`), 240 MCP requests per key or connected app (`RL_MCP`), and 3 client registrations per IP (`RL_REGISTER`).
 
-**Deleting your account.** Your account menu deletes everything the app holds for you, after you type your GitHub login: keys stop working, connected apps are signed out, the GitHub App is uninstalled (or your GitLab connection is revoked), and your account and every vault's index and cache are erased. Your vault repos stay where they are, untouched.
+**Deleting your account.** Your account menu deletes everything the app holds for you, after you type your GitHub login: keys stop working, connected apps are signed out, the GitHub App is uninstalled (or your GitLab connection is revoked), and your account and every vault's index and cache are erased. Your vault repos stay where they are, untouched. Vaults others shared with you stay theirs: you leave them, and only the keys you made there stop working.
 
 ### Running your own instance
 
