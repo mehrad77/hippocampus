@@ -110,6 +110,35 @@ export function goalState(word: string | undefined, statuses?: Record<string, st
   return GoalState.safeParse(vocab?.toLowerCase()).data ?? GoalState.safeParse(w).data ?? "active";
 }
 
+// Words agents use for the core states. A type's own `statuses` win over these.
+const STATE_WORDS: Record<string, GoalState> = {
+  complete: "done", completed: "done", finished: "done", achieved: "done", accomplished: "done", won: "done", resolved: "done",
+  paused: "dormant", "on hold": "dormant", parked: "dormant", deferred: "dormant", inactive: "dormant",
+  stuck: "blocked", waiting: "blocked",
+  abandoned: "failed", cancelled: "failed", canceled: "failed", dropped: "failed", lost: "failed",
+  "in progress": "active", ongoing: "active", open: "active", started: "active",
+};
+
+/**
+ * The status word `word` stands for on a goal: a word of the type's `statuses`, a core state, or the
+ * core state a common synonym means (`complete`, `paused`); `won / resolved` counts when every part
+ * means the same. Undefined when it means nothing known.
+ */
+export function goalStatusWord(word: string, statuses?: Record<string, string>): string | undefined {
+  const one = (s: string): string | undefined => {
+    const w = s.trim().toLowerCase().replace(/[\s_-]+/g, " ");
+    if (!w) return undefined;
+    return (statuses && Object.keys(statuses).find((k) => k.toLowerCase() === w)) ?? (GoalState.safeParse(w).data ?? STATE_WORDS[w]);
+  };
+  const whole = one(word);
+  if (whole) return whole;
+  const parts = word.split(/\s*(?:\/|\||,|\bor\b)\s*/i).filter((p) => p.trim());
+  if (parts.length < 2) return undefined;
+  const words = parts.map(one);
+  if (words.some((w) => !w)) return undefined;
+  return new Set(words.map((w) => goalState(w, statuses))).size === 1 ? words[0] : undefined;
+}
+
 /** The core state of a goal note in `vault`, through its type's vocabulary. */
 export function goalStateOf(vault: Vault, e: Entity): GoalState {
   return goalState(goalProps(e).status, vault.schema.type(e.fm.type)?.statuses);
@@ -235,8 +264,8 @@ export function applyGoalUpdate(vault: Vault, goal: Entity, u: GoalUpdate, by: s
   let completed = false;
 
   // Check everything first, so a bad field leaves the goal as it was.
-  const w = u.status?.trim().toLowerCase();
-  const word = w ? ((vocab && Object.keys(vocab).find((k) => k.toLowerCase() === w)) ?? (GoalState.safeParse(w).success ? w : undefined)) : undefined;
+  const w = u.status?.trim();
+  const word = w ? goalStatusWord(w, vocab) : undefined;
   if (w && !word) {
     const known = [...new Set([...Object.keys(vocab ?? {}), ...GoalState.options])];
     throw new VaultError(`unknown status "${u.status}" for ${goal.slug}; use one of ${known.join(", ")}`);

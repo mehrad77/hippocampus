@@ -1,7 +1,7 @@
 import type { Entity } from "./entity.ts";
 import { canonicalRelation } from "./config.ts";
 import { AUTHORITY_RANK, capWas, priorOf, reconcileFact, sameValue, type Decision } from "./reconcile.ts";
-import { applyGoalUpdate, goalProps, type Clock, type GoalUpdate } from "./goal.ts";
+import { applyGoalUpdate, goalProps, goalStatusWord, type Clock, type GoalUpdate } from "./goal.ts";
 import type { FactValue } from "./schema.ts";
 import { encryptSecret, isSecretRef, secretPath, secretRef } from "./secrets.ts";
 import { factKey, hash, normalizeScope, parseFactKey, slugify, toFieldName } from "./text.ts";
@@ -107,6 +107,11 @@ export async function applyFact(
     return { entity: entity.slug, field, decision: "replace", reason: "secret updated", secret };
   }
 
+  // A goal's status reported as a fact speaks the goal's words, so `complete`, `COMPLETE` and `done`
+  // agree instead of disputing. A word that means nothing known stays as written.
+  if (parseFactKey(field).field === "status" && typeof value === "string" && vault.schema.has(entity.fm.type, "goal")) {
+    value = goalStatusWord(value, vault.schema.type(entity.fm.type)?.statuses) ?? value;
+  }
   const existing = entity.fm.facts[field];
   const open = existing?.status === "disputed" ? vault.disputeFor(entity.slug, field) : undefined;
   const decision = reconcileFact({
