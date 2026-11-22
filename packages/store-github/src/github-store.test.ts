@@ -2,7 +2,7 @@ import { CURRENT_VAULT_VERSION, HippoService, StoreConflictError, Vault, VaultEr
 import { describe, expect, it } from "vitest";
 import { storeContract } from "../../core/src/store.contract.ts";
 import { fixtureStore } from "../../core/src/__fixtures__/vault.ts";
-import { EmptyRepositoryError, MemoryBlobCache, SnapshotCache, gitBlobSha } from "@hippocampus/store-git";
+import { EmptyRepositoryError, MemoryBlobCache, RequestTimeoutError, SnapshotCache, gitBlobSha } from "@hippocampus/store-git";
 import { FakeGitHub } from "./fake-github.ts";
 import { GitHubStore } from "./github-store.ts";
 
@@ -29,6 +29,17 @@ describe("GitHubStore", () => {
     await store.read("goals/residence-permit.md");
     await new GitHubStore({ repo: gh.repo, token: "t", fetch: gh.fetch, cache: (store as unknown as { cache: MemoryBlobCache }).cache }).read("goals/residence-permit.md");
     expect(gh.calls.filter((c) => c.startsWith("GET git/blobs/"))).toHaveLength(1);
+  });
+
+  it("gives up on a call GitHub never answers, with an error that says which", async () => {
+    const gh = await FakeGitHub.create(Object.fromEntries(fixtureStore().files));
+    // The ref update hangs until its signal aborts it, like a connection that never answers.
+    const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> =>
+      init?.method === "PATCH" ? new Promise((_, reject) => init.signal?.addEventListener("abort", () => reject(init.signal!.reason))) : gh.fetch(input, init);
+    const store = new GitHubStore({ repo: gh.repo, token: "t", fetch, timeoutMs: 50 });
+    const write = store.apply([{ path: "inbox/residency-agent/a.md", content: "a" }], { message: "remember" });
+    await expect(write).rejects.toThrow(RequestTimeoutError);
+    await expect(write).rejects.toThrow(/^GitHub \(PATCH git\/refs\/heads\/main on .+\) didn.t answer within 0.05s/);
   });
 
   it("computes the same blob sha as git", async () => {

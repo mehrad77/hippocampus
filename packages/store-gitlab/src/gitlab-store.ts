@@ -1,5 +1,5 @@
 import { StoreConflictError, VaultError, type Change, type CommitMeta, type VaultStore } from "@hippocampus/core";
-import { EmptyRepositoryError, HttpError, MemoryBlobCache, SnapshotCache, gitBlobSha, ignored, untar, type BlobCache, type Snapshot, type TreeFile } from "@hippocampus/store-git";
+import { EmptyRepositoryError, HttpError, MemoryBlobCache, REQUEST_TIMEOUT_MS, SnapshotCache, fetchWithin, gitBlobSha, ignored, untar, type BlobCache, type Snapshot, type TreeFile } from "@hippocampus/store-git";
 
 export interface GitLabStoreOptions {
   /** The project's numeric id, or its full path (`group/subgroup/name`). The id survives renames. */
@@ -22,6 +22,8 @@ export interface GitLabStoreOptions {
   fetch?: typeof fetch;
   /** The REST root, default `https://gitlab.com/api/v4`. */
   apiUrl?: string;
+  /** How long one API call may take, in ms (default `REQUEST_TIMEOUT_MS`). */
+  timeoutMs?: number;
   /** Times to rebase a batch onto a moved branch before giving up. */
   maxRebases?: number;
   /** When more files than this are missing from the cache, download the commit as one archive (default 20). */
@@ -262,7 +264,8 @@ export class GitLabStore implements VaultStore {
     let missing = 0;
     for (const [path, f] of snap.files) if ((await this.cacheFor(path).get(f.sha)) === undefined && ++missing > threshold) break;
     if (missing <= threshold) return;
-    const res = await this.request("GET", `repository/archive.tar.gz?sha=${snap.commit}`);
+    // A whole repo's download gets more time than one call.
+    const res = await this.request("GET", `repository/archive.tar.gz?sha=${snap.commit}`, undefined, 4 * this.timeoutMs);
     const archive = new Uint8Array(await new Response(res.body!.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
     const decoder = new TextDecoder();
     for (const [name, bytes] of untar(archive)) {
@@ -325,20 +328,31 @@ export class GitLabStore implements VaultStore {
     return (await this.request(method, path, body)).json() as Promise<T>;
   }
 
-  private async request(method: string, path: string, body?: unknown): Promise<Response> {
+  private get timeoutMs(): number {
+    return this.opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  }
+
+  private async request(method: string, path: string, body?: unknown, timeoutMs = this.timeoutMs): Promise<Response> {
     const { token } = this.opts;
+    // An empty path is the project itself (`GET /projects/:id`).
+    const url = `${this.api}/projects/${this.project}${path ? `/${path}` : ""}`;
     const send = async (refresh: boolean) =>
-      // An empty path is the project itself (`GET /projects/:id`).
-      this.fetch(`${this.api}/projects/${this.project}${path ? `/${path}` : ""}`, {
-        method,
-        headers: {
-          accept: "application/json",
-          authorization: `Bearer ${typeof token === "string" ? token : await (refresh ? token({ refresh }) : token())}`,
-          "user-agent": "hippocampus",
-          ...(body === undefined ? {} : { "content-type": "application/json" }),
+      fetchWithin(
+        this.fetch,
+        url,
+        {
+          method,
+          headers: {
+            accept: "application/json",
+            authorization: `Bearer ${typeof token === "string" ? token : await (refresh ? token({ refresh }) : token())}`,
+            "user-agent": "hippocampus",
+            ...(body === undefined ? {} : { "content-type": "application/json" }),
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
         },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
+        timeoutMs,
+        `GitLab (${method} ${path.split("?")[0]})`,
+      );
     let res = await send(false);
     // A minted token may have expired (OAuth access tokens last two hours): refresh it, once.
     if (res.status === 401 && typeof token !== "string") {

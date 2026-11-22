@@ -1,3 +1,4 @@
+import { REQUEST_TIMEOUT_MS, fetchWithin } from "@hippocampus/store-github";
 import { base64url } from "../github-login.ts";
 
 // The hosted app's GitHub App: its JWT, installation tokens narrowed to one repo, and the few
@@ -93,6 +94,8 @@ export interface GitHubAppOptions {
   apiUrl?: string;
   fetch?: typeof fetch;
   now?: () => Date;
+  /** How long one API call may take, in ms (default `REQUEST_TIMEOUT_MS`). */
+  timeoutMs?: number;
   /** How to wait between retries; tests pass one that doesn't. */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -252,7 +255,7 @@ export class GitHubApp {
   }
 
   private send(method: string, path: string, token: string, body?: unknown): Promise<Response> {
-    return this.fetch(`${this.apiUrl}${path}`, {
+    const init: RequestInit = {
       method,
       headers: {
         accept: "application/vnd.github+json",
@@ -262,7 +265,8 @@ export class GitHubApp {
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    };
+    return fetchWithin(this.fetch, `${this.apiUrl}${path}`, init, this.opts.timeoutMs ?? REQUEST_TIMEOUT_MS, `GitHub (${method} ${path.split("?")[0]})`);
   }
 }
 
