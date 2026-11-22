@@ -68,6 +68,10 @@ jobs:
           anthropic_api_key: \${{ secrets.CLAUDE_CODE_OAUTH_TOKEN == '' && secrets.ANTHROPIC_API_KEY || '' }}
           # A token without permissions, so the action doesn't ask for one of its own.
           github_token: \${{ github.token }}
+          # The app commits this file, so scheduled runs start as its bot, which the action refuses
+          # by default. Any bot is fine here: only the schedule and a dispatch start a run, and no
+          # event text reaches the prompt.
+          allowed_bots: "*"
           prompt: |
             You are the curator of a Hippocampus memory vault. Run tonight's sleep using only the
             hippocampus MCP tools. If sleep_status shows a run already open, stop. Otherwise call

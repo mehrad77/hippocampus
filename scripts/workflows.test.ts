@@ -80,6 +80,12 @@ describe("the hosted app's nightly sleep workflow", () => {
     expect(String(runs[0]!.run)).toMatch(/^if \[ -f "\$EXECUTION_FILE" \]; then\n\s+jq -r 'last \| select\(\.type == "result"\) \| \.result \/\/ empty' "\$EXECUTION_FILE" \| head -c 2000\nfi\n$/);
   });
 
+  it("lets the app's bot start it: the app commits the file, so scheduled runs carry its name", () => {
+    // Safe only because no event text reaches the prompt: a new trigger would need a second look.
+    expect(steps[0]!.with!.allowed_bots).toBe("*");
+    expect(Object.keys(w.on).sort()).toEqual(["schedule", "workflow_dispatch"]);
+  });
+
   it("lets Claude use the vault's MCP tools and nothing else", () => {
     const args = String(steps[0]!.with!.claude_args);
     expect([...args.matchAll(/--allowedTools\s+"([^"]*)"/g)].map((m) => m[1])).toEqual(["mcp__hippocampus__*"]);
