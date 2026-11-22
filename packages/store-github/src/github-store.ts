@@ -1,5 +1,5 @@
 import { StoreConflictError, VaultError, type Change, type CommitMeta, type VaultStore } from "@hippocampus/core";
-import { EmptyRepositoryError, HttpError, IGNORED, MemoryBlobCache, SnapshotCache, base64, gitBlobSha, ignored, untar, type BlobCache, type Snapshot, type TreeFile } from "@hippocampus/store-git";
+import { EmptyRepositoryError, HttpError, IGNORED, MemoryBlobCache, REQUEST_TIMEOUT_MS, SnapshotCache, fetchWithin, base64, gitBlobSha, ignored, untar, type BlobCache, type Snapshot, type TreeFile } from "@hippocampus/store-git";
 
 export interface GitHubStoreOptions {
   /** `owner/name` of the (private) vault repo. */
@@ -24,6 +24,8 @@ export interface GitHubStoreOptions {
   snapshots?: SnapshotCache;
   fetch?: typeof fetch;
   apiUrl?: string;
+  /** How long one API call may take, in ms (default `REQUEST_TIMEOUT_MS`). */
+  timeoutMs?: number;
   /** Times to rebase a batch onto a moved branch before giving up. */
   maxRebases?: number;
   /**
@@ -193,7 +195,7 @@ export class GitHubStore implements VaultStore {
       if (tree === base.tree) break;
       const commit = await this.createCommit(tree, base.commit, meta);
       try {
-        await this.request("PATCH", `git/refs/heads/${this.branch}`, { sha: commit, force: false });
+        await (await this.request("PATCH", `git/refs/heads/${this.branch}`, { sha: commit, force: false })).body?.cancel();
         base = await this.advance(base, commit, tree, changes);
         this.snapshots.set(base);
         break;
@@ -241,7 +243,8 @@ export class GitHubStore implements VaultStore {
     let missing = 0;
     for (const [path, f] of snap.files) if ((await this.cacheFor(path).get(f.sha)) === undefined && ++missing > threshold) break;
     if (missing <= threshold) return;
-    const res = await this.request("GET", `tarball/${snap.commit}`);
+    // A whole repo's download gets more time than one call.
+    const res = await this.request("GET", `tarball/${snap.commit}`, undefined, undefined, 4 * this.timeoutMs);
     const archive = new Uint8Array(await new Response(res.body!.pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
     const decoder = new TextDecoder();
     for (const [name, bytes] of untar(archive)) {
@@ -317,21 +320,32 @@ export class GitHubStore implements VaultStore {
     return (await this.request(method, path, body)).json() as Promise<T>;
   }
 
-  private async request(method: string, path: string, body?: unknown, accept = "application/vnd.github+json"): Promise<Response> {
+  private get timeoutMs(): number {
+    return this.opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
+  }
+
+  private async request(method: string, path: string, body?: unknown, accept = "application/vnd.github+json", timeoutMs = this.timeoutMs): Promise<Response> {
     const { token } = this.opts;
+    // An empty path is the repo itself (`GET /repos/{owner}/{repo}`).
+    const url = `${this.api}/repos/${this.repo}${path ? `/${path}` : ""}`;
     const send = async (refresh: boolean) =>
-      // An empty path is the repo itself (`GET /repos/{owner}/{repo}`).
-      this.fetch(`${this.api}/repos/${this.repo}${path ? `/${path}` : ""}`, {
-        method,
-        headers: {
-          accept,
-          authorization: `Bearer ${typeof token === "string" ? token : await (refresh ? token({ refresh }) : token())}`,
-          "x-github-api-version": "2022-11-28",
-          "user-agent": "hippocampus",
-          ...(body === undefined ? {} : { "content-type": "application/json" }),
+      fetchWithin(
+        this.fetch,
+        url,
+        {
+          method,
+          headers: {
+            accept,
+            authorization: `Bearer ${typeof token === "string" ? token : await (refresh ? token({ refresh }) : token())}`,
+            "x-github-api-version": "2022-11-28",
+            "user-agent": "hippocampus",
+            ...(body === undefined ? {} : { "content-type": "application/json" }),
+          },
+          body: body === undefined ? undefined : JSON.stringify(body),
         },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
+        timeoutMs,
+        `GitHub (${method} ${path} on ${this.repo})`,
+      );
     let res = await send(false);
     // A minted token may have expired (installation tokens last an hour): mint a fresh one, once.
     if (res.status === 401 && typeof token !== "string") {
